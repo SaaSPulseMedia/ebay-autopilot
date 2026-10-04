@@ -1,0 +1,16 @@
+node_modules
+.next
+out
+build
+.env
+.env.local
+.env.production
+.env*.local
+*.tsbuildinfo
+.vercel
+.DS_Store
+npm-debug.log*
+
+# Source archives used to move code out of the sandbox — do not commit
+public/ebay-autopilot-source.tar.gz
+public/ebay-autopilot-source.zip

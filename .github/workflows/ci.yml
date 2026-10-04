@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  copy-guard:
+    name: Forbidden copy guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fail on third-party or unverifiable marketing copy
+        run: |
+          set -u
+          # The blocklist itself is base64-encoded so the forbidden strings never
+          # appear in plaintext anywhere in this repository.
+          PATTERN="$(echo "$BLOCKLIST_B64" | base64 -d)"
+          if grep -RInE "$PATTERN" README.md src public 2>/dev/null; then
+            echo "::error::Forbidden copy found. Remove third-party verbatim text and unsubstantiated social proof."
+            exit 1
+          fi
+          echo "Copy guard passed."
+        env:
+          BLOCKLIST_B64: QXV0b21hdGUgeW91ciBlQmF5IGRyb3BzaGlwcGluZ3xlYnhcLmFybXl8QXV0b21hdGlzZXp8VHJvdXZleiBkZXMgcHJvZHVpdHMgZ2FnbmFudHN8VHJ1c3RlZCBieSAxLDIwMHxBcHByb3ZlZCBieSAxLDIwMHwxLDIwMFwrIHNlbGxlcnN8IzEgKHRvb2x8cGxhdGZvcm18c29mdHdhcmUpfDFNXCsgc3RvcmVzfDJcLjRN
+
+  build:
+    name: Typecheck and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - name: Build
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/placeholder
+          AUTH_SECRET: ci-placeholder-secret-value-not-used-in-production
+        run: npm run build
