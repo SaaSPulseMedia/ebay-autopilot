@@ -45,12 +45,14 @@ export function isSampleProduct(product: Pick<SupplierProduct, "source">) {
 /** Re-screen every product's title so the risk label is never just assumed. */
 function withVero(product: SupplierProduct): SupplierProduct & { veroMatch: string | null; veroReason: string } {
   const screen = screenVero(product.title, product.category);
-  return {
-    ...product,
-    veroRisk: stricterRisk(product.veroRisk, screen.risk),
-    veroMatch: screen.match,
-    veroReason: screen.reason,
-  };
+  const veroRisk = stricterRisk(product.veroRisk, screen.risk);
+  // The catalog itself can flag a product type as brand-sensitive even when the
+  // title names no brand (e.g. tumblers, where lookalike listings get reported).
+  const veroReason =
+    veroRisk === "medium" && !screen.match
+      ? "No brand in the name, but brand-name lookalikes are often reported in this product type. Keep brand names out of your title and photos."
+      : screen.reason;
+  return { ...product, veroRisk, veroMatch: screen.match, veroReason };
 }
 
 type RainforestItem = { asin?: string; title?: string; image?: string; link?: string; price?: { value?: number } };

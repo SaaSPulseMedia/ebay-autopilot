@@ -33,6 +33,7 @@ export default async function BulkPage() {
     netProfit: netProfit(product),
     variants: buildVariants(product.title, product.category, product.suggestedPrice, limits.maxVariants).length,
     veroRisk: product.veroRisk,
+    veroMatch: product.veroMatch,
     veroReason: product.veroReason,
   }));
   const sample = catalog.some(isSampleProduct);

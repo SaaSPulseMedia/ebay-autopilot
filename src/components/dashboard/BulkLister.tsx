@@ -13,6 +13,7 @@ export type BulkProduct = {
   netProfit: number;
   variants: number;
   veroRisk: "low" | "medium" | "high";
+  veroMatch: string | null;
   veroReason: string;
 };
 
@@ -284,7 +285,7 @@ export function BulkLister({ products, batchSize, activeListings, activeUsed, pl
                         </span>
                       ) : product.veroRisk === "medium" ? (
                         <span className="ml-2 rounded-full bg-amber-400/15 px-2 py-0.5 font-semibold text-amber-200">
-                          Brand mentioned
+                          {product.veroMatch ? "Brand mentioned" : "Brand-sensitive"}
                         </span>
                       ) : null}
                     </span>
