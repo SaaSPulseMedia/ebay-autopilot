@@ -5,18 +5,19 @@ export function BuiltFor({ stats }: { stats: CatalogStats }) {
     {
       label: "Bulk listing with variants, in one click",
       detail:
-        "Select any number of products and publish the batch in a single run, with size and color variants expanded into proper multi-variant listings.",
+        "Select up to 50 products and publish the batch in a single run, with size and color variants expanded into proper multi-variant listings.",
     },
     {
-      label: "Live supplier prices, updated hourly",
+      label: "Profit math on every product",
       detail:
         "The catalog in this deployment currently holds " +
-        `${stats.productCount} products across ${stats.categoryCount} categories, re-priced on an hourly schedule.`,
+        `${stats.productCount} products across ${stats.categoryCount} categories, each priced after eBay's fees` +
+        (stats.sample ? " (starter products with example supplier prices)." : "."),
     },
     {
-      label: "VeRO shield + stealth posting cadence",
+      label: "Brand-name (VeRO) screening",
       detail:
-        "Batches are screened against a brand blocklist and released on a spaced schedule instead of landing on eBay all at once.",
+        "Every product is checked for brand names that get eBay listings removed. Risky items are blocked before they publish, one by one or in bulk.",
     },
   ];
 
@@ -58,7 +59,7 @@ export function BuiltFor({ stats }: { stats: CatalogStats }) {
             </p>
             <p className="mt-3 text-sm leading-relaxed text-slate-300">
               We built AutoPilot so you can press one button instead. The batch is written, priced after real eBay
-              fees, variant-expanded, and published, then kept in stock and repriced automatically. Everything you see
+              fees, variant-expanded, brand-screened, and published. Automatic stock and price syncing is in progress. Everything you see
               on your dashboard is produced by your own account&apos;s data — we do not ship placeholder numbers, and we
               do not publish testimonials we cannot stand behind.
             </p>
@@ -82,8 +83,9 @@ export function BuiltFor({ stats }: { stats: CatalogStats }) {
               <dd className="mt-1 text-2xl font-bold text-white">1</dd>
             </div>
             <p className="col-span-2 text-[11px] leading-relaxed text-slate-500">
-              Figures are calculated at request time from the supplier catalog running in this deployment, net of
-              eBay&apos;s final value and per-order fees. They are not marketing estimates.
+              Figures are calculated at request time from the catalog running in this deployment, net of eBay&apos;s
+              final value and per-order fees.
+              {stats.sample ? " The catalog currently uses starter products with example supplier prices." : ""}
             </p>
           </dl>
         </div>

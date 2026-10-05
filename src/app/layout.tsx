@@ -11,7 +11,7 @@ export const metadata: Metadata = {
     template: "%s · eBay AutoPilot",
   },
   description:
-    "Bulk-list products on eBay in one click. eBay AutoPilot writes the copy, builds every variant, prices after eBay fees, and publishes individually or in bulk — then keeps listings in stock and repriced.",
+    "Bulk-list products on eBay in one click. eBay AutoPilot writes the copy, builds every variant, prices after eBay fees, and publishes individually or in bulk, with brand-name screening built in.",
   applicationName: "eBay AutoPilot",
   keywords: [
     "eBay bulk listing software",
@@ -27,7 +27,7 @@ export const metadata: Metadata = {
     siteName: "eBay AutoPilot",
     title: "eBay AutoPilot — Run your eBay store on autopilot",
     description:
-      "Bulk-list products on eBay in one click. AI listing copy, automatic variant building, pricing after eBay fees, and hourly stock and price sync.",
+      "Bulk-list products on eBay in one click. AI listing copy, automatic variant building, pricing after eBay fees, and brand-name screening.",
     images: [{ url: "/images/logo.svg", width: 260, height: 64, alt: "eBay AutoPilot" }],
   },
   twitter: {

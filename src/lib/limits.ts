@@ -13,11 +13,17 @@ export type PlanLimits = {
   isTrial: boolean;
 };
 
-/** Batch size is always well under the active cap so a single run can never overfill a plan. */
+/**
+ * Locked product rules: bulk publishing of 50 per run and up to 20 variants per
+ * product are included in EVERY plan. Plans differ only by active listings and stores.
+ */
+export const BATCH_SIZE = 50;
+export const MAX_VARIANTS = 20;
+
 const TABLE: Record<Plan["id"], Omit<PlanLimits, "planId" | "planName" | "isTrial">> = {
-  starter: { batchSize: 10, activeListings: 50, maxVariants: 20 },
-  pro: { batchSize: 50, activeListings: 200, maxVariants: 200 },
-  business: { batchSize: 200, activeListings: 1000, maxVariants: 200 },
+  starter: { batchSize: BATCH_SIZE, activeListings: 50, maxVariants: MAX_VARIANTS },
+  pro: { batchSize: BATCH_SIZE, activeListings: 200, maxVariants: MAX_VARIANTS },
+  business: { batchSize: BATCH_SIZE, activeListings: 1000, maxVariants: MAX_VARIANTS },
 };
 
 export function planLimits(plan: string): PlanLimits {

@@ -1,10 +1,12 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { PLANS } from "@/lib/plans";
 
 export function CheckoutButtons({ currentPlan }: { currentPlan: string }) {
+  const router = useRouter();
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -22,7 +24,8 @@ export function CheckoutButtons({ currentPlan }: { currentPlan: string }) {
         window.location.href = json.url;
         return;
       }
-      setMessage(json.message ?? "Checkout unavailable.");
+      setMessage(json.message ?? "Plan updated.");
+      router.refresh();
     } catch {
       setMessage("Could not start checkout.");
     } finally {
@@ -56,7 +59,9 @@ export function CheckoutButtons({ currentPlan }: { currentPlan: string }) {
         ))}
       </div>
       {message ? (
-        <p className="rounded-xl border border-white/12 bg-white/5 px-4 py-3 text-sm text-slate-300">{message}</p>
+        <p className="rounded-xl border border-lime-brand/30 bg-lime-brand/10 px-4 py-3 text-sm text-lime-brand">
+          {message}
+        </p>
       ) : null}
     </div>
   );

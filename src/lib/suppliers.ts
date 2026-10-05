@@ -2,6 +2,9 @@ import "server-only";
 
 import { db } from "@/db";
 import { catalogProducts } from "@/db/schema";
+import { competitionFor, EBAY_FINAL_VALUE_FEE, EBAY_FIXED_FEE, priceForEbay } from "@/lib/pricing";
+import { STARTER_ROWS } from "@/lib/starter-catalog";
+import { screenVero, stricterRisk } from "@/lib/vero";
 import { desc } from "drizzle-orm";
 
 export type SupplierProduct = {
@@ -20,9 +23,7 @@ export type SupplierProduct = {
   veroRisk: "low" | "medium" | "high";
 };
 
-/** Real US dropship economics: eBay final value fee + fixed per-order fee + payment processing. */
-export const EBAY_FINAL_VALUE_FEE = 0.1355;
-export const EBAY_FIXED_FEE = 0.4;
+export { EBAY_FINAL_VALUE_FEE, EBAY_FIXED_FEE };
 
 export function netProfit(product: Pick<SupplierProduct, "supplierPrice" | "suggestedPrice" | "shippingCost">) {
   const fees = product.suggestedPrice * EBAY_FINAL_VALUE_FEE + EBAY_FIXED_FEE;
@@ -34,31 +35,25 @@ export function marginPct(product: Pick<SupplierProduct, "supplierPrice" | "sugg
   return (netProfit(product) / product.suggestedPrice) * 100;
 }
 
-function competitionFor(sales: number): SupplierProduct["competition"] {
-  if (sales > 900) return "high";
-  if (sales > 350) return "medium";
-  return "low";
+/** Sources whose prices are examples rather than live supplier quotes. */
+export const SAMPLE_SOURCES = new Set(["seed", "starter"]);
+
+export function isSampleProduct(product: Pick<SupplierProduct, "source">) {
+  return SAMPLE_SOURCES.has(product.source);
 }
 
-/** Price a supplier item for eBay so the net margin lands in a realistic 18–28% band. */
-function priceForEbay(cost: number) {
-  const shipping = cost < 25 ? 4.25 : 0;
-  const target = (cost + shipping + EBAY_FIXED_FEE) / (1 - EBAY_FINAL_VALUE_FEE - 0.23);
-  const suggested = Math.max(cost + 6, Math.round(target * 100) / 100);
-  return { shipping, suggested: Math.round(suggested * 100) / 100 };
+/** Re-screen every product's title so the risk label is never just assumed. */
+function withVero(product: SupplierProduct): SupplierProduct & { veroMatch: string | null; veroReason: string } {
+  const screen = screenVero(product.title, product.category);
+  return {
+    ...product,
+    veroRisk: stricterRisk(product.veroRisk, screen.risk),
+    veroMatch: screen.match,
+    veroReason: screen.reason,
+  };
 }
 
 type RainforestItem = { asin?: string; title?: string; image?: string; link?: string; price?: { value?: number } };
-type DummyJsonItem = {
-  id: number;
-  title: string;
-  price: number;
-  category?: string;
-  thumbnail?: string;
-  images?: string[];
-  rating?: number;
-  stock?: number;
-};
 
 async function fetchRainforest(limit: number): Promise<SupplierProduct[]> {
   const key = process.env.RAINFOREST_API_KEY;
@@ -146,50 +141,46 @@ async function fetchRapidApi(limit: number): Promise<SupplierProduct[]> {
   }
 }
 
-/** Open, keyless fallback so research always renders real product rows. */
-async function fetchDummyJson(limit: number): Promise<SupplierProduct[]> {
-  try {
-    const res = await fetch(`https://dummyjson.com/products?limit=${limit}&select=title,price,category,thumbnail,images,rating,stock`, {
-      next: { revalidate: 3600 },
-    });
-    if (!res.ok) return [];
-    const json = (await res.json()) as { products?: DummyJsonItem[] };
-    return (json.products ?? []).map((item) => {
-      const cost = Math.round(item.price * 0.62 * 100) / 100;
-      const { shipping, suggested } = priceForEbay(cost);
-      const sales = Math.round(((item.rating ?? 4) * 140 + (item.stock ?? 20) * 6) % 1200);
-      return {
-        externalId: `dummyjson-${item.id}`,
-        source: "dummyjson",
-        title: item.title,
-        category: item.category ? item.category.replace(/-/g, " ") : "General",
-        supplier: "Open supplier feed",
-        supplierUrl: null,
-        imageUrl: item.thumbnail ?? item.images?.[0] ?? null,
-        supplierPrice: cost,
-        suggestedPrice: suggested,
-        shippingCost: shipping,
-        monthlySales: sales,
-        competition: competitionFor(sales),
-        veroRisk: "low" as const,
-      };
-    });
-  } catch {
-    return [];
-  }
+/** Starter products with EXAMPLE prices — used when no live feed is configured. */
+function starterCatalog(limit: number): SupplierProduct[] {
+  return STARTER_ROWS.slice(0, limit).map((row) => {
+    const { shipping, suggested } = priceForEbay(row.supplierPrice);
+    return {
+      externalId: row.externalId,
+      source: "starter",
+      title: row.title,
+      category: row.category,
+      supplier: row.supplier,
+      supplierUrl: null,
+      imageUrl: null,
+      supplierPrice: row.supplierPrice,
+      suggestedPrice: suggested,
+      shippingCost: shipping,
+      monthlySales: row.monthlySales,
+      competition: competitionFor(row.monthlySales),
+      veroRisk: row.veroRisk,
+    };
+  });
 }
 
-/** Live feed, best source first. Never throws — research must always render. */
+/** Live feed when an API key is set, otherwise the labelled starter catalog. Never throws. */
 export async function fetchLiveCatalog(limit = 36): Promise<SupplierProduct[]> {
   const rainforest = await fetchRainforest(limit);
   if (rainforest.length) return rainforest;
   const rapid = await fetchRapidApi(limit);
   if (rapid.length) return rapid;
-  return fetchDummyJson(limit);
+  return starterCatalog(limit);
 }
 
 /** Stored catalog first (seeded via `npm run db:seed`), live feed as fallback. */
-export async function getCatalog(limit = 36): Promise<SupplierProduct[]> {
+export type CatalogProduct = ReturnType<typeof withVero>;
+
+export async function getCatalog(limit = 36): Promise<CatalogProduct[]> {
+  const products = await loadCatalog(limit);
+  return products.map(withVero);
+}
+
+async function loadCatalog(limit: number): Promise<SupplierProduct[]> {
   try {
     const rows = await db
       .select()
@@ -225,13 +216,15 @@ export type CatalogStats = {
   supplierCount: number;
   medianMarginPct: number;
   averageNetProfit: number;
+  /** True when the figures come from example prices, not live supplier quotes. */
+  sample: boolean;
 };
 
 /** Numbers shown on the marketing site are computed from this — never hardcoded. */
 export async function getCatalogStats(): Promise<CatalogStats> {
   const products = await getCatalog(60);
   if (!products.length) {
-    return { productCount: 0, categoryCount: 0, supplierCount: 0, medianMarginPct: 0, averageNetProfit: 0 };
+    return { productCount: 0, categoryCount: 0, supplierCount: 0, medianMarginPct: 0, averageNetProfit: 0, sample: false };
   }
   const margins = products.map((p) => marginPct(p)).sort((a, b) => a - b);
   const mid = Math.floor(margins.length / 2);
@@ -243,5 +236,6 @@ export async function getCatalogStats(): Promise<CatalogStats> {
     supplierCount: new Set(products.map((p) => p.supplier)).size,
     medianMarginPct: Math.round(median * 10) / 10,
     averageNetProfit: Math.round((profits.reduce((a, b) => a + b, 0) / profits.length) * 100) / 100,
+    sample: products.some(isSampleProduct),
   };
 }

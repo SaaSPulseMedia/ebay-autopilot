@@ -12,8 +12,9 @@ export function Pricing() {
             Launch pricing, billed monthly
           </h2>
           <p className="mt-4 text-base leading-relaxed text-slate-300">
-            Plans are separated by how much you can bulk-list. Starter is for proving it works on one store; Pro is the
-            plan for sellers who list every day. Three days free, no card required to start, cancel any time.
+            Every plan includes bulk listing of 50 products per run with up to 20 variants each. Plans differ by how
+            many listings you can keep live: 50, 200, or 1,000. Three days free, no card required to start, cancel any
+            time. Features marked &ldquo;In progress&rdquo; are not available yet.
           </p>
         </div>
 
@@ -27,7 +28,7 @@ export function Pricing() {
             >
               {plan.highlight ? (
                 <span className="absolute -top-3 left-7 rounded-full bg-lime-brand px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-navy-950">
-                  Unlimited bulk runs
+                  4× Starter&apos;s listings
                 </span>
               ) : null}
 
@@ -45,11 +46,21 @@ export function Pricing() {
 
               <ul className="mt-6 flex-1 space-y-2.5">
                 {plan.features.map((feature) => (
-                  <li key={feature} className="flex items-start gap-2.5 text-sm text-slate-300">
-                    <span aria-hidden className="mt-1 text-lime-brand">
-                      ✓
+                  <li
+                    key={feature.label}
+                    className={`flex items-start gap-2.5 text-sm ${feature.inProgress ? "text-slate-500" : "text-slate-300"}`}
+                  >
+                    <span aria-hidden className={`mt-1 ${feature.inProgress ? "text-slate-600" : "text-lime-brand"}`}>
+                      {feature.inProgress ? "○" : "✓"}
                     </span>
-                    {feature}
+                    <span>
+                      {feature.label}
+                      {feature.inProgress ? (
+                        <span className="ml-2 rounded-full border border-white/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                          In progress
+                        </span>
+                      ) : null}
+                    </span>
                   </li>
                 ))}
               </ul>

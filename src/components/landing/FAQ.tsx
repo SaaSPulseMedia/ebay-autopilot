@@ -1,11 +1,11 @@
 const faqs = [
   {
     q: "Can I really list products in bulk with one click?",
-    a: "That is the main thing the product does. Tick the products you want in the research feed, or paste a list of supplier URLs, and press List selected. AutoPilot writes each listing, expands the variants, applies your pricing rule and business policies, and publishes the whole batch in the background. The same engine handles a single product and a full batch, so there is no separate workflow for bulk. Batch size depends on your plan: 10 per run on Starter, then unlimited runs of 50 on Pro and 200 on Business.",
+    a: "That is the main thing the product does. Tick the products you want in the research feed, or paste a list of supplier URLs, and press List selected. AutoPilot writes each listing, expands the variants, applies your pricing, screens out brand-name products, and publishes the whole batch. The same engine handles a single product and a full batch, so there is no separate workflow for bulk. Every plan lists up to 50 products per run; plans differ by how many listings you can keep live (50, 200, or 1,000).",
   },
   {
     q: "Does it handle variants, or only single-quantity listings?",
-    a: "It builds variants. Size, color, and style options from the supplier are expanded into a proper multi-variant eBay listing, with its own SKU, price, and quantity on every row. Variants are the reason a single product can take half an hour to list by hand, so this is the part we automate hardest. Starter covers up to 20 variants per product; Pro and Business are unlimited.",
+    a: "It builds variants. Size, color, and style options from the supplier are expanded into a proper multi-variant eBay listing, with its own SKU, price, and quantity on every row. Variants are the reason a single product can take half an hour to list by hand, so this is the part we automate hardest. Every plan covers up to 20 variants per product.",
   },
   {
     q: "I am not technical at all. Can I still use this?",
@@ -17,7 +17,7 @@ const faqs = [
   },
   {
     q: "How much work is left after I connect my store?",
-    a: "You choose what to sell, you review the batch before it goes out, and you place the supplier order when something sells. The typing is gone: sourcing data, pricing after fees, writing every listing, building variants, publishing, re-checking supplier prices hourly, pausing out-of-stock items, and collecting each sale into a fulfillment queue with cost and margin attached all happen for you. If you currently pay someone to do your listings, this is the job it replaces.",
+    a: "You choose what to sell, you review the batch before it goes out, and you place the supplier order when something sells. The typing is gone: pricing after fees, writing every listing, building variants, brand screening, and publishing all happen for you. Re-checking supplier prices, pausing out-of-stock items, and pulling sales in from eBay automatically are in progress. If you currently pay someone to do your listings, this is the job it replaces.",
   },
   {
     q: "Do I need an eBay developer account, or any technical setup?",
@@ -33,11 +33,11 @@ const faqs = [
   },
   {
     q: "Can I run multiple eBay stores?",
-    a: "Yes. Starter covers one store, Pro covers three, and Business covers ten. Each connected store keeps its own listings, pricing rules, and order queue, and you can switch between them from the dashboard without logging out.",
+    a: "Yes. Starter covers one store, Pro covers three, and Business covers ten. Switching between several connected stores inside one dashboard is in progress.",
   },
   {
     q: "What happens when I get a sale?",
-    a: "The order appears in the fulfillment queue with the buyer's shipping details, the listing it came from, the supplier cost, and the realized margin. You place the order with the supplier, paste the tracking number back in, and AutoPilot marks the order shipped and keeps the figure in your analytics totals. Sending the tracking number to eBay for you automatically is on the roadmap for connected stores.",
+    a: "Sales recorded in your account appear on the orders board with the sale price, supplier cost, and realized margin, and feed your analytics totals. Pulling new sales in from eBay automatically, and sending tracking numbers back to eBay, are in progress. Until then you place the supplier order and handle tracking in eBay as you do today.",
   },
   {
     q: "Do you store my eBay password?",

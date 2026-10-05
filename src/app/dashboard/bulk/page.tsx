@@ -3,9 +3,9 @@ import { listings } from "@/db/schema";
 import { BulkLister, type BulkProduct } from "@/components/dashboard/BulkLister";
 import { getCurrentUser } from "@/lib/auth";
 import { planLimits } from "@/lib/limits";
-import { getCatalog, netProfit } from "@/lib/suppliers";
+import { getCatalog, isSampleProduct, netProfit } from "@/lib/suppliers";
 import { buildVariants } from "@/lib/variants";
-import { and, count, eq, inArray } from "drizzle-orm";
+import { and, count, eq, ne } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +21,7 @@ export default async function BulkPage() {
     db
       .select({ count: count() })
       .from(listings)
-      .where(and(eq(listings.userId, user.id), inArray(listings.status, ["active", "queued"]))),
+      .where(and(eq(listings.userId, user.id), ne(listings.status, "ended"))),
   ]);
 
   const products: BulkProduct[] = catalog.map((product) => ({
@@ -32,7 +32,11 @@ export default async function BulkPage() {
     suggestedPrice: product.suggestedPrice,
     netProfit: netProfit(product),
     variants: buildVariants(product.title, product.category, product.suggestedPrice, limits.maxVariants).length,
+    veroRisk: product.veroRisk,
+    veroReason: product.veroReason,
   }));
+  const sample = catalog.some(isSampleProduct);
+  const blockedCount = products.filter((p) => p.veroRisk === "high").length;
 
   return (
     <div className="space-y-6">
@@ -42,6 +46,18 @@ export default async function BulkPage() {
           Tick the products you want and press one button. AutoPilot writes each listing, expands the variants, applies
           your pricing, and publishes the batch. The same engine handles one product or a full batch.
         </p>
+        {sample ? (
+          <p className="mt-3 rounded-xl border border-white/12 bg-white/5 px-3 py-2 text-xs text-slate-300">
+            These are starter products with <span className="text-white">example supplier prices</span>, not live
+            quotes. Check the real cost with your supplier before you list.
+          </p>
+        ) : null}
+        {blockedCount ? (
+          <p className="mt-3 rounded-xl border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+            {blockedCount} product{blockedCount === 1 ? " is" : "s are"} greyed out because the name includes a brand
+            that removes unauthorized eBay listings (VeRO). They cannot be selected.
+          </p>
+        ) : null}
       </div>
 
       <BulkLister

@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { getCatalog, marginPct, netProfit } from "@/lib/suppliers";
+import { getCatalog, isSampleProduct, marginPct, netProfit } from "@/lib/suppliers";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +27,15 @@ export default async function ResearchPage({
         <h1 className="text-2xl font-bold tracking-tight text-white">Winning-product research</h1>
         <p className="mt-1 text-sm text-slate-400">
           Supplier cost, suggested eBay price, and net profit after the 13.55% final value fee and the $0.40 per-order
-          fee. Sorted by net margin.
+          fee. Sorted by net margin. Every product name is checked for brands that remove unauthorized eBay listings
+          (VeRO).
         </p>
+        {all.some(isSampleProduct) ? (
+          <p className="mt-3 rounded-xl border border-white/12 bg-white/5 px-3 py-2 text-xs text-slate-300">
+            These are starter products with <span className="text-white">example supplier prices</span>, not live
+            quotes. Check the real cost with your supplier before you list.
+          </p>
+        ) : null}
       </div>
 
       <form className="ap-card flex flex-wrap items-end gap-3 rounded-2xl p-4" action="/dashboard/research">
@@ -81,7 +88,18 @@ export default async function ResearchPage({
               <tr key={product.externalId} className="border-b border-white/5 last:border-0">
                 <td className="max-w-[280px] px-4 py-3">
                   <span className="block truncate font-medium text-white">{product.title}</span>
-                  <span className="block text-[11px] text-slate-500">{product.category}</span>
+                  <span className="block text-[11px] text-slate-500">
+                    {product.category}
+                    {product.veroRisk === "high" ? (
+                      <span title={product.veroReason} className="ml-2 rounded-full bg-red-500/15 px-2 py-0.5 font-semibold text-red-300">
+                        Brand blocked
+                      </span>
+                    ) : product.veroRisk === "medium" ? (
+                      <span title={product.veroReason} className="ml-2 rounded-full bg-amber-400/15 px-2 py-0.5 font-semibold text-amber-200">
+                        Brand mentioned
+                      </span>
+                    ) : null}
+                  </span>
                 </td>
                 <td className="px-4 py-3 text-slate-300">{product.supplier}</td>
                 <td className="px-4 py-3 text-right text-slate-300">${product.supplierPrice.toFixed(2)}</td>
@@ -94,12 +112,16 @@ export default async function ResearchPage({
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right">
+                  {product.veroRisk === "high" ? (
+                    <span className="text-xs text-slate-500">Not listable</span>
+                  ) : (
                   <Link
                     href={`/dashboard/listings/new?title=${encodeURIComponent(product.title)}&cost=${product.supplierPrice}&price=${product.suggestedPrice}`}
                     className="rounded-full bg-brand-500/15 px-3 py-1.5 text-xs font-semibold text-brand-400 hover:bg-brand-500/25"
                   >
                     List it
                   </Link>
+                  )}
                 </td>
               </tr>
             ))}

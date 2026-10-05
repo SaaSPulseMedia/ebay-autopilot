@@ -5,8 +5,9 @@ import { publishViaApi } from "@/lib/ebay/api-list";
 import { publishViaBrowser, isBrowserEngineAvailable } from "@/lib/ebay/browser-list";
 import { publishViaDemo } from "@/lib/ebay/demo-list";
 import type { ListingDraft, ListingEngine, ListingResult } from "@/lib/ebay/types";
-import { planLimits } from "@/lib/limits";
-import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { nextPlanUp, planLimits } from "@/lib/limits";
+import { screenVero } from "@/lib/vero";
+import { and, count, desc, eq, ne } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -46,19 +47,41 @@ export async function POST(request: Request) {
     quantity: Number(body.quantity ?? 1),
   };
 
-  // Single listings count against the same active-listing cap as bulk runs.
+  // VeRO gate: never publish a listing whose title names a protected brand.
+  const vero = screenVero(draft.title);
+  if (vero.risk === "high") {
+    return Response.json(
+      {
+        ok: false,
+        code: "vero_blocked",
+        error: `Blocked to protect your eBay account: ${vero.reason} Remove the brand name, or choose an unbranded product.`,
+        match: vero.match,
+      },
+      { status: 422 },
+    );
+  }
+
+  // Plan-limit enforcement: count non-ended listings per user
   const limits = planLimits(user.plan);
   const [{ count: activeCount }] = await db
     .select({ count: count() })
     .from(listings)
-    .where(and(eq(listings.userId, user.id), inArray(listings.status, ["active", "queued"])));
+    .where(and(eq(listings.userId, user.id), ne(listings.status, "ended")));
 
   if (activeCount >= limits.activeListings) {
+    const upgrade = nextPlanUp(limits.planId);
+    const upgradeHint = upgrade ? ` Upgrade to ${upgrade.name} for ${limits.planId === "starter" ? "200" : "1,000"} active listings.` : "";
     return Response.json(
       {
         ok: false,
-        error: `You are at your ${limits.planName} limit of ${limits.activeListings} active listings. End some listings or upgrade to publish more.`,
+        code: "plan_limit_reached",
+        error: `You have reached your ${limits.planName} plan limit of ${limits.activeListings} active listings (${activeCount}/${limits.activeListings} used). End some listings or upgrade to keep publishing.${upgradeHint}`,
         upgrade: true,
+        limitType: "active_listings",
+        current: activeCount,
+        max: limits.activeListings,
+        plan: limits.planName,
+        upgradePlan: upgrade ? upgrade.name : null,
       },
       { status: 403 },
     );
@@ -106,5 +129,28 @@ export async function POST(request: Request) {
     })
     .returning();
 
-  return Response.json({ ok: true, result: final, listing: saved });
+  const response =
+    vero.risk === "medium" ? { ...final, message: `${final.message} Note: ${vero.reason}` } : final;
+  return Response.json({ ok: true, result: response, listing: saved });
+}
+
+export async function PATCH(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) return Response.json({ ok: false, error: "Not signed in." }, { status: 401 });
+
+  const body = (await request.json().catch(() => ({}))) as { id?: number; action?: string };
+  if (!body.id) return Response.json({ ok: false, error: "Listing ID is required." }, { status: 400 });
+
+  if (body.action === "end") {
+    const [updated] = await db
+      .update(listings)
+      .set({ status: "ended" })
+      .where(and(eq(listings.id, body.id), eq(listings.userId, user.id)))
+      .returning();
+
+    if (!updated) return Response.json({ ok: false, error: "Listing not found." }, { status: 404 });
+    return Response.json({ ok: true, listing: updated });
+  }
+
+  return Response.json({ ok: false, error: "Unsupported action." }, { status: 400 });
 }

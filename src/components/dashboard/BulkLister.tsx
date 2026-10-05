@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
@@ -11,6 +12,8 @@ export type BulkProduct = {
   suggestedPrice: number;
   netProfit: number;
   variants: number;
+  veroRisk: "low" | "medium" | "high";
+  veroReason: string;
 };
 
 type Props = {
@@ -24,12 +27,16 @@ type Props = {
 
 type BulkResponse = {
   ok: boolean;
+  code?: string;
   error?: string;
   upgrade?: boolean;
+  upgradePlan?: string | null;
+  limitType?: string;
   requested?: number;
   published?: number;
+  blocked?: number;
   variantTotal?: number;
-  results?: { title: string; status: string; variants: number }[];
+  results?: { title: string; status: string; variants: number; message?: string }[];
 };
 
 export function BulkLister({ products, batchSize, activeListings, activeUsed, planName, isTrial }: Props) {
@@ -52,7 +59,13 @@ export function BulkLister({ products, batchSize, activeListings, activeUsed, pl
   const overLimit = selected.size > perRunCap;
   const atCapacity = remaining === 0;
 
+  const blockedIds = useMemo(
+    () => new Set(products.filter((p) => p.veroRisk === "high").map((p) => p.externalId)),
+    [products],
+  );
+
   function toggle(id: string) {
+    if (blockedIds.has(id)) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -62,7 +75,14 @@ export function BulkLister({ products, batchSize, activeListings, activeUsed, pl
   }
 
   function selectAllVisible() {
-    setSelected(new Set(visible.slice(0, perRunCap).map((p) => p.externalId)));
+    setSelected(
+      new Set(
+        visible
+          .filter((p) => p.veroRisk !== "high")
+          .slice(0, perRunCap)
+          .map((p) => p.externalId),
+      ),
+    );
   }
 
   async function listSelected() {
@@ -102,7 +122,7 @@ export function BulkLister({ products, batchSize, activeListings, activeUsed, pl
             onClick={selectAllVisible}
             className="rounded-full border border-white/20 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-white/5"
           >
-            Select {Math.min(visible.length, perRunCap)}
+            Select {Math.min(visible.filter((p) => p.veroRisk !== "high").length, perRunCap)}
           </button>
           <button
             type="button"
@@ -128,7 +148,7 @@ export function BulkLister({ products, batchSize, activeListings, activeUsed, pl
           </span>
           <span>
             Active listings:{" "}
-            <span className={remaining <= 5 ? "text-amber-300" : "text-white"}>
+            <span className={remaining <= 5 ? "text-amber-300 font-semibold" : "text-white"}>
               {activeUsed}/{activeListings}
             </span>{" "}
             · {remaining} slot{remaining === 1 ? "" : "s"} left
@@ -142,38 +162,77 @@ export function BulkLister({ products, batchSize, activeListings, activeUsed, pl
         </div>
 
         {atCapacity ? (
-          <p className="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm text-amber-200">
-            You are using all {activeListings} active listings on {planName}. End some listings or upgrade to keep
-            publishing.
-          </p>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-400/40 bg-amber-400/10 px-3.5 py-2.5 text-sm text-amber-200">
+            <span>
+              You are using all {activeListings} active listings on {planName}. End some listings or upgrade to keep
+              publishing.
+            </span>
+            <Link
+              href="/dashboard/billing"
+              className="inline-flex items-center gap-1 font-semibold text-lime-brand underline hover:text-white"
+            >
+              Upgrade in Billing →
+            </Link>
+          </div>
         ) : overLimit ? (
-          <p className="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm text-amber-200">
-            You selected {selected.size}, but you can publish {perRunCap} right now
-            {remaining < batchSize
-              ? ` — only ${remaining} of your ${activeListings} ${planName} listing slots are free.`
-              : ` on ${planName} (${batchSize} per run).`}{" "}
-            Deselect some, or upgrade for more room.
-          </p>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-400/40 bg-amber-400/10 px-3.5 py-2.5 text-sm text-amber-200">
+            <span>
+              You selected {selected.size}, but you can publish {perRunCap} right now
+              {remaining < batchSize
+                ? ` — only ${remaining} of your ${activeListings} ${planName} listing slots are free.`
+                : ` on ${planName} (${batchSize} per run).`}{" "}
+              Deselect some, or upgrade for more room.
+            </span>
+            <Link
+              href="/dashboard/billing"
+              className="inline-flex items-center gap-1 font-semibold text-lime-brand underline hover:text-white"
+            >
+              Upgrade in Billing →
+            </Link>
+          </div>
         ) : null}
       </div>
 
       {summary ? (
-        <div
-          className={`rounded-2xl border px-4 py-3 text-sm ${
-            summary.ok
-              ? "border-lime-brand/30 bg-lime-brand/10 text-lime-brand"
-              : "border-amber-400/30 bg-amber-400/10 text-amber-200"
-          }`}
-        >
-          {summary.ok ? (
-            <>
+        summary.ok ? (
+          <div className="rounded-2xl border border-lime-brand/30 bg-lime-brand/10 px-4 py-3 text-sm text-lime-brand">
+            <p>
               Batch complete: {summary.published}/{summary.requested} listings pushed, {summary.variantTotal} variant
               rows built. Open the Listings tab to review them.
-            </>
-          ) : (
-            summary.error
-          )}
-        </div>
+            </p>
+            {summary.blocked ? (
+              <ul className="mt-2 space-y-1 text-amber-200">
+                {summary.results
+                  ?.filter((row) => row.status === "blocked")
+                  .map((row) => (
+                    <li key={row.title}>
+                      ⛔ {row.title}: {row.message}
+                    </li>
+                  ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-amber-400/40 bg-amber-400/10 p-4 text-sm text-amber-200">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <p className="font-semibold text-amber-100 flex items-center gap-1.5">
+                  <span>⚠️</span> {summary.code === "plan_limit_reached" ? "Plan Limit Reached" : "Batch could not be listed"}
+                </p>
+                <p className="mt-1 text-slate-300">{summary.error}</p>
+              </div>
+              {(summary.upgrade || summary.code === "plan_limit_reached") && (
+                <Link
+                  href="/dashboard/billing"
+                  className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full bg-brand-500 px-5 py-2 text-xs font-bold text-white transition hover:bg-brand-400 shadow-md"
+                >
+                  <span>Upgrade to {summary.upgradePlan ?? "Pro"}</span>
+                  <span>→</span>
+                </Link>
+              )}
+            </div>
+          </div>
+        )
       ) : null}
 
       <div className="ap-card overflow-x-auto rounded-2xl">
@@ -191,15 +250,24 @@ export function BulkLister({ products, batchSize, activeListings, activeUsed, pl
           <tbody>
             {visible.map((product) => {
               const isOn = selected.has(product.externalId);
+              const isBlocked = product.veroRisk === "high";
               return (
                 <tr
                   key={product.externalId}
                   onClick={() => toggle(product.externalId)}
-                  className={`cursor-pointer border-b border-white/5 last:border-0 ${isOn ? "bg-brand-500/10" : "hover:bg-white/[0.03]"}`}
+                  title={isBlocked || product.veroRisk === "medium" ? product.veroReason : undefined}
+                  className={`border-b border-white/5 last:border-0 ${
+                    isBlocked
+                      ? "cursor-not-allowed opacity-50"
+                      : isOn
+                        ? "cursor-pointer bg-brand-500/10"
+                        : "cursor-pointer hover:bg-white/[0.03]"
+                  }`}
                 >
                   <td className="px-4 py-3">
                     <input
                       type="checkbox"
+                      disabled={isBlocked}
                       checked={isOn}
                       onChange={() => toggle(product.externalId)}
                       onClick={(e) => e.stopPropagation()}
@@ -208,7 +276,18 @@ export function BulkLister({ products, batchSize, activeListings, activeUsed, pl
                   </td>
                   <td className="max-w-[320px] px-4 py-3">
                     <span className="block truncate font-medium text-white">{product.title}</span>
-                    <span className="block text-[11px] text-slate-500">{product.category}</span>
+                    <span className="block text-[11px] text-slate-500">
+                      {product.category}
+                      {isBlocked ? (
+                        <span className="ml-2 rounded-full bg-red-500/15 px-2 py-0.5 font-semibold text-red-300">
+                          Brand blocked
+                        </span>
+                      ) : product.veroRisk === "medium" ? (
+                        <span className="ml-2 rounded-full bg-amber-400/15 px-2 py-0.5 font-semibold text-amber-200">
+                          Brand mentioned
+                        </span>
+                      ) : null}
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-right text-slate-300">${product.supplierPrice.toFixed(2)}</td>
                   <td className="px-4 py-3 text-right font-semibold text-white">${product.suggestedPrice.toFixed(2)}</td>

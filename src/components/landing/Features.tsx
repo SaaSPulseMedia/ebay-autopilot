@@ -3,7 +3,7 @@ const features = [
     icon: "⚡",
     title: "One-click bulk listing",
     body:
-      "The feature everything else exists to support. Select your products and publish them in a single run — the same engine handles one listing and a full batch, up to 200 per run.",
+      "The feature everything else exists to support. Select your products and publish them in a single run — the same engine handles one listing and a full batch, up to 50 per run on every plan.",
     flagship: true,
   },
   {
@@ -42,19 +42,28 @@ const features = [
     icon: "📉",
     title: "Repricing and stock sync",
     body:
-      "Supplier prices are re-checked hourly. When cost rises, your price follows your rule. When the supplier runs out, the listing is paused instead of selling what you cannot ship.",
+      "When a supplier's cost rises, your price will follow your rule, and when they run out the listing will pause instead of selling what you cannot ship.",
+    inProgress: true,
   },
   {
     icon: "🛡️",
-    title: "VeRO shield + drip posting",
+    title: "Brand-name (VeRO) screening",
     body:
-      "Batches are screened against a brand and keyword blocklist before they go live, and released on a spaced cadence rather than dumped on eBay in one burst.",
+      "Every product is checked against a list of brands that remove unauthorized eBay listings, plus replica wording. Risky items are blocked before they publish, in single listings and in bulk.",
+  },
+  {
+    icon: "⏱️",
+    title: "Drip posting",
+    body:
+      "Large batches will be released on a spaced schedule instead of landing on eBay all at once.",
+    inProgress: true,
   },
   {
     icon: "📦",
     title: "Order and tracking handling",
     body:
-      "Sales land in the fulfillment queue with buyer address, supplier cost, and realized margin. Mark it ordered, drop in the tracking number, and the order closes out.",
+      "Sales will arrive from eBay automatically with supplier cost and margin attached, and tracking numbers will be sent back to eBay for you. Today the orders board shows sales recorded in your account.",
+    inProgress: true,
   },
 ];
 
@@ -68,7 +77,7 @@ export function Features() {
             Built around the listing engine
           </h2>
           <p className="mt-4 text-base leading-relaxed text-slate-300">
-            Bulk listing is the product. Everything else — research, pricing, repricing, orders — exists so the
+            Bulk listing is the product. Everything else — research, pricing, brand screening, orders — exists so the
             listings you push out stay accurate and profitable after they go live.
           </p>
         </div>
@@ -88,6 +97,10 @@ export function Features() {
                 {feature.flagship ? (
                   <span className="rounded-full bg-lime-brand/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-lime-brand">
                     Core
+                  </span>
+                ) : "inProgress" in feature && feature.inProgress ? (
+                  <span className="rounded-full border border-white/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                    In progress
                   </span>
                 ) : null}
               </div>

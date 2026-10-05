@@ -6,9 +6,9 @@ Listing is the job every eBay store owner hates: retyping the title into an 80-c
 specifics, re-uploading photos, and building every size and color variant by hand — per product. It is the most
 commonly outsourced task in the business.
 
-**eBay AutoPilot replaces that work with one button.** Select one product or hundreds, press *List selected*, and the
-batch is written by AI, variant-expanded, priced after real eBay fees, and published. Research, repricing, stock sync,
-and order handling exist to keep those listings accurate once they are live.
+**eBay AutoPilot replaces that work with one button.** Select up to 50 products, press *List selected*, and the
+batch is written by AI, variant-expanded, brand-screened, priced after real eBay fees, and published. Repricing, stock
+sync, and automatic order ingestion are in progress.
 
 Built with Next.js 16 (App Router), Drizzle ORM, and PostgreSQL.
 
@@ -24,8 +24,8 @@ Built with Next.js 16 (App Router), Drizzle ORM, and PostgreSQL.
 | Import | Paste a supplier URL; the server fetches the page and reads title, price, and image from the markup |
 | AI copy | Claude drafts an 80-character title, bullets, description, and item specifics, with a deterministic template fallback |
 | Publishing | Official eBay Sell API (OAuth), headless-Chromium fallback (scaffolded), and demo mode that skips only the final call |
-| Plan limits | Active listings are the upgrade driver: 50 on Starter, 200 on Pro, 1,000 on Business. Batch size: 10 / 50 / 200 per run, enforced server-side |
-| Maintenance | Hourly supplier re-checks, repricing rules, out-of-stock pause, VeRO keyword screening, spaced posting cadence |
+| Plan limits | Active listings are the upgrade driver: 50 on Starter, 200 on Pro, 1,000 on Business. Batch size: 50 per run and up to 20 variants per product on every plan. Limits enforced server-side (non-ended listings counted, typed `plan_limit_reached` error) |
+| Maintenance | Built: VeRO brand screening on every listing (`src/lib/vero.ts`). In progress: supplier re-checks, repricing rules, out-of-stock pause, spaced posting cadence |
 | Orders | Fulfillment queue with buyer details, supplier cost, and realized margin, feeding the analytics totals |
 | Billing | Stripe Checkout with a demo fallback so the flow is clickable before live keys are added |
 

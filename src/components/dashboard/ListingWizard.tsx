@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -14,6 +15,14 @@ type CopyResponse = {
   copy?: { title: string; description: string; bullets: string[]; source: string } | null;
 };
 
+type WizardResult = {
+  ok: boolean;
+  message: string;
+  upgrade?: boolean;
+  code?: string;
+  upgradePlan?: string | null;
+};
+
 export function ListingWizard({ initialTitle = "", initialCost = 0, initialPrice = 0 }: Props) {
   const router = useRouter();
   const [step, setStep] = useState(initialTitle ? 2 : 1);
@@ -26,37 +35,30 @@ export function ListingWizard({ initialTitle = "", initialCost = 0, initialPrice
   const [engine, setEngine] = useState<ListingEngine | "auto">("auto");
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const [result, setResult] = useState<string | null>(null);
+  const [result, setResult] = useState<WizardResult | null>(null);
 
-  async function runImport(useUrl: boolean) {
+  async function runImport(fromUrl: boolean) {
     setBusy(true);
     setNote(null);
     try {
       const res = await fetch("/api/extract", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(useUrl ? { url } : { title }),
+        body: JSON.stringify(fromUrl ? { url } : { title }),
       });
       const json = (await res.json()) as CopyResponse;
-      if (json.product) {
-        if (json.product.title) setTitle(json.product.title);
-        if (json.product.price) {
-          setSupplierPrice(json.product.price);
-          setListPrice(Math.round((json.product.price * 1.55 + 0.4) * 100) / 100);
-        }
-        if (json.product.imageUrl) setImageUrl(json.product.imageUrl);
-        if (json.product.note) setNote(json.product.note);
+      if (!json.ok) {
+        setNote(json.error ?? "Could not read that product.");
+        return;
       }
-      if (json.copy) {
-        setTitle(json.copy.title);
-        setDescription(json.copy.description);
-        setNote(
-          json.copy.source === "claude"
-            ? "Copy drafted by Claude. Edit anything before publishing."
-            : "Copy drafted from the built-in template (no AI key configured).",
-        );
+      if (json.product?.title) setTitle(json.product.title);
+      if (typeof json.product?.price === "number") {
+        setSupplierPrice(json.product.price);
+        setListPrice(Math.round(json.product.price * 1.35 * 100) / 100);
       }
-      if (!json.ok && json.error) setNote(json.error);
+      if (json.product?.imageUrl) setImageUrl(json.product.imageUrl);
+      if (json.copy?.description) setDescription(json.copy.description);
+      if (json.product?.note) setNote(json.product.note);
       setStep(2);
     } catch {
       setNote("Import failed. Enter the details manually.");
@@ -74,11 +76,28 @@ export function ListingWizard({ initialTitle = "", initialCost = 0, initialPrice
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ title, description, listPrice, supplierPrice, sourceUrl: url || null, imageUrl: imageUrl || null, engine }),
       });
-      const json = (await res.json()) as { ok: boolean; error?: string; result?: { message: string; engine: string } };
-      setResult(json.result?.message ?? json.error ?? "Done.");
-      router.refresh();
+      const json = (await res.json()) as {
+        ok: boolean;
+        error?: string;
+        code?: string;
+        upgrade?: boolean;
+        upgradePlan?: string | null;
+        result?: { message: string; engine: string };
+      };
+      if (json.ok) {
+        setResult({ ok: true, message: json.result?.message ?? "Published successfully." });
+        router.refresh();
+      } else {
+        setResult({
+          ok: false,
+          message: json.error ?? "Publish failed.",
+          upgrade: json.upgrade,
+          code: json.code,
+          upgradePlan: json.upgradePlan,
+        });
+      }
     } catch {
-      setResult("Publish failed. Try again.");
+      setResult({ ok: false, message: "Publish failed. Try again." });
     } finally {
       setBusy(false);
     }
@@ -177,6 +196,7 @@ export function ListingWizard({ initialTitle = "", initialCost = 0, initialPrice
       {step === 3 ? (
         <section className="ap-card space-y-4 rounded-2xl p-6">
           <h2 className="text-base font-semibold text-white">Pricing and engine</h2>
+
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block">
               <span className="text-[11px] uppercase tracking-wide text-slate-400">Supplier cost ($)</span>
@@ -254,8 +274,40 @@ export function ListingWizard({ initialTitle = "", initialCost = 0, initialPrice
       ) : null}
 
       {note ? <p className="rounded-xl border border-white/12 bg-white/5 px-4 py-3 text-sm text-slate-300">{note}</p> : null}
+
       {result ? (
-        <p className="rounded-xl border border-lime-brand/30 bg-lime-brand/10 px-4 py-3 text-sm text-lime-brand">{result}</p>
+        <div
+          className={`rounded-2xl border p-4 text-sm ${
+            result.ok
+              ? "border-lime-brand/30 bg-lime-brand/10 text-lime-brand"
+              : "border-amber-400/40 bg-amber-400/10 text-amber-200"
+          }`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <p className="font-semibold flex items-center gap-1.5">
+                <span>{result.ok ? "✓" : "⚠️"}</span>{" "}
+                {result.ok
+                  ? "Listing Published"
+                  : result.code === "plan_limit_reached"
+                  ? "Plan Limit Reached"
+                  : result.code === "vero_blocked"
+                  ? "Brand Name Blocked"
+                  : "Publishing Failed"}
+              </p>
+              <p className={`mt-1 ${result.ok ? "text-lime-brand/90" : "text-slate-300"}`}>{result.message}</p>
+            </div>
+            {result.upgrade && (
+              <Link
+                href="/dashboard/billing"
+                className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full bg-brand-500 px-5 py-2 text-xs font-bold text-white transition hover:bg-brand-400 shadow-md"
+              >
+                <span>Upgrade to {result.upgradePlan ?? "Pro"}</span>
+                <span>→</span>
+              </Link>
+            )}
+          </div>
+        </div>
       ) : null}
     </div>
   );

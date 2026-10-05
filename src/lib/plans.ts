@@ -1,3 +1,9 @@
+export type PlanFeature = {
+  label: string;
+  /** Not built yet — shown with an "In progress" tag, never as a shipped feature. */
+  inProgress?: boolean;
+};
+
 export type Plan = {
   id: "starter" | "pro" | "business";
   name: string;
@@ -5,14 +11,14 @@ export type Plan = {
   cadence: string;
   tagline: string;
   bulkLimit: string;
-  features: string[];
+  features: PlanFeature[];
   highlight?: boolean;
 };
 
 /**
- * Active-listing caps are the upgrade driver, so they are deliberately tight.
- * Batch size is always well below the active cap — you can never bulk-list
- * more products in one run than your plan can hold.
+ * LOCKED pricing: $19.99 / $49.99 / $89.99 for 50 / 200 / 1,000 active listings
+ * and 1 / 3 / 10 stores. Bulk publishing (50 per run) and up to 20 variants per
+ * product are included in every plan — plans differ by listing capacity.
  */
 export const PLANS: Plan[] = [
   {
@@ -21,16 +27,16 @@ export const PLANS: Plan[] = [
     price: 19.99,
     cadence: "/month",
     tagline: "Try the listing engine on one store.",
-    bulkLimit: "Bulk list 10 products per run",
+    bulkLimit: "Bulk list up to 50 products per run",
     features: [
-      "1 eBay store",
-      "50 active listings",
-      "Bulk list up to 10 products per run",
-      "AI listing copy (title, specifics, description)",
-      "Variant generation up to 20 per product",
-      "Winning-product research feed",
-      "Hourly supplier price checks",
-      "Email support",
+      { label: "1 eBay store" },
+      { label: "50 active listings" },
+      { label: "Bulk list up to 50 products per run" },
+      { label: "Up to 20 variants per product" },
+      { label: "AI listing copy (title, specifics, description)" },
+      { label: "Brand-name (VeRO) screening on every listing" },
+      { label: "Product research with profit after eBay fees" },
+      { label: "Email support" },
     ],
   },
   {
@@ -38,19 +44,19 @@ export const PLANS: Plan[] = [
     name: "Pro",
     price: 49.99,
     cadence: "/month",
-    tagline: "Unlimited bulk runs. This is the one that replaces the VA.",
-    bulkLimit: "Unlimited bulk runs, 50 products per run",
+    tagline: "4× the listings of Starter, for sellers who list every day.",
+    bulkLimit: "Bulk list up to 50 products per run",
     features: [
-      "3 eBay stores",
-      "200 active listings",
-      "Unlimited bulk runs, up to 50 products each",
-      "Unlimited variants per product",
-      "Scheduled drip posting (stealth cadence)",
-      "Automatic repricing rules",
-      "Out-of-stock auto-pause",
-      "VeRO keyword shield",
-      "Order + tracking sync",
-      "Priority support",
+      { label: "3 eBay stores" },
+      { label: "200 active listings" },
+      { label: "Bulk list up to 50 products per run" },
+      { label: "Up to 20 variants per product" },
+      { label: "Everything in Starter" },
+      { label: "Priority support" },
+      { label: "Scheduled drip posting", inProgress: true },
+      { label: "Automatic repricing rules", inProgress: true },
+      { label: "Out-of-stock auto-pause", inProgress: true },
+      { label: "Order + tracking sync from eBay", inProgress: true },
     ],
     highlight: true,
   },
@@ -60,17 +66,18 @@ export const PLANS: Plan[] = [
     price: 89.99,
     cadence: "/month",
     tagline: "Multi-store operators and small teams.",
-    bulkLimit: "Unlimited bulk runs, 200 products per run",
+    bulkLimit: "Bulk list up to 50 products per run",
     features: [
-      "10 eBay stores",
-      "1,000 active listings",
-      "Unlimited bulk runs, up to 200 products each",
-      "Unlimited variants per product",
-      "Bulk CSV + URL import",
-      "Team seats with per-store access",
-      "Custom pricing formulas",
-      "API access",
-      "Same-business-day support",
+      { label: "10 eBay stores" },
+      { label: "1,000 active listings" },
+      { label: "Bulk list up to 50 products per run" },
+      { label: "Up to 20 variants per product" },
+      { label: "Everything in Pro" },
+      { label: "Same-business-day support" },
+      { label: "Bulk CSV import", inProgress: true },
+      { label: "Team seats with per-store access", inProgress: true },
+      { label: "Custom pricing formulas", inProgress: true },
+      { label: "API access", inProgress: true },
     ],
   },
 ];

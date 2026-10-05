@@ -6,14 +6,19 @@ export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Billing" };
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Whole days left on the free trial (0 once it has ended). */
+function trialDaysRemaining(endsAt: Date, now: number) {
+  return Math.max(0, Math.ceil((endsAt.getTime() - now) / DAY_MS));
+}
+
 export default async function BillingPage({ searchParams }: { searchParams: Promise<{ demo?: string; status?: string }> }) {
   const params = await searchParams;
   const user = await getCurrentUser();
   if (!user) return null;
 
-  const trialDaysLeft = user.trialEndsAt
-    ? Math.max(0, Math.ceil((user.trialEndsAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
-    : 0;
+  const trialDaysLeft = user.trialEndsAt ? trialDaysRemaining(user.trialEndsAt, new Date().getTime()) : 0;
 
   return (
     <div className="space-y-6">

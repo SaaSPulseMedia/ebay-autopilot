@@ -11,7 +11,7 @@ import type { ListingDraft, ListingEngine, ListingResult } from "@/lib/ebay/type
 import { nextPlanUp, planLimits } from "@/lib/limits";
 import { getCatalog } from "@/lib/suppliers";
 import { buildVariants } from "@/lib/variants";
-import { and, count, eq, inArray } from "drizzle-orm";
+import { and, count, eq, ne } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -61,26 +61,38 @@ export async function POST(request: Request) {
     return Response.json(
       {
         ok: false,
+        code: "plan_limit_reached",
+        limitType: "batch_size",
         error: `Your ${limits.planName} plan lists up to ${limits.batchSize} products per run. You selected ${ids.length}.${upgradeHint}`,
         upgrade: true,
+        batchSize: limits.batchSize,
+        selected: ids.length,
+        plan: limits.planName,
+        upgradePlan: upgrade ? upgrade.name : null,
       },
       { status: 403 },
     );
   }
 
-  // Active-listing cap is a real limit, not just a pricing-page claim.
+  // Active-listing cap: count non-ended listings per user
   const [{ count: activeCount }] = await db
     .select({ count: count() })
     .from(listings)
-    .where(and(eq(listings.userId, user.id), inArray(listings.status, ["active", "queued"])));
+    .where(and(eq(listings.userId, user.id), ne(listings.status, "ended")));
 
-  const remaining = limits.activeListings - activeCount;
+  const remaining = Math.max(0, limits.activeListings - activeCount);
   if (remaining <= 0) {
     return Response.json(
       {
         ok: false,
-        error: `You are at your ${limits.planName} limit of ${limits.activeListings} active listings. End some listings or upgrade to keep publishing.`,
+        code: "plan_limit_reached",
+        limitType: "active_listings",
+        error: `You have reached your ${limits.planName} limit of ${limits.activeListings} active listings (${activeCount}/${limits.activeListings} used). End some listings or upgrade your plan to keep publishing.${upgradeHint}`,
         upgrade: true,
+        current: activeCount,
+        max: limits.activeListings,
+        plan: limits.planName,
+        upgradePlan: upgrade ? upgrade.name : null,
       },
       { status: 403 },
     );
@@ -89,18 +101,30 @@ export async function POST(request: Request) {
     return Response.json(
       {
         ok: false,
+        code: "plan_limit_reached",
+        limitType: "active_listings",
         error: `You have room for ${remaining} more active listing${remaining === 1 ? "" : "s"} on ${limits.planName} (${activeCount}/${limits.activeListings} used). You selected ${ids.length}.${upgradeHint}`,
         upgrade: true,
+        remaining,
+        current: activeCount,
+        max: limits.activeListings,
+        selected: ids.length,
+        plan: limits.planName,
+        upgradePlan: upgrade ? upgrade.name : null,
       },
       { status: 403 },
     );
   }
 
   const catalog = await getCatalog(200);
-  const selected = catalog.filter((product) => ids.includes(product.externalId));
-  if (!selected.length) {
+  const found = catalog.filter((product) => ids.includes(product.externalId));
+  if (!found.length) {
     return Response.json({ ok: false, error: "None of those products are in the catalog." }, { status: 404 });
   }
+
+  // Per-item VeRO gate: brand-name products are skipped, the rest of the batch still publishes.
+  const blocked = found.filter((product) => product.veroRisk === "high");
+  const selected = found.filter((product) => product.veroRisk !== "high");
 
   const [account] = await db
     .select()
@@ -110,7 +134,12 @@ export async function POST(request: Request) {
 
   const requested = parseEngine(body.engine);
   const batchId = randomUUID();
-  const results: { title: string; status: string; variants: number; message: string }[] = [];
+  const results: { title: string; status: string; variants: number; message: string }[] = blocked.map((product) => ({
+    title: product.title,
+    status: "blocked",
+    variants: 0,
+    message: `Skipped to protect your eBay account: ${product.veroReason}`,
+  }));
 
   // Process in small concurrent chunks so a large batch does not stall on AI calls.
   const CHUNK = 5;
@@ -172,7 +201,8 @@ export async function POST(request: Request) {
   return Response.json({
     ok: true,
     batchId,
-    requested: selected.length,
+    blocked: blocked.length,
+    requested: found.length,
     published,
     variantTotal,
     results,

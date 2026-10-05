@@ -1,6 +1,9 @@
+import { db } from "@/db";
+import { users } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
-import { createCheckoutSession } from "@/lib/billing";
+import { createCheckoutSession, isStripeConfigured } from "@/lib/billing";
 import type { Plan } from "@/lib/plans";
+import { eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -14,5 +17,9 @@ export async function POST(request: Request) {
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? new URL(request.url).origin;
   const session = await createCheckoutSession(plan, baseUrl);
 
-  return Response.json({ ok: true, ...session });
+  if (!isStripeConfigured()) {
+    await db.update(users).set({ plan }).where(eq(users.id, user.id));
+  }
+
+  return Response.json({ ok: true, plan, ...session });
 }
