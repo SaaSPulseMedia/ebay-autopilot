@@ -22,19 +22,7 @@ function authorized(request: Request) {
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
 
-/**
- * Drip-posting release job. Called about once an hour by
- * .github/workflows/drip-release.yml (Vercel's free plan only allows daily crons).
- * Releases the oldest scheduled listings, at most DRIP_PER_RUN per account per run.
- */
-export async function GET(request: Request) {
-  if (!process.env.CRON_SECRET) {
-    return Response.json({ ok: false, error: "Drip posting is not switched on: CRON_SECRET is not set." }, { status: 503 });
-  }
-  if (!authorized(request)) {
-    return Response.json({ ok: false, error: "Unauthorized." }, { status: 401 });
-  }
-
+async function releaseScheduled() {
   const due = await db
     .select({ id: listings.id, userId: listings.userId, payload: listings.payload })
     .from(listings)
@@ -77,11 +65,44 @@ export async function GET(request: Request) {
     }
   }
 
-  return Response.json({
+  return {
     ok: true,
     released,
     failed,
     accounts: perUser.size,
     stillScheduled: Math.max(0, due.length - released - failed),
-  });
+  };
+}
+
+/**
+ * Drip-posting release job. Called about once an hour by
+ * .github/workflows/drip-release.yml (Vercel's free plan only allows daily crons).
+ * Releases the oldest scheduled listings, at most DRIP_PER_RUN per account per run.
+ */
+export async function GET(request: Request) {
+  if (!process.env.CRON_SECRET) {
+    return Response.json({ ok: false, error: "Drip posting is not switched on: CRON_SECRET is not set." }, { status: 503 });
+  }
+  if (!authorized(request)) {
+    return Response.json({ ok: false, error: "Unauthorized." }, { status: 401 });
+  }
+
+  // One retry covers a database waking from idle (Neon's free tier sleeps after
+  // a few minutes). Any remaining failure is reported in the response so it
+  // shows up in the GitHub Actions log instead of an empty 500.
+  try {
+    return Response.json(await releaseScheduled());
+  } catch (first) {
+    console.error("[cron/release] first attempt failed", first);
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    try {
+      return Response.json(await releaseScheduled());
+    } catch (error) {
+      console.error("[cron/release] retry failed", error);
+      // Drizzle wraps driver errors; the underlying cause is the useful part.
+      const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : null;
+      const message = cause ?? (error instanceof Error ? error.message.split("\n")[0] : String(error));
+      return Response.json({ ok: false, error: `Release failed: ${message}` }, { status: 500 });
+    }
+  }
 }
