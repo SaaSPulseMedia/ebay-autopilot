@@ -21,11 +21,11 @@ Built with Next.js 16 (App Router), Drizzle ORM, and PostgreSQL.
 | **Bulk listing** | **The core feature. Tick any number of products and publish the whole batch in one run — the same engine handles 1 or 200** |
 | **Variants** | **Size, color, and style options expanded into proper multi-variant listings, each row with its own SKU, price, and quantity** |
 | Research | Supplier catalog with cost, suggested eBay price, shipping, and net profit after eBay's 13.55% final value fee and $0.40 per-order fee |
-| Import | Paste a supplier URL; the server fetches the page and reads title, price, and image from the markup |
+| Import | Paste up to 50 supplier links (`/dashboard/import`); each page is read for title, price, and image, priced at your markup, VeRO-screened, and listed with variants. Links to retailers/marketplaces (Amazon, Walmart, etc.) are refused because eBay does not allow filling orders from another retailer (`src/lib/supplier-policy.ts`) |
 | AI copy | Claude drafts an 80-character title, bullets, description, and item specifics, with a deterministic template fallback |
 | Publishing | Official eBay Sell API (OAuth), headless-Chromium fallback (scaffolded), and demo mode that skips only the final call |
 | Plan limits | Active listings are the upgrade driver: 50 on Starter, 200 on Pro, 1,000 on Business. Batch size: 50 per run and up to 20 variants per product on every plan. Limits enforced server-side (non-ended listings counted, typed `plan_limit_reached` error) |
-| Maintenance | Built: VeRO brand screening on every listing (`src/lib/vero.ts`). In progress: supplier re-checks, repricing rules, out-of-stock pause, spaced posting cadence |
+| Maintenance | Built: VeRO brand screening on every listing (`src/lib/vero.ts`); drip posting on Pro/Business — listings are scheduled and released up to 10 per account per hour by `/api/cron/release`, triggered hourly by `.github/workflows/drip-release.yml` (Vercel Hobby cron only runs daily). In progress: supplier re-checks, repricing rules, out-of-stock pause |
 | Orders | Fulfillment queue with buyer details, supplier cost, and realized margin, feeding the analytics totals |
 | Billing | Stripe Checkout with a demo fallback so the flow is clickable before live keys are added |
 
@@ -46,7 +46,7 @@ no testimonials.
 npm install
 cp .env.example .env        # fill in DATABASE_URL and AUTH_SECRET
 npm run db:push             # create tables
-npm run db:seed             # load the supplier catalog
+npm run db:seed             # load the 24 starter products (example prices)
 npm run dev
 ```
 
@@ -62,7 +62,7 @@ Open http://localhost:3000.
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | ESLint |
 | `npm run db:push` | Apply the Drizzle schema |
-| `npm run db:seed` | Seed the supplier catalog |
+| `npm run db:seed` | Load the 24 starter products (example prices) |
 
 ## Environment variables
 
@@ -81,8 +81,7 @@ Optional — each has a working fallback:
 | `ANTHROPIC_API_KEY` | Claude listing copy; falls back to the built-in template |
 | `ANTHROPIC_MODEL` | Override the Claude model |
 | `STRIPE_SECRET_KEY` | Live Stripe Checkout; falls back to demo checkout |
-| `RAINFOREST_API_KEY` | Amazon supplier feed |
-| `RAPIDAPI_KEY` | Alternate supplier feed |
+| `CRON_SECRET` | Protects `/api/cron/release` (drip posting). Same value as the GitHub secret `CRON_SECRET` |
 | `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` / `EBAY_REDIRECT_URI` | eBay OAuth app credentials |
 | `EBAY_SANDBOX` | `true` to target eBay sandbox |
 | `ENABLE_BROWSER_ENGINE` / `CHROMIUM_EXECUTABLE_PATH` | Enable the headless-Chromium fallback (not implemented yet) |

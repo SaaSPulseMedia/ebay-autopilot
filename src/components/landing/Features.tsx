@@ -24,7 +24,7 @@ const features = [
     icon: "🔗",
     title: "Import from supplier URLs",
     body:
-      "Paste one link or a whole list. AutoPilot fetches each page server-side and pulls the title, price, and images out of the markup so you are not copy-pasting fields.",
+      "Paste one link or a list of up to 50, set your markup, and press one button. AutoPilot reads each supplier page, prices it, and lists it. Links to retail stores like Amazon or Walmart are refused, because eBay does not allow filling orders from another retailer.",
   },
   {
     icon: "🔎",
@@ -55,8 +55,7 @@ const features = [
     icon: "⏱️",
     title: "Drip posting",
     body:
-      "Large batches will be released on a spaced schedule instead of landing on eBay all at once.",
-    inProgress: true,
+      "On Pro and Business, schedule a batch and it is released up to 10 listings an hour instead of landing on eBay all at once.",
   },
   {
     icon: "📦",

@@ -12,6 +12,10 @@ const faqs = [
     a: "Yes, and this is the part we care most about getting right. There is nothing to install, nothing to configure, and no developer account to apply for. You need two things: an eBay seller account and somewhere to buy your products from. Setup is create an account, press Connect eBay store, approve on eBay's screen, and start listing — most people are done in under five minutes. We also wrote a plain-English setup guide with no jargon in it, and if you get stuck at any point you can email us and we will walk you through it.",
   },
   {
+    q: "Can I use Amazon or Walmart as my supplier?",
+    a: "No, and AutoPilot will not let you. eBay allows dropshipping from a wholesale supplier, but it does not allow listing an item and then buying it from another retailer or marketplace to ship to your buyer. Sellers get listings removed or accounts restricted for it. Links to retail stores like Amazon, Walmart, or Target are skipped automatically. AliExpress is only acceptable through its official dropshipping program. Use a wholesale or dropship supplier instead.",
+  },
+  {
     q: "Does AutoPilot publish listings directly on eBay?",
     a: "Yes. Once you have connected your store, listings you publish in AutoPilot appear on eBay as listings from your own shop, under your account, with your business policies. We use eBay's official partner connection to do it, which is the same mechanism other eBay tools use and is fully within eBay's rules. Before you connect anything, the app runs in demo mode so you can try the whole flow — research, pricing, AI copy, the lot — without a single thing being posted to eBay."
   },

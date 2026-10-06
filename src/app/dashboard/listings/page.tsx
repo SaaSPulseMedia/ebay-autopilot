@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { listings } from "@/db/schema";
 import { ListingsTable } from "@/components/dashboard/ListingsTable";
 import { getCurrentUser } from "@/lib/auth";
-import { planLimits } from "@/lib/limits";
+import { DRIP_PER_RUN, planLimits } from "@/lib/limits";
 import { and, count, desc, eq, ne } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +29,8 @@ export default async function ListingsPage() {
       .from(listings)
       .where(and(eq(listings.userId, user.id), ne(listings.status, "ended"))),
   ]);
+
+  const scheduled = rows.filter((row) => row.status === "scheduled").length;
 
   return (
     <div className="space-y-6">
@@ -60,6 +62,15 @@ export default async function ListingsPage() {
           </Link>
         </div>
       </div>
+
+      {scheduled ? (
+        <p className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-200">
+          {scheduled} listing{scheduled === 1 ? " is" : "s are"} scheduled for drip posting.{" "}
+          {process.env.CRON_SECRET
+            ? `Up to ${DRIP_PER_RUN} go out about once an hour.`
+            : "Automatic release is not switched on for this site yet, so they will stay scheduled until it is."}
+        </p>
+      ) : null}
 
       <ListingsTable initialListings={rows} />
     </div>

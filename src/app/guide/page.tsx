@@ -56,8 +56,8 @@ const steps = [
     time: "a few minutes per sale",
     title: "When something sells",
     body: [
-      "The sale appears in your Orders page with the buyer's delivery details, what the item costs you, and what you actually made on it.",
-      "You buy the item from your supplier and have it delivered to the buyer, then paste the tracking number back into AutoPilot. The order is then closed and counted in your totals.",
+      "Sales recorded in your account appear on your Orders page with what the item cost you and what you actually made on it. Pulling new sales in from eBay automatically is still being built.",
+      "You order the item from your wholesale or dropship supplier and have it delivered to the buyer, then add the tracking number to the order in eBay as you normally would. Sending tracking to eBay from AutoPilot is still being built.",
     ],
     note: null,
   },
@@ -120,7 +120,7 @@ export default function GuidePage() {
                 <p className="text-xs font-semibold uppercase tracking-wide text-lime-brand">What you need</p>
                 <ul className="mt-2 space-y-1 text-sm text-slate-200">
                   <li>✓ An eBay seller account</li>
-                  <li>✓ A supplier you buy from</li>
+                  <li>✓ A wholesale or dropship supplier (not a retail store like Amazon or Walmart)</li>
                   <li>✓ An email address</li>
                 </ul>
               </div>

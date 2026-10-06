@@ -1,19 +1,20 @@
 import { db } from "@/db";
-import { ebayAccounts, listings } from "@/db/schema";
+import { listings } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
-import { publishViaApi } from "@/lib/ebay/api-list";
-import { publishViaBrowser, isBrowserEngineAvailable } from "@/lib/ebay/browser-list";
-import { publishViaDemo } from "@/lib/ebay/demo-list";
-import type { ListingDraft, ListingEngine, ListingResult } from "@/lib/ebay/types";
-import { nextPlanUp, planLimits } from "@/lib/limits";
+import type { ListingDraft } from "@/lib/ebay/types";
+import { planLimits } from "@/lib/limits";
+import {
+  checkPlanCapacity,
+  connectedAccessToken,
+  parseEngine,
+  publishWithFallback,
+  storedStatus,
+} from "@/lib/listing-pipeline";
+import { checkSupplierUrl } from "@/lib/supplier-policy";
 import { screenVero } from "@/lib/vero";
-import { and, count, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
-
-function parseEngine(value: unknown): ListingEngine | "auto" {
-  return value === "api" || value === "browser" || value === "demo" ? value : "auto";
-}
 
 export async function GET() {
   const user = await getCurrentUser();
@@ -47,6 +48,14 @@ export async function POST(request: Request) {
     quantity: Number(body.quantity ?? 1),
   };
 
+  // Retail-arbitrage gate: eBay does not allow fulfilling from another retailer.
+  if (draft.sourceUrl) {
+    const supplier = checkSupplierUrl(draft.sourceUrl);
+    if (!supplier.allowed) {
+      return Response.json({ ok: false, code: "supplier_blocked", error: supplier.reason }, { status: 422 });
+    }
+  }
+
   // VeRO gate: never publish a listing whose title names a protected brand.
   const vero = screenVero(draft.title);
   if (vero.risk === "high") {
@@ -61,55 +70,10 @@ export async function POST(request: Request) {
     );
   }
 
-  // Plan-limit enforcement: count non-ended listings per user
-  const limits = planLimits(user.plan);
-  const [{ count: activeCount }] = await db
-    .select({ count: count() })
-    .from(listings)
-    .where(and(eq(listings.userId, user.id), ne(listings.status, "ended")));
+  const limitResponse = await checkPlanCapacity(user.id, planLimits(user.plan), 1);
+  if (limitResponse) return limitResponse;
 
-  if (activeCount >= limits.activeListings) {
-    const upgrade = nextPlanUp(limits.planId);
-    const upgradeHint = upgrade ? ` Upgrade to ${upgrade.name} for ${limits.planId === "starter" ? "200" : "1,000"} active listings.` : "";
-    return Response.json(
-      {
-        ok: false,
-        code: "plan_limit_reached",
-        error: `You have reached your ${limits.planName} plan limit of ${limits.activeListings} active listings (${activeCount}/${limits.activeListings} used). End some listings or upgrade to keep publishing.${upgradeHint}`,
-        upgrade: true,
-        limitType: "active_listings",
-        current: activeCount,
-        max: limits.activeListings,
-        plan: limits.planName,
-        upgradePlan: upgrade ? upgrade.name : null,
-      },
-      { status: 403 },
-    );
-  }
-
-  const [account] = await db
-    .select()
-    .from(ebayAccounts)
-    .where(and(eq(ebayAccounts.userId, user.id), eq(ebayAccounts.mode, "oauth")))
-    .limit(1);
-
-  const requested = parseEngine(body.engine);
-  // Engine routing: explicit choice wins, otherwise API > browser > demo.
-  const order: ListingEngine[] =
-    requested === "auto"
-      ? [account ? "api" : "demo", isBrowserEngineAvailable() ? "browser" : "demo", "demo"]
-      : [requested, "demo"];
-
-  let result: ListingResult | null = null;
-  for (const engine of order) {
-    if (engine === "api") result = await publishViaApi(draft, account?.accessToken ?? null);
-    else if (engine === "browser") result = await publishViaBrowser(draft);
-    else result = await publishViaDemo(draft);
-
-    if (result.status === "published" || result.status === "queued") break;
-  }
-
-  const final = result ?? (await publishViaDemo(draft));
+  const final = await publishWithFallback(draft, parseEngine(body.engine), await connectedAccessToken(user.id));
 
   const [saved] = await db
     .insert(listings)
@@ -122,7 +86,7 @@ export async function POST(request: Request) {
       supplierPrice: draft.supplierPrice.toFixed(2),
       listPrice: draft.listPrice.toFixed(2),
       engine: final.engine,
-      status: final.status === "published" ? "active" : final.status === "queued" ? "queued" : "draft",
+      status: storedStatus(final),
       ebayItemId: final.itemId,
       aiGenerated: Boolean(body.description),
       payload: draft,
@@ -134,6 +98,7 @@ export async function POST(request: Request) {
   return Response.json({ ok: true, result: response, listing: saved });
 }
 
+/** End a listing (or cancel a scheduled one) so it stops counting against the plan. */
 export async function PATCH(request: Request) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ ok: false, error: "Not signed in." }, { status: 401 });

@@ -20,8 +20,11 @@ export function ListingsTable({ initialListings }: { initialListings: ListingRow
   const [items, setItems] = useState<ListingRow[]>(initialListings);
   const [busyId, setBusyId] = useState<number | null>(null);
 
-  async function endListing(id: number) {
-    if (!confirm("End this listing? It will no longer count against your active plan limit.")) return;
+  async function endListing(id: number, scheduled: boolean) {
+    const question = scheduled
+      ? "Cancel this scheduled listing? It will not be posted."
+      : "End this listing? It will no longer count against your active plan limit.";
+    if (!confirm(question)) return;
     setBusyId(id);
     try {
       const res = await fetch("/api/listings", {
@@ -81,6 +84,8 @@ export function ListingsTable({ initialListings }: { initialListings: ListingRow
                       ? "bg-lime-brand/15 text-lime-brand border border-lime-brand/30"
                       : row.status === "queued"
                       ? "bg-brand-500/15 text-brand-400 border border-brand-500/30"
+                      : row.status === "scheduled"
+                      ? "bg-amber-400/15 text-amber-200 border border-amber-400/30"
                       : row.status === "ended"
                       ? "bg-slate-700/40 text-slate-400 border border-slate-600/30"
                       : "bg-white/8 text-slate-300"
@@ -94,11 +99,11 @@ export function ListingsTable({ initialListings }: { initialListings: ListingRow
                 {row.status !== "ended" ? (
                   <button
                     type="button"
-                    onClick={() => endListing(row.id)}
+                    onClick={() => endListing(row.id, row.status === "scheduled")}
                     disabled={busyId === row.id}
                     className="rounded-full border border-red-500/30 px-3 py-1 text-xs font-medium text-red-400 hover:bg-red-500/10 disabled:opacity-50"
                   >
-                    {busyId === row.id ? "Ending…" : "End listing"}
+                    {busyId === row.id ? "Working…" : row.status === "scheduled" ? "Cancel" : "End listing"}
                   </button>
                 ) : (
                   <span className="text-xs text-slate-500">Ended</span>

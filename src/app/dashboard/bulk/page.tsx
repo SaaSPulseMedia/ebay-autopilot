@@ -1,8 +1,10 @@
+import Link from "next/link";
+
 import { db } from "@/db";
 import { listings } from "@/db/schema";
 import { BulkLister, type BulkProduct } from "@/components/dashboard/BulkLister";
 import { getCurrentUser } from "@/lib/auth";
-import { planLimits } from "@/lib/limits";
+import { DRIP_PER_RUN, planLimits } from "@/lib/limits";
 import { getCatalog, isSampleProduct, netProfit } from "@/lib/suppliers";
 import { buildVariants } from "@/lib/variants";
 import { and, count, eq, ne } from "drizzle-orm";
@@ -45,7 +47,11 @@ export default async function BulkPage() {
         <h1 className="text-2xl font-bold tracking-tight text-white">Bulk listing</h1>
         <p className="mt-1 text-sm text-slate-400">
           Tick the products you want and press one button. AutoPilot writes each listing, expands the variants, applies
-          your pricing, and publishes the batch. The same engine handles one product or a full batch.
+          your pricing, and publishes the batch. The same engine handles one product or a full batch. Have your own
+          supplier links?{" "}
+          <Link href="/dashboard/import" className="font-semibold text-brand-400 hover:text-brand-500">
+            Paste a list instead →
+          </Link>
         </p>
         {sample ? (
           <p className="mt-3 rounded-xl border border-white/12 bg-white/5 px-3 py-2 text-xs text-slate-300">
@@ -68,6 +74,8 @@ export default async function BulkPage() {
         activeUsed={activeUsed}
         planName={limits.planName}
         isTrial={limits.isTrial}
+        dripAllowed={limits.dripPosting}
+        dripPerRun={DRIP_PER_RUN}
       />
     </div>
   );

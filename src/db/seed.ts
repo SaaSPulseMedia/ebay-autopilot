@@ -4,7 +4,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
 import { competitionFor, priceForEbay } from "../lib/pricing";
-import { STARTER_ROWS } from "../lib/starter-catalog";
+import { SAMPLE_SUPPLIER, STARTER_ROWS } from "../lib/starter-catalog";
 import { catalogProducts } from "./schema";
 
 /** Loads the 24 starter products (example prices). Safe to run more than once. */
@@ -24,7 +24,7 @@ async function main() {
         source: "seed",
         title: row.title,
         category: row.category,
-        supplier: row.supplier,
+        supplier: SAMPLE_SUPPLIER,
         supplierPrice: row.supplierPrice.toFixed(2),
         suggestedPrice: suggested.toFixed(2),
         shippingCost: shipping.toFixed(2),
@@ -35,6 +35,7 @@ async function main() {
       .onConflictDoUpdate({
         target: catalogProducts.externalId,
         set: {
+          supplier: SAMPLE_SUPPLIER,
           supplierPrice: row.supplierPrice.toFixed(2),
           suggestedPrice: suggested.toFixed(2),
           shippingCost: shipping.toFixed(2),

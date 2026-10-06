@@ -53,7 +53,7 @@ export const PLANS: Plan[] = [
       { label: "Up to 20 variants per product" },
       { label: "Everything in Starter" },
       { label: "Priority support" },
-      { label: "Scheduled drip posting", inProgress: true },
+      { label: "Drip posting — batches released up to 10 per hour" },
       { label: "Automatic repricing rules", inProgress: true },
       { label: "Out-of-stock auto-pause", inProgress: true },
       { label: "Order + tracking sync from eBay", inProgress: true },

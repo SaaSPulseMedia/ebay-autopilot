@@ -59,7 +59,7 @@ export const catalogProducts = pgTable(
     source: text("source").notNull().default("seed"),
     title: text("title").notNull(),
     category: text("category").notNull().default("General"),
-    supplier: text("supplier").notNull().default("Amazon US"),
+    supplier: text("supplier").notNull().default("Unknown supplier"),
     supplierUrl: text("supplier_url"),
     imageUrl: text("image_url"),
     supplierPrice: numeric("supplier_price", { precision: 10, scale: 2 }).notNull(),

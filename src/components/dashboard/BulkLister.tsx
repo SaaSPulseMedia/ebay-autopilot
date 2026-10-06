@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
+import { BatchSummary, DripToggle, type BatchResponse } from "@/components/dashboard/BatchControls";
+
 export type BulkProduct = {
   externalId: string;
   title: string;
@@ -24,28 +26,27 @@ type Props = {
   activeUsed: number;
   planName: string;
   isTrial: boolean;
+  dripAllowed: boolean;
+  dripPerRun: number;
 };
 
-type BulkResponse = {
-  ok: boolean;
-  code?: string;
-  error?: string;
-  upgrade?: boolean;
-  upgradePlan?: string | null;
-  limitType?: string;
-  requested?: number;
-  published?: number;
-  blocked?: number;
-  variantTotal?: number;
-  results?: { title: string; status: string; variants: number; message?: string }[];
-};
 
-export function BulkLister({ products, batchSize, activeListings, activeUsed, planName, isTrial }: Props) {
+export function BulkLister({
+  products,
+  batchSize,
+  activeListings,
+  activeUsed,
+  planName,
+  isTrial,
+  dripAllowed,
+  dripPerRun,
+}: Props) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
-  const [summary, setSummary] = useState<BulkResponse | null>(null);
+  const [summary, setSummary] = useState<BatchResponse | null>(null);
+  const [drip, setDrip] = useState(false);
 
   const visible = useMemo(
     () => (query ? products.filter((p) => p.title.toLowerCase().includes(query.toLowerCase())) : products),
@@ -93,9 +94,9 @@ export function BulkLister({ products, batchSize, activeListings, activeUsed, pl
       const res = await fetch("/api/listings/bulk", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ externalIds: Array.from(selected) }),
+        body: JSON.stringify({ externalIds: Array.from(selected), drip: dripAllowed && drip }),
       });
-      const json = (await res.json()) as BulkResponse;
+      const json = (await res.json()) as BatchResponse;
       setSummary(json);
       if (json.ok) {
         setSelected(new Set());
@@ -138,7 +139,9 @@ export function BulkLister({ products, batchSize, activeListings, activeUsed, pl
             disabled={busy || !selected.size || overLimit || atCapacity}
             className="ap-glow rounded-full bg-brand-500 px-6 py-2.5 text-sm font-bold text-white transition hover:bg-brand-400 disabled:opacity-50 disabled:shadow-none"
           >
-            {busy ? `Listing ${selected.size}…` : `⚡ List selected (${selected.size})`}
+            {busy
+              ? `Listing ${selected.size}…`
+              : `⚡ ${dripAllowed && drip ? "Schedule" : "List"} selected (${selected.size})`}
           </button>
         </div>
 
@@ -160,6 +163,10 @@ export function BulkLister({ products, batchSize, activeListings, activeUsed, pl
           <span>
             Projected profit per unit sold: <span className="text-lime-brand">${projectedProfit.toFixed(2)}</span>
           </span>
+        </div>
+
+        <div className="mt-3">
+          <DripToggle allowed={dripAllowed} checked={drip} perRun={dripPerRun} onChange={setDrip} />
         </div>
 
         {atCapacity ? (
@@ -194,47 +201,7 @@ export function BulkLister({ products, batchSize, activeListings, activeUsed, pl
         ) : null}
       </div>
 
-      {summary ? (
-        summary.ok ? (
-          <div className="rounded-2xl border border-lime-brand/30 bg-lime-brand/10 px-4 py-3 text-sm text-lime-brand">
-            <p>
-              Batch complete: {summary.published}/{summary.requested} listings pushed, {summary.variantTotal} variant
-              rows built. Open the Listings tab to review them.
-            </p>
-            {summary.blocked ? (
-              <ul className="mt-2 space-y-1 text-amber-200">
-                {summary.results
-                  ?.filter((row) => row.status === "blocked")
-                  .map((row) => (
-                    <li key={row.title}>
-                      ⛔ {row.title}: {row.message}
-                    </li>
-                  ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-amber-400/40 bg-amber-400/10 p-4 text-sm text-amber-200">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div>
-                <p className="font-semibold text-amber-100 flex items-center gap-1.5">
-                  <span>⚠️</span> {summary.code === "plan_limit_reached" ? "Plan Limit Reached" : "Batch could not be listed"}
-                </p>
-                <p className="mt-1 text-slate-300">{summary.error}</p>
-              </div>
-              {(summary.upgrade || summary.code === "plan_limit_reached") && (
-                <Link
-                  href="/dashboard/billing"
-                  className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full bg-brand-500 px-5 py-2 text-xs font-bold text-white transition hover:bg-brand-400 shadow-md"
-                >
-                  <span>Upgrade to {summary.upgradePlan ?? "Pro"}</span>
-                  <span>→</span>
-                </Link>
-              )}
-            </div>
-          </div>
-        )
-      ) : null}
+      {summary ? <BatchSummary summary={summary} perRun={dripPerRun} /> : null}
 
       <div className="ap-card overflow-x-auto rounded-2xl">
         <table className="w-full min-w-[760px] text-left text-sm">

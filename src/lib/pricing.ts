@@ -7,6 +7,21 @@
 export const EBAY_FINAL_VALUE_FEE = 0.1355;
 export const EBAY_FIXED_FEE = 0.4;
 
+/** eBay fees on one sale: final value fee + fixed fee + optional promoted-listing ad rate. */
+export function ebayFees(listPrice: number, adRatePct = 0) {
+  return listPrice * (EBAY_FINAL_VALUE_FEE + adRatePct / 100) + EBAY_FIXED_FEE;
+}
+
+/** What is left after supplier cost, shipping, and eBay fees. */
+export function netProfitFor(listPrice: number, cost: number, shipping = 0, adRatePct = 0) {
+  return listPrice - cost - shipping - ebayFees(listPrice, adRatePct);
+}
+
+/** List price from a markup on supplier cost, e.g. 40% markup on $10 → $14.00. */
+export function priceFromMarkup(cost: number, markupPct: number) {
+  return Math.round(cost * (1 + markupPct / 100) * 100) / 100;
+}
+
 /** Price a supplier item for eBay so the net margin lands near 23% after fees. */
 export function priceForEbay(cost: number) {
   const shipping = cost < 25 ? 4.25 : 0;

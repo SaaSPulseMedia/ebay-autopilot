@@ -9,6 +9,8 @@ export type PlanLimits = {
   activeListings: number;
   /** Maximum variant rows generated per product. */
   maxVariants: number;
+  /** Drip posting: schedule a batch and release it gradually (Pro and Business). */
+  dripPosting: boolean;
   /** Trial accounts get Starter capability so the feature is testable. */
   isTrial: boolean;
 };
@@ -19,11 +21,13 @@ export type PlanLimits = {
  */
 export const BATCH_SIZE = 50;
 export const MAX_VARIANTS = 20;
+/** Drip posting releases at most this many scheduled listings per account per hourly run. */
+export const DRIP_PER_RUN = 10;
 
 const TABLE: Record<Plan["id"], Omit<PlanLimits, "planId" | "planName" | "isTrial">> = {
-  starter: { batchSize: BATCH_SIZE, activeListings: 50, maxVariants: MAX_VARIANTS },
-  pro: { batchSize: BATCH_SIZE, activeListings: 200, maxVariants: MAX_VARIANTS },
-  business: { batchSize: BATCH_SIZE, activeListings: 1000, maxVariants: MAX_VARIANTS },
+  starter: { batchSize: BATCH_SIZE, activeListings: 50, maxVariants: MAX_VARIANTS, dripPosting: false },
+  pro: { batchSize: BATCH_SIZE, activeListings: 200, maxVariants: MAX_VARIANTS, dripPosting: true },
+  business: { batchSize: BATCH_SIZE, activeListings: 1000, maxVariants: MAX_VARIANTS, dripPosting: true },
 };
 
 export function planLimits(plan: string): PlanLimits {
