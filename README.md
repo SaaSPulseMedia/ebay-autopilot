@@ -85,6 +85,7 @@ Optional — each has a working fallback:
 | `CRON_SECRET` | Protects `/api/cron/release` (drip posting). Same value as the GitHub secret `CRON_SECRET` |
 | `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` | eBay keyset App ID and Cert ID |
 | `EBAY_REDIRECT_URI` | The **RuName** (eBay Redirect URL name) shown on the developer portal's User Tokens page — not a URL. Its auth accepted URL must be `https://<your-domain>/api/ebay/callback` |
+| `EBAY_AUTH_ORIGIN` | Optional. A second domain of this same deployment **without "ebay" in it** (e.g. `https://autopilot-lister.vercel.app`). eBay's sign-in settings reject privacy/accept URLs on a domain containing "ebay", so the RuName points there: privacy `…/legal/privacy`, accepted **and** declined `…/api/ebay/callback`. The seller is handed over with a 2-minute signed token and returned to `NEXT_PUBLIC_BASE_URL` |
 | `TOKEN_ENCRYPTION_KEY` | Optional. Key for encrypting stored eBay tokens; defaults to `AUTH_SECRET`. Changing it means sellers reconnect |
 | `EBAY_SANDBOX` | `true` to target eBay sandbox |
 | `ENABLE_BROWSER_ENGINE` / `CHROMIUM_EXECUTABLE_PATH` | Enable the headless-Chromium fallback (not implemented yet) |

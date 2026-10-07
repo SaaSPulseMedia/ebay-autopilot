@@ -138,3 +138,35 @@ export async function loginUser(email: string, password: string) {
   await createSession(row.id);
   return { ok: true as const, userId: row.id };
 }
+
+/**
+ * Short-lived signed token for a single purpose (e.g. handing an eBay connection
+ * from the main site to the eBay-facing domain). Signed with the session key, so
+ * it cannot be forged; it carries only a user id and a few extra claims.
+ */
+export async function signPurposeToken(
+  purpose: string,
+  userId: number,
+  extra: Record<string, string> = {},
+  ttl = "10m",
+) {
+  return new SignJWT({ ...extra, uid: userId, purpose })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime(ttl)
+    .sign(secret());
+}
+
+export async function verifyPurposeToken(
+  token: string | null | undefined,
+  purpose: string,
+): Promise<{ uid: number; claims: Record<string, unknown> } | null> {
+  if (!token) return null;
+  try {
+    const { payload } = await jwtVerify(token, secret());
+    if (payload.purpose !== purpose || typeof payload.uid !== "number") return null;
+    return { uid: payload.uid, claims: payload as Record<string, unknown> };
+  } catch {
+    return null;
+  }
+}

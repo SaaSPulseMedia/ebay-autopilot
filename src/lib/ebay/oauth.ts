@@ -14,6 +14,8 @@ import "server-only";
 
 /** HTTP-only cookie holding the one-time OAuth state between /connect and /callback. */
 export const EBAY_STATE_COOKIE = "ap_ebay_state";
+/** Purpose claim of the signed token stored in that cookie. */
+export const EBAY_STATE_PURPOSE = "ebay-state";
 
 export const EBAY_SCOPES = [
   "https://api.ebay.com/oauth/api_scope",
@@ -38,6 +40,41 @@ export function isEbayConfigured() {
 
 export function isEbaySandbox() {
   return ebayEnv().sandbox;
+}
+
+function originOf(value: string | undefined) {
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The origin the browser actually asked for. Behind Vercel's proxy (and locally)
+ * `request.url` can carry a normalised host, so prefer the forwarded headers.
+ */
+export function requestOrigin(request: Request) {
+  const url = new URL(request.url);
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? url.host;
+  const proto = request.headers.get("x-forwarded-proto") ?? url.protocol.replace(":", "");
+  return originOf(`${proto.split(",")[0].trim()}://${host.split(",")[0].trim()}`) ?? url.origin;
+}
+
+/**
+ * Domain eBay talks to (privacy policy, auth accepted/declined URLs). eBay's
+ * sign-in settings reject URLs on a domain containing "ebay", so the connection
+ * can run on a second domain (EBAY_AUTH_ORIGIN) of the same deployment.
+ * Falls back to wherever the request came from.
+ */
+export function ebayAuthOrigin(request: Request) {
+  return originOf(process.env.EBAY_AUTH_ORIGIN) ?? requestOrigin(request);
+}
+
+/** Where sellers use the dashboard (sessions live on this domain). */
+export function siteOrigin(request: Request) {
+  return originOf(process.env.NEXT_PUBLIC_BASE_URL) ?? requestOrigin(request);
 }
 
 function hosts() {

@@ -6,9 +6,16 @@ import { NextResponse } from "next/server";
 
 import { db } from "@/db";
 import { ebayAccounts } from "@/db/schema";
-import { getCurrentUser } from "@/lib/auth";
+import { verifyPurposeToken } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
-import { EBAY_STATE_COOKIE, exchangeCodeForTokens, isEbayConfigured, isEbaySandbox } from "@/lib/ebay/oauth";
+import {
+  EBAY_STATE_COOKIE,
+  EBAY_STATE_PURPOSE,
+  exchangeCodeForTokens,
+  isEbayConfigured,
+  isEbaySandbox,
+  siteOrigin,
+} from "@/lib/ebay/oauth";
 
 export const dynamic = "force-dynamic";
 
@@ -18,16 +25,24 @@ function sameValue(a: string, b: string) {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-/** eBay sends the seller back here after its consent screen ("auth accepted URL"). */
+/**
+ * eBay sends the seller back here after its consent screen. Configure this URL
+ * as BOTH the "auth accepted URL" and the "auth declined URL" of the RuName.
+ *
+ * The seller may not be signed in on this domain (see EBAY_AUTH_ORIGIN), so the
+ * user comes from the signed state cookie set by /api/ebay/connect — never from
+ * the query string. The seller always ends up back on the main site's Settings.
+ */
 export async function GET(request: Request) {
   const settings = (status: string) => {
-    const response = NextResponse.redirect(new URL(`/dashboard/settings?ebay=${status}`, request.url), 303);
+    const response = NextResponse.redirect(
+      new URL(`/dashboard/settings?ebay=${status}`, siteOrigin(request)),
+      303,
+    );
     response.cookies.delete({ name: EBAY_STATE_COOKIE, path: "/api/ebay" });
     return response;
   };
 
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.redirect(new URL("/login", request.url), 303);
   if (!isEbayConfigured()) return settings("not-configured");
 
   const url = new URL(request.url);
@@ -35,13 +50,14 @@ export async function GET(request: Request) {
   const state = url.searchParams.get("state") ?? "";
   if (!code) return settings("denied");
 
-  // The callback must belong to a connection this browser started, for this user.
-  const expected = (await cookies()).get(EBAY_STATE_COOKIE)?.value ?? "";
-  if (!expected || !sameValue(expected, `${user.id}.${state}`)) return settings("expired");
+  const stored = await verifyPurposeToken((await cookies()).get(EBAY_STATE_COOKIE)?.value, EBAY_STATE_PURPOSE);
+  const expectedState = typeof stored?.claims.state === "string" ? stored.claims.state : "";
+  if (!stored || !expectedState || !sameValue(expectedState, state)) return settings("expired");
+  const userId = stored.uid;
 
   const result = await exchangeCodeForTokens(code);
   if (!result.ok) {
-    console.error(`[ebay] code exchange failed for user ${user.id}: ${result.error}`);
+    console.error(`[ebay] code exchange failed for user ${userId}: ${result.error}`);
     return settings("error");
   }
 
@@ -58,13 +74,13 @@ export async function GET(request: Request) {
   const [existing] = await db
     .select({ id: ebayAccounts.id })
     .from(ebayAccounts)
-    .where(and(eq(ebayAccounts.userId, user.id), eq(ebayAccounts.mode, "oauth")))
+    .where(and(eq(ebayAccounts.userId, userId), eq(ebayAccounts.mode, "oauth")))
     .limit(1);
 
   if (existing) {
     await db.update(ebayAccounts).set(values).where(eq(ebayAccounts.id, existing.id));
   } else {
-    await db.insert(ebayAccounts).values({ userId: user.id, ...values });
+    await db.insert(ebayAccounts).values({ userId, ...values });
   }
 
   return settings("connected");
