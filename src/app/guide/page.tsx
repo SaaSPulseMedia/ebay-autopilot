@@ -46,7 +46,7 @@ const steps = [
     time: "about 30 seconds per product",
     title: "Press the button",
     body: [
-      "Press List selected. AutoPilot writes the title, the description and the item specifics for every product, builds out all the size and colour options, applies your pricing, and puts them live on eBay.",
+      "Press List selected. AutoPilot writes the title, the description and the item specifics for every product, builds out all the size and colour options, applies your pricing, and publishes them. Publishing straight to eBay is being switched on now — until it is, listings are created in demo mode and nothing is posted.",
       "You can close the tab. It keeps going in the background and the results appear under Listings when it is done.",
     ],
     note: null,

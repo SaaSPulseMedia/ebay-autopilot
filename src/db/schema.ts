@@ -4,6 +4,7 @@ import {
   jsonb,
   numeric,
   pgTable,
+  real,
   serial,
   text,
   timestamp,
@@ -106,4 +107,18 @@ export const orders = pgTable("orders", {
   status: text("status").notNull().default("awaiting_fulfillment"),
   trackingNumber: text("tracking_number"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Per-seller listing defaults, applied to every new listing (bulk, paste links, single). */
+export const sellerSettings = pgTable("seller_settings", {
+  userId: integer("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  pricingMode: text("pricing_mode").notNull().default("suggested"), // 'suggested' | 'markup'
+  markupPct: integer("markup_pct").notNull().default(40),
+  adRatePct: real("ad_rate_pct").notNull().default(0),
+  quantityPerVariant: integer("quantity_per_variant").notNull().default(10),
+  handlingDays: integer("handling_days").notNull().default(2),
+  descriptionFooter: text("description_footer").notNull().default(""),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

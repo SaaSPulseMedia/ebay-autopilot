@@ -1,4 +1,7 @@
 import { ListingWizard } from "@/components/dashboard/ListingWizard";
+import { getCurrentUser } from "@/lib/auth";
+import { listPriceFor } from "@/lib/pricing";
+import { getListingDefaults } from "@/lib/seller-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +13,13 @@ export default async function NewListingPage({
   searchParams: Promise<{ title?: string; cost?: string; price?: string }>;
 }) {
   const params = await searchParams;
+  const user = await getCurrentUser();
+  if (!user) return null;
+  const defaults = await getListingDefaults(user.id);
+  const cost = Number(params.cost ?? 0);
+  const suggested = Number(params.price ?? 0);
+  // Research links pass AutoPilot's suggested price; the seller's own markup wins if they set one.
+  const initialPrice = cost > 0 ? listPriceFor(defaults, cost, 0, suggested) : suggested;
 
   return (
     <div className="space-y-6">
@@ -22,8 +32,11 @@ export default async function NewListingPage({
       </div>
       <ListingWizard
         initialTitle={params.title ?? ""}
-        initialCost={Number(params.cost ?? 0)}
-        initialPrice={Number(params.price ?? 0)}
+        initialCost={cost}
+        initialPrice={initialPrice}
+        adRatePct={defaults.adRatePct}
+        markupPct={defaults.markupPct}
+        hasFooter={Boolean(defaults.descriptionFooter)}
       />
     </div>
   );

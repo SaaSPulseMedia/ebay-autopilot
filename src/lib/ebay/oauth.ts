@@ -1,11 +1,19 @@
 import "server-only";
 
 /**
- * eBay OAuth scaffold.
+ * eBay OAuth (authorization code grant) for connecting a seller's store.
  *
- * Authorization-URL building is real; the token exchange is intentionally left as a
- * scaffold for the next milestone. Every secret stays on the server.
+ * Flow: /api/ebay/connect sends the seller to eBay's own sign-in and consent
+ * screen → eBay redirects to the "auth accepted URL" configured for our RuName
+ * (/api/ebay/callback) with ?code=…&state=… → we exchange the code for tokens.
+ *
+ * EBAY_REDIRECT_URI holds the RuName ("eBay Redirect URL name"), not a URL —
+ * eBay requires that value as redirect_uri in both the authorize and token calls.
+ * Every secret stays on the server.
  */
+
+/** HTTP-only cookie holding the one-time OAuth state between /connect and /callback. */
+export const EBAY_STATE_COOKIE = "ap_ebay_state";
 
 export const EBAY_SCOPES = [
   "https://api.ebay.com/oauth/api_scope",
@@ -18,52 +26,101 @@ export function ebayEnv() {
   return {
     clientId: process.env.EBAY_CLIENT_ID ?? "",
     clientSecret: process.env.EBAY_CLIENT_SECRET ?? "",
-    redirectUri: process.env.EBAY_REDIRECT_URI ?? "",
+    ruName: process.env.EBAY_REDIRECT_URI ?? "",
     sandbox: process.env.EBAY_SANDBOX === "true",
   };
 }
 
 export function isEbayConfigured() {
   const env = ebayEnv();
-  return Boolean(env.clientId && env.clientSecret && env.redirectUri);
+  return Boolean(env.clientId && env.clientSecret && env.ruName);
+}
+
+export function isEbaySandbox() {
+  return ebayEnv().sandbox;
+}
+
+function hosts() {
+  return ebayEnv().sandbox
+    ? { auth: "https://auth.sandbox.ebay.com", api: "https://api.sandbox.ebay.com" }
+    : { auth: "https://auth.ebay.com", api: "https://api.ebay.com" };
 }
 
 export function authorizeUrl(state: string) {
   const env = ebayEnv();
-  const host = env.sandbox ? "auth.sandbox.ebay.com" : "auth.ebay.com";
-  const url = new URL(`https://${host}/oauth2/authorize`);
+  const url = new URL("/oauth2/authorize", hosts().auth);
   url.searchParams.set("client_id", env.clientId);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("redirect_uri", env.redirectUri);
+  url.searchParams.set("redirect_uri", env.ruName);
   url.searchParams.set("scope", EBAY_SCOPES.join(" "));
   url.searchParams.set("state", state);
-  return url.toString();
+  // eBay's docs separate scopes with %20; URLSearchParams would write "+".
+  return url.toString().replace(/\+/g, "%20");
 }
 
 export type EbayTokens = {
   accessToken: string;
+  accessTokenExpiresAt: Date;
   refreshToken: string | null;
-  expiresAt: Date;
-  demo: boolean;
+  refreshTokenExpiresAt: Date | null;
 };
 
-/**
- * TODO (next session): real authorization-code exchange against
- * https://api.ebay.com/identity/v1/oauth2/token using HTTP Basic auth.
- */
-export async function exchangeCodeForTokens(code: string): Promise<EbayTokens> {
-  if (!isEbayConfigured()) {
+export type TokenResult = { ok: true; tokens: EbayTokens } | { ok: false; error: string };
+
+type TokenResponse = {
+  access_token?: string;
+  expires_in?: number;
+  refresh_token?: string;
+  refresh_token_expires_in?: number;
+  error?: string;
+  error_description?: string;
+};
+
+async function tokenRequest(body: URLSearchParams): Promise<TokenResult> {
+  const env = ebayEnv();
+  const basic = Buffer.from(`${env.clientId}:${env.clientSecret}`).toString("base64");
+  try {
+    const res = await fetch(new URL("/identity/v1/oauth2/token", hosts().api), {
+      method: "POST",
+      headers: {
+        authorization: `Basic ${basic}`,
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "application/json",
+      },
+      body,
+      cache: "no-store",
+    });
+    const json = (await res.json().catch(() => ({}))) as TokenResponse;
+    if (!res.ok || !json.access_token) {
+      return { ok: false, error: json.error_description || json.error || `eBay returned HTTP ${res.status}` };
+    }
+    const now = Date.now();
     return {
-      accessToken: `demo-token-${code.slice(0, 8)}`,
-      refreshToken: null,
-      expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
-      demo: true,
+      ok: true,
+      tokens: {
+        accessToken: json.access_token,
+        accessTokenExpiresAt: new Date(now + (json.expires_in ?? 7200) * 1000),
+        refreshToken: json.refresh_token ?? null,
+        refreshTokenExpiresAt: json.refresh_token_expires_in
+          ? new Date(now + json.refresh_token_expires_in * 1000)
+          : null,
+      },
     };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Could not reach eBay." };
   }
-  return {
-    accessToken: `pending-exchange-${code.slice(0, 8)}`,
-    refreshToken: null,
-    expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
-    demo: true,
-  };
+}
+
+/** Swap the one-time code from eBay's redirect for an access token + refresh token. */
+export function exchangeCodeForTokens(code: string) {
+  return tokenRequest(
+    new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: ebayEnv().ruName }),
+  );
+}
+
+/** Access tokens last about 2 hours; the refresh token gets a new one without the seller. */
+export function refreshAccessToken(refreshToken: string) {
+  return tokenRequest(
+    new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, scope: EBAY_SCOPES.join(" ") }),
+  );
 }

@@ -1,10 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useMemo, useState } from "react";
 
 import { BatchSummary, DripToggle, type BatchResponse } from "@/components/dashboard/BatchControls";
-import { netProfitFor, priceFromMarkup } from "@/lib/pricing";
+import { PriceBreakdown } from "@/components/dashboard/PriceBreakdown";
+import { priceBreakdown, priceFromMarkup } from "@/lib/pricing";
 import { checkSupplierUrl } from "@/lib/supplier-policy";
 
 type Props = {
@@ -12,33 +14,18 @@ type Props = {
   remaining: number;
   dripAllowed: boolean;
   dripPerRun: number;
+  defaultMarkupPct: number;
+  defaultAdRatePct: number;
 };
 
-const SETTINGS_KEY = "autopilot.import.settings";
-
-export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun }: Props) {
+export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun, defaultMarkupPct, defaultAdRatePct }: Props) {
   const router = useRouter();
   const [text, setText] = useState("");
-  const [markupPct, setMarkupPct] = useState(40);
-  const [adRatePct, setAdRatePct] = useState(0);
+  const [markupPct, setMarkupPct] = useState(defaultMarkupPct);
+  const [adRatePct, setAdRatePct] = useState(defaultAdRatePct);
   const [drip, setDrip] = useState(false);
   const [busy, setBusy] = useState(false);
   const [summary, setSummary] = useState<BatchResponse | null>(null);
-
-  // Markup and ad rate are remembered on this computer between visits.
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}") as { markupPct?: number; adRatePct?: number };
-      if (typeof saved.markupPct === "number") setMarkupPct(saved.markupPct);
-      if (typeof saved.adRatePct === "number") setAdRatePct(saved.adRatePct);
-    } catch {
-      // Ignore unreadable saved settings.
-    }
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ markupPct, adRatePct }));
-  }, [markupPct, adRatePct]);
 
   const links = useMemo(
     () => Array.from(new Set(text.split(/[\s,]+/).map((line) => line.trim()).filter(Boolean))),
@@ -51,8 +38,7 @@ export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun }: 
   const tooMany = links.length > cap;
 
   // Worked example so the markup is easy to judge: a $20 supplier item.
-  const examplePrice = priceFromMarkup(20, markupPct);
-  const exampleProfit = netProfitFor(examplePrice, 20, 0, adRatePct);
+  const example = priceBreakdown(priceFromMarkup(20, markupPct), 20, 0, adRatePct);
 
   async function submit() {
     setBusy(true);
@@ -123,15 +109,21 @@ export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun }: 
           </label>
         </div>
 
-        <p className="rounded-xl bg-white/5 px-3.5 py-2.5 text-xs text-slate-300">
-          Example: a $20.00 supplier item lists at <span className="font-semibold text-white">${examplePrice.toFixed(2)}</span>{" "}
-          and leaves{" "}
-          <span className={`font-semibold ${exampleProfit > 0 ? "text-lime-brand" : "text-red-300"}`}>
-            ${exampleProfit.toFixed(2)}
-          </span>{" "}
-          after eBay&apos;s 13.55% + $0.40 fees{adRatePct ? ` and your ${adRatePct}% ad rate` : ""}. Assumes the supplier
-          price includes shipping. Links that would lose money are skipped.
-        </p>
+        <div>
+          <p className="text-[11px] uppercase tracking-wide text-slate-400">
+            Example: a $20.00 supplier item at these settings (assumes the supplier price includes shipping)
+          </p>
+          <div className="mt-1 max-w-md">
+            <PriceBreakdown breakdown={example} compact />
+          </div>
+          <p className="mt-2 text-[11px] text-slate-500">
+            Starts from your saved defaults; changes here apply to this run only.{" "}
+            <Link href="/dashboard/settings" className="font-semibold text-brand-400 hover:text-brand-500">
+              Edit defaults
+            </Link>
+            . Links that would lose money are skipped.
+          </p>
+        </div>
 
         <DripToggle allowed={dripAllowed} checked={drip} perRun={dripPerRun} onChange={setDrip} />
 

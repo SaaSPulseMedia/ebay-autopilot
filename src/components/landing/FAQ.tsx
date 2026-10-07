@@ -17,7 +17,7 @@ const faqs = [
   },
   {
     q: "Does AutoPilot publish listings directly on eBay?",
-    a: "Yes. Once you have connected your store, listings you publish in AutoPilot appear on eBay as listings from your own shop, under your account, with your business policies. We use eBay's official partner connection to do it, which is the same mechanism other eBay tools use and is fully within eBay's rules. Before you connect anything, the app runs in demo mode so you can try the whole flow — research, pricing, AI copy, the lot — without a single thing being posted to eBay."
+    a: "That is what it is built to do: once your store is connected, listings will appear on eBay as listings from your own shop, under your account. Connecting through eBay's official sign-in is built; publishing straight to eBay is being finished now. Until it is switched on, AutoPilot runs in demo mode — research, pricing, AI copy, variants, the lot — and nothing is posted to eBay.",
   },
   {
     q: "How much work is left after I connect my store?",

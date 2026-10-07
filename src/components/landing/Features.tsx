@@ -21,6 +21,12 @@ const features = [
     flagship: true,
   },
   {
+    icon: "⚙️",
+    title: "Your rules on every listing",
+    body:
+      "Set your markup or use our suggested price, your promoted-listing rate, quantity, handling time, and your own shipping and returns footer once. Every new listing uses them, and each price comes with a line-by-line breakdown of eBay fees and what you keep.",
+  },
+  {
     icon: "🔗",
     title: "Import from supplier URLs",
     body:
@@ -36,7 +42,7 @@ const features = [
     icon: "🚀",
     title: "Three publishing engines",
     body:
-      "Listings post straight to your eBay shop through our official partner connection. A backup method is in the works, and demo mode lets you try everything without posting anything.",
+      "Connecting your store uses eBay's official sign-in. Publishing straight to your eBay shop is being finished now; until then, demo mode runs everything except posting to eBay.",
   },
   {
     icon: "📉",

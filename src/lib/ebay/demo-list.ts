@@ -8,7 +8,7 @@ export async function publishViaDemo(draft: ListingDraft): Promise<ListingResult
   return {
     engine: "demo",
     status: "published",
-    message: "Published in demo mode. Nothing was sent to eBay — connect a store to go live.",
+    message: "Created in demo mode. Nothing was sent to eBay.",
     itemId,
     title: draft.title,
   };

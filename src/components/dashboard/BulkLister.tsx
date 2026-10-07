@@ -2,17 +2,19 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 
 import { BatchSummary, DripToggle, type BatchResponse } from "@/components/dashboard/BatchControls";
+import { PriceBreakdown } from "@/components/dashboard/PriceBreakdown";
+import type { PriceBreakdown as Breakdown } from "@/lib/pricing";
 
 export type BulkProduct = {
   externalId: string;
   title: string;
   category: string;
   supplierPrice: number;
-  suggestedPrice: number;
-  netProfit: number;
+  listPrice: number;
+  breakdown: Breakdown;
   variants: number;
   veroRisk: "low" | "medium" | "high";
   veroMatch: string | null;
@@ -47,6 +49,7 @@ export function BulkLister({
   const [busy, setBusy] = useState(false);
   const [summary, setSummary] = useState<BatchResponse | null>(null);
   const [drip, setDrip] = useState(false);
+  const [openWhy, setOpenWhy] = useState<string | null>(null);
 
   const visible = useMemo(
     () => (query ? products.filter((p) => p.title.toLowerCase().includes(query.toLowerCase())) : products),
@@ -54,15 +57,17 @@ export function BulkLister({
   );
 
   const chosen = products.filter((p) => selected.has(p.externalId));
-  const projectedProfit = chosen.reduce((sum, p) => sum + p.netProfit, 0);
+  const projectedProfit = chosen.reduce((sum, p) => sum + p.breakdown.profit, 0);
   const projectedVariants = chosen.reduce((sum, p) => sum + p.variants, 0);
   const remaining = Math.max(0, activeListings - activeUsed);
   const perRunCap = Math.min(batchSize, remaining);
   const overLimit = selected.size > perRunCap;
   const atCapacity = remaining === 0;
 
+  // Brand-blocked and money-losing products cannot be selected.
+  const isUnlistable = (p: BulkProduct) => p.veroRisk === "high" || p.breakdown.profit <= 0;
   const blockedIds = useMemo(
-    () => new Set(products.filter((p) => p.veroRisk === "high").map((p) => p.externalId)),
+    () => new Set(products.filter((p) => p.veroRisk === "high" || p.breakdown.profit <= 0).map((p) => p.externalId)),
     [products],
   );
 
@@ -80,7 +85,7 @@ export function BulkLister({
     setSelected(
       new Set(
         visible
-          .filter((p) => p.veroRisk !== "high")
+          .filter((p) => !isUnlistable(p))
           .slice(0, perRunCap)
           .map((p) => p.externalId),
       ),
@@ -124,7 +129,7 @@ export function BulkLister({
             onClick={selectAllVisible}
             className="rounded-full border border-white/20 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-white/5"
           >
-            Select {Math.min(visible.filter((p) => p.veroRisk !== "high").length, perRunCap)}
+            Select {Math.min(visible.filter((p) => !isUnlistable(p)).length, perRunCap)}
           </button>
           <button
             type="button"
@@ -218,12 +223,14 @@ export function BulkLister({
           <tbody>
             {visible.map((product) => {
               const isOn = selected.has(product.externalId);
-              const isBlocked = product.veroRisk === "high";
+              const isBlocked = isUnlistable(product);
+              const losing = product.breakdown.profit <= 0;
+              const whyOpen = openWhy === product.externalId;
               return (
+                <Fragment key={product.externalId}>
                 <tr
-                  key={product.externalId}
                   onClick={() => toggle(product.externalId)}
-                  title={isBlocked || product.veroRisk === "medium" ? product.veroReason : undefined}
+                  title={product.veroRisk !== "low" ? product.veroReason : losing ? "Loses money at your current pricing" : undefined}
                   className={`border-b border-white/5 last:border-0 ${
                     isBlocked
                       ? "cursor-not-allowed opacity-50"
@@ -246,9 +253,13 @@ export function BulkLister({
                     <span className="block truncate font-medium text-white">{product.title}</span>
                     <span className="block text-[11px] text-slate-500">
                       {product.category}
-                      {isBlocked ? (
+                      {product.veroRisk === "high" ? (
                         <span className="ml-2 rounded-full bg-red-500/15 px-2 py-0.5 font-semibold text-red-300">
                           Brand blocked
+                        </span>
+                      ) : losing ? (
+                        <span className="ml-2 rounded-full bg-red-500/15 px-2 py-0.5 font-semibold text-red-300">
+                          Loses money
                         </span>
                       ) : product.veroRisk === "medium" ? (
                         <span className="ml-2 rounded-full bg-amber-400/15 px-2 py-0.5 font-semibold text-amber-200">
@@ -258,10 +269,34 @@ export function BulkLister({
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right text-slate-300">${product.supplierPrice.toFixed(2)}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-white">${product.suggestedPrice.toFixed(2)}</td>
-                  <td className="px-4 py-3 text-right text-lime-brand">${product.netProfit.toFixed(2)}</td>
+                  <td className="px-4 py-3 text-right font-semibold text-white">${product.listPrice.toFixed(2)}</td>
+                  <td className={`px-4 py-3 text-right ${losing ? "text-red-300" : "text-lime-brand"}`}>
+                    ${product.breakdown.profit.toFixed(2)}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenWhy(whyOpen ? null : product.externalId);
+                      }}
+                      className="ml-2 rounded-full border border-white/15 px-2 py-0.5 text-[10px] font-semibold text-slate-300 hover:bg-white/5"
+                      aria-expanded={whyOpen}
+                    >
+                      Why?
+                    </button>
+                  </td>
                   <td className="px-4 py-3 text-right text-slate-300">{product.variants}</td>
                 </tr>
+                {whyOpen ? (
+                  <tr className="border-b border-white/5">
+                    <td />
+                    <td colSpan={5} className="px-4 pb-4">
+                      <div className="max-w-md">
+                        <PriceBreakdown breakdown={product.breakdown} compact />
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               );
             })}
           </tbody>

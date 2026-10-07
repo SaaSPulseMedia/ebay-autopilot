@@ -11,6 +11,8 @@ import {
   summarizeBatch,
   type ItemResult,
 } from "@/lib/listing-pipeline";
+import { listPriceFor, netProfitFor } from "@/lib/pricing";
+import { getListingDefaults } from "@/lib/seller-settings";
 import { getCatalog } from "@/lib/suppliers";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +34,7 @@ export async function POST(request: Request) {
   const limitResponse = await checkPlanCapacity(user.id, limits, ids.length, { drip });
   if (limitResponse) return limitResponse;
 
-  const catalog = await getCatalog(200);
+  const [catalog, defaults] = await Promise.all([getCatalog(200), getListingDefaults(user.id)]);
   const found = catalog.filter((product) => ids.includes(product.externalId));
   if (!found.length) {
     return Response.json({ ok: false, error: "None of those products are in the catalog." }, { status: 404 });
@@ -40,7 +42,15 @@ export async function POST(request: Request) {
 
   // Per-item VeRO gate: brand-name products are skipped, the rest of the batch still goes out.
   const blocked = found.filter((product) => product.veroRisk === "high");
-  const selected = found.filter((product) => product.veroRisk !== "high");
+  const priced = found
+    .filter((product) => product.veroRisk !== "high")
+    .map((product) => {
+      const listPrice = listPriceFor(defaults, product.supplierPrice, product.shippingCost, product.suggestedPrice);
+      return { product, listPrice, profit: netProfitFor(listPrice, product.supplierPrice, product.shippingCost, defaults.adRatePct) };
+    });
+  // Never publish something that loses money under the seller's own pricing rule.
+  const losing = priced.filter((row) => row.profit <= 0);
+  const selected = priced.filter((row) => row.profit > 0);
 
   const requested = parseEngine(body.engine);
   const accessToken = await connectedAccessToken(user.id);
@@ -52,17 +62,26 @@ export async function POST(request: Request) {
     variants: 0,
     message: `Skipped to protect your eBay account: ${product.veroReason}`,
   }));
+  results.push(
+    ...losing.map(({ product, profit }) => ({
+      title: product.title,
+      status: "skipped",
+      variants: 0,
+      message: `Would lose $${Math.abs(profit).toFixed(2)} per sale after eBay fees at your current pricing. Raise your markup in Settings.`,
+    })),
+  );
 
   results.push(
-    ...(await inChunks(selected, 5, (product) =>
+    ...(await inChunks(selected, 5, ({ product, listPrice }) =>
       createListing({
         userId: user.id,
         limits,
+        defaults,
         source: {
           title: product.title,
           category: product.category,
           supplierPrice: product.supplierPrice,
-          listPrice: product.suggestedPrice,
+          listPrice,
           sourceUrl: product.supplierUrl,
           imageUrl: product.imageUrl,
         },

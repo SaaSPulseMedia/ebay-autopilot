@@ -5,7 +5,9 @@ import { listings } from "@/db/schema";
 import { BulkLister, type BulkProduct } from "@/components/dashboard/BulkLister";
 import { getCurrentUser } from "@/lib/auth";
 import { DRIP_PER_RUN, planLimits } from "@/lib/limits";
-import { getCatalog, isSampleProduct, netProfit } from "@/lib/suppliers";
+import { listPriceFor, priceBreakdown } from "@/lib/pricing";
+import { getListingDefaults } from "@/lib/seller-settings";
+import { getCatalog, isSampleProduct } from "@/lib/suppliers";
 import { buildVariants } from "@/lib/variants";
 import { and, count, eq, ne } from "drizzle-orm";
 
@@ -18,26 +20,30 @@ export default async function BulkPage() {
   if (!user) return null;
 
   const limits = planLimits(user.plan);
-  const [catalog, [{ count: activeUsed }]] = await Promise.all([
+  const [catalog, defaults, [{ count: activeUsed }]] = await Promise.all([
     getCatalog(120),
+    getListingDefaults(user.id),
     db
       .select({ count: count() })
       .from(listings)
       .where(and(eq(listings.userId, user.id), ne(listings.status, "ended"))),
   ]);
 
-  const products: BulkProduct[] = catalog.map((product) => ({
+  const products: BulkProduct[] = catalog.map((product) => {
+    const listPrice = listPriceFor(defaults, product.supplierPrice, product.shippingCost, product.suggestedPrice);
+    return {
     externalId: product.externalId,
     title: product.title,
     category: product.category,
     supplierPrice: product.supplierPrice,
-    suggestedPrice: product.suggestedPrice,
-    netProfit: netProfit(product),
+    listPrice,
+    breakdown: priceBreakdown(listPrice, product.supplierPrice, product.shippingCost, defaults.adRatePct),
     variants: buildVariants(product.title, product.category, product.suggestedPrice, limits.maxVariants).length,
     veroRisk: product.veroRisk,
     veroMatch: product.veroMatch,
     veroReason: product.veroReason,
-  }));
+    };
+  });
   const sample = catalog.some(isSampleProduct);
   const blockedCount = products.filter((p) => p.veroRisk === "high").length;
 
@@ -51,6 +57,16 @@ export default async function BulkPage() {
           supplier links?{" "}
           <Link href="/dashboard/import" className="font-semibold text-brand-400 hover:text-brand-500">
             Paste a list instead →
+          </Link>
+        </p>
+        <p className="mt-3 text-xs text-slate-400">
+          Prices use{" "}
+          <span className="text-white">
+            {defaults.pricingMode === "markup" ? `your ${defaults.markupPct}% markup` : "AutoPilot's suggested price"}
+          </span>
+          {defaults.adRatePct ? <> with a {defaults.adRatePct}% ad rate</> : null}.{" "}
+          <Link href="/dashboard/settings" className="font-semibold text-brand-400 hover:text-brand-500">
+            Change in Settings
           </Link>
         </p>
         {sample ? (

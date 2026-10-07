@@ -28,30 +28,25 @@ export function templateCopy(input: ListingCopyInput): ListingCopy {
   const clean = input.title.replace(/\s+/g, " ").trim();
   const keyword = titleCase(clean.split(" ").slice(0, 6).join(" "));
   const category = input.category ? titleCase(input.category) : "Everyday Essentials";
+  // Neutral facts only. Shipping, returns, and handling promises belong in the
+  // seller's own footer (Settings → Listing defaults), not in generated copy.
   const bullets = input.bullets?.length
     ? input.bullets
     : [
-        `${keyword} shipped from a US supplier`,
-        "Brand-new, factory-sealed stock",
-        "Tracked delivery, typically 2–5 business days",
-        "30-day returns handled through eBay",
+        `${keyword}`,
+        "Condition: New",
+        `Category: ${category}`,
+        "Shipping and returns details are listed below",
       ];
   return {
-    title: `${keyword} | ${category} | Fast US Shipping`.slice(0, 80),
-    subtitle: `${category} · ships from the US`,
+    title: `${keyword} | ${category} | New`.slice(0, 80),
+    subtitle: `${category} · New`,
     bullets,
-    description: [
-      `${keyword}`,
-      "",
-      bullets.map((b) => `• ${b}`).join("\n"),
-      "",
-      "Ordered before 2pm ET on a business day? Your item is routed to the supplier the same afternoon and tracking is uploaded to eBay automatically.",
-    ].join("\n"),
+    description: [`${keyword}`, "", bullets.map((b) => `• ${b}`).join("\n")].join("\n"),
     itemSpecifics: {
       Condition: "New",
       Brand: "Unbranded",
       Category: category,
-      "Ships From": "United States",
     },
     source: "template",
   };
@@ -65,6 +60,7 @@ export async function generateListingCopy(input: ListingCopyInput): Promise<List
   const prompt = `You write eBay listings for a US dropshipping seller.
 Return STRICT JSON with keys: title (<=80 chars), subtitle, bullets (4 strings), description (plain text), itemSpecifics (object of string->string).
 Never invent certifications, reviews, ratings or brand endorsements. No emoji.
+Do not promise shipping times, handling times, returns, warranties or tracking — the seller adds those separately.
 Product: ${input.title}
 Category: ${input.category ?? "unknown"}
 Target list price: ${input.listPrice ?? "unknown"}`;

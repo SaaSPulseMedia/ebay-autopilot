@@ -21,9 +21,10 @@ Built with Next.js 16 (App Router), Drizzle ORM, and PostgreSQL.
 | **Bulk listing** | **The core feature. Tick any number of products and publish the whole batch in one run — the same engine handles 1 or 200** |
 | **Variants** | **Size, color, and style options expanded into proper multi-variant listings, each row with its own SKU, price, and quantity** |
 | Research | Supplier catalog with cost, suggested eBay price, shipping, and net profit after eBay's 13.55% final value fee and $0.40 per-order fee |
+| Listing defaults | Settings → Listing defaults (`seller_settings` table): pricing rule (suggested or own markup), ad rate, quantity per variant, handling time, description footer — applied to Bulk list, Paste links, and New listing. Every price has a "Why this price" fee breakdown (`priceBreakdown` in `src/lib/pricing.ts`) and money-losing items are never listed |
 | Import | Paste up to 50 supplier links (`/dashboard/import`); each page is read for title, price, and image, priced at your markup, VeRO-screened, and listed with variants. Links to retailers/marketplaces (Amazon, Walmart, etc.) are refused because eBay does not allow filling orders from another retailer (`src/lib/supplier-policy.ts`) |
 | AI copy | Claude drafts an 80-character title, bullets, description, and item specifics, with a deterministic template fallback |
-| Publishing | Official eBay Sell API (OAuth), headless-Chromium fallback (scaffolded), and demo mode that skips only the final call |
+| Publishing | Store connection over eBay OAuth is built (`/api/ebay/connect` → `/api/ebay/callback`, state-checked, tokens AES-256-GCM encrypted at rest and auto-refreshed). Publishing through the Sell/Inventory API is **in progress** — until then every listing falls back to demo mode and says so. Headless-Chromium fallback is scaffolded only |
 | Plan limits | Active listings are the upgrade driver: 50 on Starter, 200 on Pro, 1,000 on Business. Batch size: 50 per run and up to 20 variants per product on every plan. Limits enforced server-side (non-ended listings counted, typed `plan_limit_reached` error) |
 | Maintenance | Built: VeRO brand screening on every listing (`src/lib/vero.ts`); drip posting on Pro/Business — listings are scheduled and released up to 10 per account per hour by `/api/cron/release`, triggered hourly by `.github/workflows/drip-release.yml` (Vercel Hobby cron only runs daily). In progress: supplier re-checks, repricing rules, out-of-stock pause |
 | Orders | Fulfillment queue with buyer details, supplier cost, and realized margin, feeding the analytics totals |
@@ -82,7 +83,9 @@ Optional — each has a working fallback:
 | `ANTHROPIC_MODEL` | Override the Claude model |
 | `STRIPE_SECRET_KEY` | Live Stripe Checkout; falls back to demo checkout |
 | `CRON_SECRET` | Protects `/api/cron/release` (drip posting). Same value as the GitHub secret `CRON_SECRET` |
-| `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` / `EBAY_REDIRECT_URI` | eBay OAuth app credentials |
+| `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` | eBay keyset App ID and Cert ID |
+| `EBAY_REDIRECT_URI` | The **RuName** (eBay Redirect URL name) shown on the developer portal's User Tokens page — not a URL. Its auth accepted URL must be `https://<your-domain>/api/ebay/callback` |
+| `TOKEN_ENCRYPTION_KEY` | Optional. Key for encrypting stored eBay tokens; defaults to `AUTH_SECRET`. Changing it means sellers reconnect |
 | `EBAY_SANDBOX` | `true` to target eBay sandbox |
 | `ENABLE_BROWSER_ENGINE` / `CHROMIUM_EXECUTABLE_PATH` | Enable the headless-Chromium fallback (not implemented yet) |
 
@@ -132,7 +135,7 @@ Serverless function memory stays at the default 1024 MB — Chromium is not bund
 
 ## Roadmap
 
-- Real eBay OAuth token exchange and Sell API publishing
+- Sell/Inventory API publishing (store connection and token refresh are built)
 - Encrypted-credentials table and the headless-Chromium listing engine
 - Scheduled order ingestion and tracking upload
 

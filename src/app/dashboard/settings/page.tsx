@@ -2,10 +2,12 @@ import Link from "next/link";
 
 import { db } from "@/db";
 import { ebayAccounts } from "@/db/schema";
+import { ListingDefaultsForm } from "@/components/dashboard/ListingDefaultsForm";
 import { getCurrentUser } from "@/lib/auth";
 import { isBrowserEngineAvailable } from "@/lib/ebay/browser-list";
-import { isEbayConfigured } from "@/lib/ebay/oauth";
-import { eq } from "drizzle-orm";
+import { isEbayConfigured, isEbaySandbox } from "@/lib/ebay/oauth";
+import { getListingDefaults } from "@/lib/seller-settings";
+import { and, eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -13,10 +15,14 @@ export const metadata = { title: "Settings" };
 
 const messages: Record<string, string> = {
   "not-configured":
-    "Live eBay connections are not switched on for this site yet. You can keep working in demo mode, and nothing you do here will be posted to eBay.",
+    "Connecting eBay stores is not switched on for this site yet. You can keep working in demo mode, and nothing you do here will be posted to eBay.",
   denied: "You cancelled on eBay's screen, so nothing was connected. You can try again whenever you like.",
-  connected: "Your eBay store is connected. Listings you publish will go live on your shop.",
-  "demo-connected": "Connected in demo mode. Everything works, but nothing is posted to eBay.",
+  connected:
+    "Your eBay store is connected. Publishing straight to eBay is the next part being built — until it is switched on, listings are still created in demo mode and nothing is posted.",
+  expired: "That connection attempt expired or did not start from this browser. Press Connect eBay store to try again.",
+  error: "eBay did not complete the connection. Please try again in a minute.",
+  disconnected:
+    "Your eBay store was disconnected and its access tokens deleted. You can also remove the permission in your eBay account settings.",
 };
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ ebay?: string }> }) {
@@ -24,18 +30,28 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const user = await getCurrentUser();
   if (!user) return null;
 
-  const accounts = await db.select().from(ebayAccounts).where(eq(ebayAccounts.userId, user.id));
+  const [accounts, defaults] = await Promise.all([
+    db
+      .select()
+      .from(ebayAccounts)
+      .where(and(eq(ebayAccounts.userId, user.id), eq(ebayAccounts.mode, "oauth"))),
+    getListingDefaults(user.id),
+  ]);
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-white">Settings</h1>
-        <p className="mt-1 text-sm text-slate-400">Store connections and publishing engines for {user.email}.</p>
+        <p className="mt-1 text-sm text-slate-400">
+          Listing defaults, store connections, and publishing engines for {user.email}.
+        </p>
       </div>
 
       {params.ebay && messages[params.ebay] ? (
         <p className="ap-card rounded-2xl p-4 text-sm text-slate-200">{messages[params.ebay]}</p>
       ) : null}
+
+      <ListingDefaultsForm initial={defaults} />
 
       <section className="ap-card space-y-4 rounded-2xl p-6">
         <h2 className="text-base font-semibold text-white">Your eBay store</h2>
@@ -49,21 +65,41 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           account, no keys, no configuration.
         </p>
 
+        {isEbayConfigured() && isEbaySandbox() ? (
+          <p className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-200">
+            Test mode: connections on this site go to eBay&apos;s Sandbox, a practice copy of eBay. Sign in with a
+            Sandbox test account (it starts with TESTUSER_), not your real eBay account.
+          </p>
+        ) : null}
+
         {accounts.length ? (
           <ul className="space-y-2">
             {accounts.map((account) => (
-              <li key={account.id} className="flex items-center justify-between rounded-xl bg-white/5 px-4 py-3 text-sm">
-                <span className="text-white">{account.label}</span>
-                <span className="rounded-full bg-brand-500/15 px-2.5 py-1 text-[11px] uppercase tracking-wide text-brand-400">
-                  {account.mode}
+              <li
+                key={account.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white/5 px-4 py-3 text-sm"
+              >
+                <span>
+                  <span className="block text-white">{account.label}</span>
+                  <span className="block text-xs text-slate-400">
+                    Connected {account.connectedAt.toLocaleDateString("en-US", { dateStyle: "medium" })}
+                  </span>
                 </span>
+                <form action="/api/ebay/disconnect" method="post">
+                  <button
+                    type="submit"
+                    className="rounded-full border border-red-500/30 px-3 py-1 text-xs font-medium text-red-300 hover:bg-red-500/10"
+                  >
+                    Disconnect
+                  </button>
+                </form>
               </li>
             ))}
           </ul>
         ) : (
           <p className="rounded-xl border border-dashed border-white/15 p-5 text-sm text-slate-400">
             No store connected yet. You are in demo mode, which means you can try everything safely — nothing reaches
-            eBay until you connect.
+            eBay.
           </p>
         )}
 
@@ -71,7 +107,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           href="/api/ebay/connect"
           className="inline-block rounded-full bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-400"
         >
-          Connect eBay store
+          {accounts.length ? "Reconnect eBay store" : "Connect eBay store"}
         </Link>
       </section>
 
@@ -82,10 +118,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           so you can see what is happening.
         </p>
         <p className="text-slate-300">
-          Posting straight to eBay:{" "}
+          Connecting your eBay store:{" "}
           <span className={isEbayConfigured() ? "text-lime-brand" : "text-slate-400"}>
-            {isEbayConfigured() ? "available" : "not switched on yet"}
+            {isEbayConfigured() ? (isEbaySandbox() ? "switched on (eBay Sandbox test mode)" : "switched on") : "not switched on yet"}
           </span>
+        </p>
+        <p className="text-slate-300">
+          Posting straight to eBay: <span className="text-slate-400">still being built</span>
         </p>
         <p className="text-slate-300">
           Backup posting method:{" "}

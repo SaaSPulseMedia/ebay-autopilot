@@ -3,13 +3,15 @@ import "server-only";
 import { and, count, eq, ne } from "drizzle-orm";
 
 import { db } from "@/db";
-import { ebayAccounts, listings } from "@/db/schema";
+import { listings } from "@/db/schema";
 import { generateListingCopy } from "@/lib/ai";
 import { publishViaApi } from "@/lib/ebay/api-list";
 import { isBrowserEngineAvailable, publishViaBrowser } from "@/lib/ebay/browser-list";
 import { publishViaDemo } from "@/lib/ebay/demo-list";
+import { getValidAccessToken } from "@/lib/ebay/tokens";
 import type { ListingDraft, ListingEngine, ListingResult } from "@/lib/ebay/types";
 import { nextPlanUp, planLimits, type PlanLimits } from "@/lib/limits";
+import { withFooter, type ListingDefaults } from "@/lib/listing-defaults";
 import { buildVariants } from "@/lib/variants";
 
 /**
@@ -23,14 +25,9 @@ export function parseEngine(value: unknown): RequestedEngine {
   return value === "api" || value === "browser" || value === "demo" ? value : "auto";
 }
 
-/** OAuth access token for the user's connected eBay store, if any. */
+/** Usable (refreshed if needed) access token for the user's connected eBay store, if any. */
 export async function connectedAccessToken(userId: number): Promise<string | null> {
-  const [account] = await db
-    .select({ accessToken: ebayAccounts.accessToken })
-    .from(ebayAccounts)
-    .where(and(eq(ebayAccounts.userId, userId), eq(ebayAccounts.mode, "oauth")))
-    .limit(1);
-  return account?.accessToken ?? null;
+  return getValidAccessToken(userId);
 }
 
 /** Explicit engine wins; otherwise eBay API → browser fallback → demo. */
@@ -154,24 +151,27 @@ export type ItemResult = { title: string; status: string; variants: number; mess
 export async function createListing(args: {
   userId: number;
   limits: PlanLimits;
+  defaults: ListingDefaults;
   source: ListingSource;
   requested: RequestedEngine;
   accessToken: string | null;
   drip: boolean;
   batchId: string;
 }): Promise<ItemResult> {
-  const { source, limits } = args;
+  const { source, limits, defaults } = args;
   const copy = await generateListingCopy({
     title: source.title,
     category: source.category,
     supplierPrice: source.supplierPrice,
     listPrice: source.listPrice,
   });
-  const variants = buildVariants(source.title, source.category ?? "", source.listPrice, limits.maxVariants);
+  const variants = buildVariants(source.title, source.category ?? "", source.listPrice, limits.maxVariants).map(
+    (variant) => ({ ...variant, quantity: defaults.quantityPerVariant }),
+  );
 
   const draft: ListingDraft = {
     title: copy.title,
-    description: copy.description,
+    description: withFooter(copy.description, defaults.descriptionFooter),
     listPrice: source.listPrice,
     supplierPrice: source.supplierPrice,
     sourceUrl: source.sourceUrl,
@@ -201,6 +201,8 @@ export async function createListing(args: {
       itemSpecifics: copy.itemSpecifics,
       bullets: copy.bullets,
       requestedEngine: args.requested,
+      handlingDays: defaults.handlingDays,
+      adRatePct: defaults.adRatePct,
     },
   });
 

@@ -10,6 +10,8 @@ import {
   publishWithFallback,
   storedStatus,
 } from "@/lib/listing-pipeline";
+import { withFooter } from "@/lib/listing-defaults";
+import { getListingDefaults } from "@/lib/seller-settings";
 import { checkSupplierUrl } from "@/lib/supplier-policy";
 import { screenVero } from "@/lib/vero";
 import { and, desc, eq } from "drizzle-orm";
@@ -38,14 +40,15 @@ export async function POST(request: Request) {
   const title = (body.title ?? "").trim();
   if (!title) return Response.json({ ok: false, error: "A listing title is required." }, { status: 400 });
 
+  const defaults = await getListingDefaults(user.id);
   const draft: ListingDraft = {
     title: title.slice(0, 80),
-    description: body.description ?? "",
+    description: withFooter(body.description ?? "", defaults.descriptionFooter),
     listPrice: Number(body.listPrice ?? 0),
     supplierPrice: Number(body.supplierPrice ?? 0),
     sourceUrl: body.sourceUrl ?? null,
     imageUrl: body.imageUrl ?? null,
-    quantity: Number(body.quantity ?? 1),
+    quantity: Number(body.quantity ?? defaults.quantityPerVariant),
   };
 
   // Retail-arbitrage gate: eBay does not allow fulfilling from another retailer.
@@ -89,7 +92,7 @@ export async function POST(request: Request) {
       status: storedStatus(final),
       ebayItemId: final.itemId,
       aiGenerated: Boolean(body.description),
-      payload: draft,
+      payload: { ...draft, handlingDays: defaults.handlingDays, adRatePct: defaults.adRatePct },
     })
     .returning();
 

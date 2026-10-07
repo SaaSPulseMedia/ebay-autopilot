@@ -13,6 +13,7 @@ import {
 } from "@/lib/listing-pipeline";
 import { netProfitFor, priceFromMarkup } from "@/lib/pricing";
 import { extractProduct } from "@/lib/product-extract";
+import { getListingDefaults } from "@/lib/seller-settings";
 import { checkSupplierUrl } from "@/lib/supplier-policy";
 import { screenVero } from "@/lib/vero";
 
@@ -53,8 +54,9 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, error: "Paste at least one supplier link." }, { status: 400 });
   }
 
-  const markupPct = clamp(body.markupPct, 0, 500, 40);
-  const adRatePct = clamp(body.adRatePct, 0, 20, 0);
+  const defaults = await getListingDefaults(user.id);
+  const markupPct = clamp(body.markupPct, 0, 500, defaults.markupPct);
+  const adRatePct = clamp(body.adRatePct, 0, 30, defaults.adRatePct);
   const drip = body.drip === true;
 
   const limits = planLimits(user.plan);
@@ -84,13 +86,14 @@ export async function POST(request: Request) {
     if (profit <= 0) {
       return skip(
         product.title,
-        `At ${markupPct}% markup this would lose $${Math.abs(profit).toFixed(2)} per sale after eBay fees. Raise your markup.`,
+        `At ${markupPct}% markup${adRatePct ? ` and a ${adRatePct}% ad rate` : ""} this would lose $${Math.abs(profit).toFixed(2)} per sale after eBay fees. Raise your markup.`,
       );
     }
 
     const created = await createListing({
       userId: user.id,
       limits,
+      defaults: { ...defaults, markupPct, adRatePct },
       source: {
         title: product.title,
         supplierPrice: product.price,

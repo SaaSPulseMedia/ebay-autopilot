@@ -4,9 +4,18 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { PriceBreakdown } from "@/components/dashboard/PriceBreakdown";
 import { ENGINES, type ListingEngine } from "@/lib/ebay/types";
+import { priceBreakdown, priceFromMarkup } from "@/lib/pricing";
 
-type Props = { initialTitle?: string; initialCost?: number; initialPrice?: number };
+type Props = {
+  initialTitle?: string;
+  initialCost?: number;
+  initialPrice?: number;
+  adRatePct?: number;
+  markupPct?: number;
+  hasFooter?: boolean;
+};
 
 type CopyResponse = {
   ok: boolean;
@@ -23,7 +32,14 @@ type WizardResult = {
   upgradePlan?: string | null;
 };
 
-export function ListingWizard({ initialTitle = "", initialCost = 0, initialPrice = 0 }: Props) {
+export function ListingWizard({
+  initialTitle = "",
+  initialCost = 0,
+  initialPrice = 0,
+  adRatePct = 0,
+  markupPct = 40,
+  hasFooter = false,
+}: Props) {
   const router = useRouter();
   const [step, setStep] = useState(initialTitle ? 2 : 1);
   const [url, setUrl] = useState("");
@@ -54,7 +70,7 @@ export function ListingWizard({ initialTitle = "", initialCost = 0, initialPrice
       if (json.product?.title) setTitle(json.product.title);
       if (typeof json.product?.price === "number") {
         setSupplierPrice(json.product.price);
-        setListPrice(Math.round(json.product.price * 1.35 * 100) / 100);
+        setListPrice(priceFromMarkup(json.product.price, markupPct));
       }
       if (json.product?.imageUrl) setImageUrl(json.product.imageUrl);
       if (json.copy?.description) setDescription(json.copy.description);
@@ -103,8 +119,7 @@ export function ListingWizard({ initialTitle = "", initialCost = 0, initialPrice
     }
   }
 
-  const fees = listPrice * 0.1355 + 0.4;
-  const net = listPrice - supplierPrice - fees;
+  const breakdown = priceBreakdown(listPrice, supplierPrice, 0, adRatePct);
 
   return (
     <div className="space-y-5">
@@ -171,6 +186,11 @@ export function ListingWizard({ initialTitle = "", initialCost = 0, initialPrice
               onChange={(e) => setDescription(e.target.value)}
               className="mt-1 w-full rounded-xl border border-white/15 bg-navy-900 px-3.5 py-2.5 text-sm text-white outline-none focus:border-brand-500"
             />
+            <span className="mt-1 block text-[11px] text-slate-500">
+              {hasFooter
+                ? "Your footer from Settings is added to the end automatically when you publish."
+                : "Tip: add your shipping and returns details once in Settings → Listing defaults, and they are added to every listing."}
+            </span>
           </label>
           <div className="flex flex-wrap gap-3">
             <button
@@ -220,19 +240,9 @@ export function ListingWizard({ initialTitle = "", initialCost = 0, initialPrice
             </label>
           </div>
 
-          <div className="grid gap-3 rounded-xl bg-white/5 p-4 text-sm sm:grid-cols-3">
-            <p className="text-slate-400">
-              eBay fees <span className="block font-semibold text-white">${fees.toFixed(2)}</span>
-            </p>
-            <p className="text-slate-400">
-              Net profit <span className="block font-semibold text-lime-brand">${net.toFixed(2)}</span>
-            </p>
-            <p className="text-slate-400">
-              Margin{" "}
-              <span className="block font-semibold text-white">
-                {listPrice > 0 ? ((net / listPrice) * 100).toFixed(1) : "0.0"}%
-              </span>
-            </p>
+          <div className="max-w-md">
+            <p className="mb-1 text-[11px] uppercase tracking-wide text-slate-400">Why this price</p>
+            <PriceBreakdown breakdown={breakdown} />
           </div>
 
           <fieldset className="space-y-2">

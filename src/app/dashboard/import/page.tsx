@@ -2,6 +2,7 @@ import { ImportLister } from "@/components/dashboard/ImportLister";
 import { getCurrentUser } from "@/lib/auth";
 import { DRIP_PER_RUN, planLimits } from "@/lib/limits";
 import { activeListingCount } from "@/lib/listing-pipeline";
+import { getListingDefaults } from "@/lib/seller-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,7 @@ export default async function ImportPage() {
   if (!user) return null;
 
   const limits = planLimits(user.plan);
-  const activeUsed = await activeListingCount(user.id);
+  const [activeUsed, defaults] = await Promise.all([activeListingCount(user.id), getListingDefaults(user.id)]);
 
   return (
     <div className="space-y-6">
@@ -35,6 +36,8 @@ export default async function ImportPage() {
         remaining={Math.max(0, limits.activeListings - activeUsed)}
         dripAllowed={limits.dripPosting}
         dripPerRun={DRIP_PER_RUN}
+        defaultMarkupPct={defaults.markupPct}
+        defaultAdRatePct={defaults.adRatePct}
       />
     </div>
   );
