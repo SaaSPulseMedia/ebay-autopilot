@@ -8,6 +8,8 @@ import { cjFetch, getCjAccessToken } from "@/lib/cj/client";
  *   ?action=detail&productId=<pid>     GET /product/query?pid=<pid>
  *   ?action=variants&productId=<pid>   GET /product/variant/query?pid=<pid>
  *   ?action=inventory&sku=<sku>        GET /product/stock/queryBySku?sku=<sku>
+ *   ?action=inventoryTry&variantId=<vid>&sku=<sku>
+ *                                      tries three candidate stock paths, one result each
  * Each response also lists every field path it contains (`fields`), to plan
  * the mapping to catalog_products. Needs the `x-admin-token: <CRON_SECRET>` header.
  */
@@ -32,6 +34,28 @@ function reply(action: string, body: unknown, status = 200) {
   return Response.json(body, { status });
 }
 
+/** CJ's stock endpoint path is undocumented here; try the candidates one per second (CJ's limit). */
+async function inventoryTry(apiKey: string, variantId: string, sku: string) {
+  if (!variantId && !sku) return reply("inventoryTry", { ok: false, error: "Pass variantId and/or sku." }, 400);
+  const token = await getCjAccessToken(apiKey);
+  if (!token.ok) return reply("inventoryTry", { step: "token", ...token }, 502);
+
+  const candidates = [
+    variantId ? `/product/stock/queryByVid?vid=${encodeURIComponent(variantId)}` : null,
+    sku ? `/product/variant/stock/queryBySku?sku=${encodeURIComponent(sku)}` : null,
+    sku ? `/product/stock/query?sku=${encodeURIComponent(sku)}` : null,
+  ].filter((p): p is string => Boolean(p));
+
+  const attempts = [];
+  for (const [i, path] of candidates.entries()) {
+    if (i > 0) await new Promise((resolve) => setTimeout(resolve, 1100));
+    console.log(`[cj-test] inventoryTry GET ${path}`);
+    const body = await cjFetch(path, token.token);
+    attempts.push({ request: `GET ${path}`, fields: fieldPaths(body), response: body });
+  }
+  return reply("inventoryTry", { ok: true, attempts });
+}
+
 export async function GET(request: Request) {
   if (!hasAdminToken(request)) return Response.json({ ok: false, error: "Forbidden" }, { status: 403 });
 
@@ -47,6 +71,9 @@ export async function GET(request: Request) {
   const action = params.get("action") ?? "";
   const productId = params.get("productId")?.trim() ?? "";
   const sku = params.get("sku")?.trim() ?? "";
+  const variantId = params.get("variantId")?.trim() ?? "";
+
+  if (action === "inventoryTry") return inventoryTry(apiKey, variantId, sku);
 
   const paths: Record<string, string | null> = {
     list: "/product/list?pageNum=1&pageSize=5",
