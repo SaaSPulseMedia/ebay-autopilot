@@ -49,6 +49,8 @@ export async function ebayRequest<T = Record<string, unknown>>(
         Accept: "application/json",
         "Content-Type": "application/json",
         "Content-Language": "en-US",
+        // Node's fetch otherwise sends `Accept-Language: *`, which eBay rejects.
+        "Accept-Language": "en-US",
       },
       cache: "no-store",
     });
