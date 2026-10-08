@@ -23,6 +23,11 @@ export async function GET() {
     brand: "AutoPilot",
     mpn: "TEST-SANDBOX-001",
     condition: "NEW",
+    aspects: {
+      Color: ["Black"],
+      CompatibleBrand: ["AutoPilot"],
+      Platform: ["Universal"],
+    },
   });
 
   return Response.json(result);
