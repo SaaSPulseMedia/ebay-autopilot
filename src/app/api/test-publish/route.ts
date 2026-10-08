@@ -7,9 +7,12 @@ import { publishListing } from "@/lib/ebay/inventory";
  */
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "Not signed in" }, { status: 401 });
+
+  // ?categoryId=… tries another category without a redeploy (see /api/admin/debug-category).
+  const categoryId = new URL(request.url).searchParams.get("categoryId")?.trim() || "9355";
 
   const result = await publishListing({
     userId: user.id,
@@ -19,14 +22,12 @@ export async function GET() {
     imageUrls: ["https://upload.wikimedia.org/wikipedia/commons/thumb/a/a9/Example.jpg/640px-Example.jpg"],
     price: 9.99,
     quantity: 1,
-    categoryId: "139973",
+    categoryId,
     brand: "AutoPilot",
     mpn: "TEST-SANDBOX-001",
     condition: "NEW",
     aspects: {
       Color: ["Black"],
-      CompatibleBrand: ["AutoPilot"],
-      Platform: ["Universal"],
     },
   });
 
