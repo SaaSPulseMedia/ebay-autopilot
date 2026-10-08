@@ -8,6 +8,7 @@ import { db } from "@/db";
 import { ebayAccounts } from "@/db/schema";
 import { verifyPurposeToken } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
+import { ensureMerchantLocation } from "@/lib/ebay/account";
 import {
   EBAY_STATE_COOKIE,
   EBAY_STATE_PURPOSE,
@@ -81,6 +82,14 @@ export async function GET(request: Request) {
     await db.update(ebayAccounts).set(values).where(eq(ebayAccounts.id, existing.id));
   } else {
     await db.insert(ebayAccounts).values({ userId, ...values });
+  }
+
+  // Offers need a merchant location; set one up now so the first publish is ready.
+  // Never block the connection on it — publishListing retries this preflight.
+  try {
+    await ensureMerchantLocation(userId);
+  } catch (error) {
+    console.warn(`[ebay] merchant location setup failed for user ${userId}:`, error);
   }
 
   return settings("connected");
