@@ -55,7 +55,7 @@ const POLICIES = {
       name: "Default payment",
       marketplaceId: "EBAY_US",
       categoryTypes: CATEGORY_TYPES,
-      paymentMethods: [{ paymentMethodType: "PAYPAL" }],
+      // No paymentMethods: under Managed Payments eBay rejects them (20403) and fills them in itself.
     },
   },
   returns: {
