@@ -30,6 +30,16 @@ export async function ebayFetch<T = Record<string, unknown>>(
   accessToken: string,
   init: RequestInit = {},
 ): Promise<T & EbayErrorBody> {
+  return (await ebayRequest<T>(path, accessToken, init)).body;
+}
+
+/** Same as ebayFetch, plus the HTTP status (0 when eBay could not be reached). */
+export async function ebayRequest<T = Record<string, unknown>>(
+  path: string,
+  accessToken: string,
+  init: RequestInit = {},
+): Promise<{ status: number; body: T & EbayErrorBody }> {
+  type Body = T & EbayErrorBody;
   try {
     const res = await fetch(`${apiBase()}${path}`, {
       ...init,
@@ -42,7 +52,8 @@ export async function ebayFetch<T = Record<string, unknown>>(
       },
       cache: "no-store",
     });
-    if (res.status === 204) return {} as T & EbayErrorBody;
+    const status = res.status;
+    if (status === 204) return { status, body: {} as Body };
     const text = await res.text();
     let json: unknown = {};
     try {
@@ -51,16 +62,16 @@ export async function ebayFetch<T = Record<string, unknown>>(
       json = null;
     }
     if (json && typeof json === "object") {
-      const body = json as T & EbayErrorBody;
+      const body = json as Body;
       if (!res.ok && !body.errors?.length) {
-        return { ...body, errors: [{ message: `eBay returned HTTP ${res.status}` }] };
+        return { status, body: { ...body, errors: [{ message: `eBay returned HTTP ${status}` }] } };
       }
-      return body;
+      return { status, body };
     }
-    return { errors: [{ message: `eBay returned HTTP ${res.status}` }] } as T & EbayErrorBody;
+    return { status, body: { errors: [{ message: `eBay returned HTTP ${status}` }] } as Body };
   } catch (error) {
-    return { errors: [{ message: error instanceof Error ? error.message : "Could not reach eBay." }] } as T &
-      EbayErrorBody;
+    const message = error instanceof Error ? error.message : "Could not reach eBay.";
+    return { status: 0, body: { errors: [{ message }] } as Body };
   }
 }
 
