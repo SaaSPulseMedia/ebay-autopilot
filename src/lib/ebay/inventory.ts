@@ -21,7 +21,7 @@ export type PublishInput = {
 
 export type PublishResult =
   | { ok: true; offerId: string; listingId: string }
-  | { ok: false; step: "setup" | "item" | "offer" | "publish"; error: string };
+  | { ok: false; step: "setup" | "item" | "offer" | "publish"; error: string; details?: unknown };
 
 /**
  * Publishes one fixed-price listing through the Inventory API:
@@ -38,10 +38,16 @@ export async function publishListing(input: PublishInput): Promise<PublishResult
     };
   }
 
-  const merchantLocationKey = await ensureMerchantLocation(input.userId);
-  if (!merchantLocationKey) {
-    return { ok: false, step: "setup", error: "Could not create a merchant location on eBay." };
+  const location = await ensureMerchantLocation(input.userId);
+  if (!location.ok) {
+    return {
+      ok: false,
+      step: "setup",
+      error: `Could not create a merchant location on eBay: ${location.error}`,
+      details: location.details,
+    };
   }
+  const merchantLocationKey = location.locationKey;
 
   const token = await getAccessTokenForUser(input.userId);
   if (!token) return { ok: false, step: "setup", error: "No eBay store connected. Connect your store in Settings." };

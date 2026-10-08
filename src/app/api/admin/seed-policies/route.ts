@@ -1,5 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
-
+import { hasAdminToken } from "@/lib/admin-token";
 import { getCurrentUser } from "@/lib/auth";
 import { setupSandboxPolicies } from "@/lib/ebay/policies-setup";
 
@@ -9,16 +8,8 @@ import { setupSandboxPolicies } from "@/lib/ebay/policies-setup";
  */
 export const dynamic = "force-dynamic";
 
-function adminTokenMatches(given: string | null) {
-  const expected = process.env.CRON_SECRET;
-  if (!expected || !given) return false;
-  const a = Buffer.from(given);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
 export async function POST(request: Request) {
-  if (!adminTokenMatches(request.headers.get("x-admin-token"))) {
+  if (!hasAdminToken(request)) {
     return Response.json({ ok: false, error: "Forbidden" }, { status: 403 });
   }
 
