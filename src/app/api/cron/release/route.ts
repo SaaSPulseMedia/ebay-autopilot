@@ -7,6 +7,7 @@ import { listings } from "@/db/schema";
 import type { ListingDraft } from "@/lib/ebay/types";
 import { DRIP_PER_RUN } from "@/lib/limits";
 import { connectedAccessToken, parseEngine, publishWithFallback, storedStatus } from "@/lib/listing-pipeline";
+import { productSku } from "@/lib/variants";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -41,7 +42,7 @@ async function releaseScheduled() {
   for (const [userId, rows] of perUser) {
     const accessToken = await connectedAccessToken(userId);
     for (const row of rows) {
-      const payload = (row.payload ?? {}) as Partial<ListingDraft> & { requestedEngine?: unknown };
+      const payload = (row.payload ?? {}) as Partial<ListingDraft> & { requestedEngine?: unknown; sku?: unknown };
       if (!payload.title) {
         failed += 1;
         await db.update(listings).set({ status: "draft" }).where(eq(listings.id, row.id));
@@ -56,7 +57,8 @@ async function releaseScheduled() {
         imageUrl: payload.imageUrl ?? null,
         quantity: Number(payload.quantity ?? 1),
       };
-      const result = await publishWithFallback(draft, parseEngine(payload.requestedEngine), accessToken);
+      const sku = typeof payload.sku === "string" && payload.sku ? payload.sku : productSku(draft.title);
+      const result = await publishWithFallback(draft, parseEngine(payload.requestedEngine), accessToken, { userId, sku });
       await db
         .update(listings)
         .set({ status: storedStatus(result), engine: result.engine, ebayItemId: result.itemId })

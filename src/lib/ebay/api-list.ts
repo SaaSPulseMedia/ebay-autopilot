@@ -8,11 +8,10 @@ import type { ListingDraft, ListingResult } from "./types";
  * Official eBay Sell (Inventory) API engine.
  *
  * Publishing goes through publishWithResolver (category + item specifics +
- * inventory item → offer → publish). It only runs when the caller supplies
- * everything a real listing needs — the seller's user id, a SKU and images.
- * The listing pipeline doesn't pass that context yet, so for now every call
- * still reports `unavailable` and the route falls back to demo mode; it never
- * pretends a listing reached eBay.
+ * inventory item → offer → publish). It runs only when the caller supplies
+ * the seller's user id and SKU and the draft has an image and a price;
+ * otherwise it reports `unavailable` and the pipeline falls back to demo mode.
+ * A rejection from eBay comes back as `error`, which is not retried in demo.
  */
 export type ApiPublishContext = { userId: number; sku: string };
 
@@ -20,8 +19,17 @@ function unavailable(draft: ListingDraft, message: string): ListingResult {
   return { engine: "api", status: "unavailable", message, itemId: null, title: draft.title };
 }
 
+function missingFields(draft: ListingDraft, context?: ApiPublishContext) {
+  const missing: string[] = [];
+  if (!context?.userId || !context.sku) missing.push("seller context");
+  if (!draft.title) missing.push("a title");
+  if (!draft.imageUrl) missing.push("a product image");
+  if (!(draft.listPrice > 0)) missing.push("a price");
+  return missing;
+}
+
 function toCatalogProduct(draft: ListingDraft, context?: ApiPublishContext): CatalogProductForPublish | null {
-  if (!context?.userId || !context.sku || !draft.title || !draft.imageUrl || !(draft.listPrice > 0)) return null;
+  if (!context || !draft.imageUrl || missingFields(draft, context).length) return null;
   return {
     userId: context.userId,
     sku: context.sku,
@@ -44,8 +52,9 @@ export async function publishViaApi(
 
   const product = toCatalogProduct(draft, context);
   if (!product) {
-    if (context) console.warn(`[ebay-publish] missing-input for "${draft.title}"; falling back to demo.`);
-    return unavailable(draft, "Your store is connected, but publishing straight to eBay is still being built.");
+    const missing = missingFields(draft, context);
+    console.warn(`[ebay-publish] missing-input for "${draft.title}" (${missing.join(", ")}); falling back to demo.`);
+    return unavailable(draft, `Not sent to eBay: the listing needs ${missing.join(" and ")}.`);
   }
 
   const result = await publishWithResolver(product);

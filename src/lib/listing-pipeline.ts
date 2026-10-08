@@ -5,14 +5,14 @@ import { and, count, eq, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { listings } from "@/db/schema";
 import { generateListingCopy } from "@/lib/ai";
-import { publishViaApi } from "@/lib/ebay/api-list";
+import { type ApiPublishContext, publishViaApi } from "@/lib/ebay/api-list";
 import { isBrowserEngineAvailable, publishViaBrowser } from "@/lib/ebay/browser-list";
 import { publishViaDemo } from "@/lib/ebay/demo-list";
 import { getValidAccessToken } from "@/lib/ebay/tokens";
 import type { ListingDraft, ListingEngine, ListingResult } from "@/lib/ebay/types";
 import { nextPlanUp, planLimits, type PlanLimits } from "@/lib/limits";
 import { withFooter, type ListingDefaults } from "@/lib/listing-defaults";
-import { buildVariants } from "@/lib/variants";
+import { buildVariants, productSku } from "@/lib/variants";
 
 /**
  * One place for everything every listing route shares: engine routing, the
@@ -30,25 +30,36 @@ export async function connectedAccessToken(userId: number): Promise<string | nul
   return getValidAccessToken(userId);
 }
 
-/** Explicit engine wins; otherwise eBay API → browser fallback → demo. */
+/**
+ * Explicit engine wins; otherwise eBay API → browser fallback → demo.
+ * An engine that is merely `unavailable` falls through to the next one (its
+ * reason is kept as a note); a real eBay rejection (`error`) is returned as-is,
+ * so a failed listing is never quietly replaced by a demo one.
+ */
 export async function publishWithFallback(
   draft: ListingDraft,
   requested: RequestedEngine,
   accessToken: string | null,
+  context?: ApiPublishContext,
 ): Promise<ListingResult> {
   const order: ListingEngine[] =
     requested === "auto"
       ? [accessToken ? "api" : "demo", isBrowserEngineAvailable() ? "browser" : "demo", "demo"]
       : [requested, "demo"];
 
+  let apiNote: string | null = null;
   for (const engine of order) {
     const result =
       engine === "api"
-        ? await publishViaApi(draft, accessToken)
+        ? await publishViaApi(draft, accessToken, context)
         : engine === "browser"
           ? await publishViaBrowser(draft)
           : await publishViaDemo(draft);
-    if (result.status === "published" || result.status === "queued") return result;
+    if (result.status === "published" || result.status === "queued") {
+      return apiNote ? { ...result, message: `${result.message} Note: ${apiNote}` } : result;
+    }
+    if (engine === "api" && result.status === "error") return result;
+    if (engine === "api" && accessToken) apiNote = result.message;
   }
   return publishViaDemo(draft);
 }
@@ -169,6 +180,7 @@ export async function createListing(args: {
     (variant) => ({ ...variant, quantity: defaults.quantityPerVariant }),
   );
 
+  const sku = productSku(source.title);
   const draft: ListingDraft = {
     title: copy.title,
     description: withFooter(copy.description, defaults.descriptionFooter),
@@ -179,7 +191,9 @@ export async function createListing(args: {
     quantity: variants.reduce((sum, variant) => sum + variant.quantity, 0),
   };
 
-  const outcome = args.drip ? null : await publishWithFallback(draft, args.requested, args.accessToken);
+  const outcome = args.drip
+    ? null
+    : await publishWithFallback(draft, args.requested, args.accessToken, { userId: args.userId, sku });
 
   await db.insert(listings).values({
     userId: args.userId,
@@ -197,6 +211,7 @@ export async function createListing(args: {
     batchId: args.batchId,
     payload: {
       ...draft,
+      sku,
       variants,
       itemSpecifics: copy.itemSpecifics,
       bullets: copy.bullets,
@@ -210,7 +225,11 @@ export async function createListing(args: {
     title: draft.title,
     status: outcome?.status ?? "scheduled",
     variants: variants.length,
-    message: outcome?.message ?? "Scheduled for drip posting.",
+    // "Note:" makes the batch summary show the reason for a failed listing.
+    message:
+      outcome?.status === "error"
+        ? `Not listed. Note: ${outcome.message}`
+        : (outcome?.message ?? "Scheduled for drip posting."),
   };
 }
 
@@ -226,6 +245,19 @@ export async function inChunks<T, R>(items: T[], size: number, work: (item: T) =
 /** Response body shared by the catalog bulk route and the paste-links route. */
 export function summarizeBatch(batchId: string, requested: number, results: ItemResult[]) {
   const ok = results.filter((row) => ["published", "queued", "scheduled"].includes(row.status));
+  const failed = results.filter((row) => row.status === "error");
+  // Every attempted item was rejected by eBay: report the batch as failed, not "complete".
+  if (failed.length && !ok.length) {
+    return {
+      ok: false,
+      code: "ebay_publish_failed",
+      error: `eBay rejected ${failed.length === 1 ? "the listing" : `all ${failed.length} listings`}: ${failed[0].message.replace(/^Not listed\. Note: /, "")}`,
+      batchId,
+      requested,
+      failed: failed.length,
+      results,
+    };
+  }
   return {
     ok: true,
     batchId,
@@ -234,6 +266,7 @@ export function summarizeBatch(batchId: string, requested: number, results: Item
     scheduled: ok.filter((row) => row.status === "scheduled").length,
     blocked: results.filter((row) => row.status === "blocked").length,
     skipped: results.filter((row) => row.status === "skipped").length,
+    failed: failed.length,
     variantTotal: ok.reduce((sum, row) => sum + row.variants, 0),
     results,
   };

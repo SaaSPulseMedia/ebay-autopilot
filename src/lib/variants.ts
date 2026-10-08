@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export type Variant = {
   sku: string;
   options: Record<string, string>;
@@ -17,6 +19,15 @@ function slug(value: string) {
     .replace(/[^A-Z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 18);
+}
+
+/**
+ * Deterministic eBay SKU for a whole product (one inventory item). The hash of
+ * the full title keeps two products whose titles share a prefix apart.
+ */
+export function productSku(title: string) {
+  const hash = createHash("sha256").update(title.trim().toLowerCase()).digest("hex").slice(0, 8).toUpperCase();
+  return `${slug(title) || "ITEM"}-${hash}`;
 }
 
 /**

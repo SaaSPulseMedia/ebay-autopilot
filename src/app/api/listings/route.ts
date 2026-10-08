@@ -13,6 +13,7 @@ import {
 import { withFooter } from "@/lib/listing-defaults";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { checkSupplierUrl } from "@/lib/supplier-policy";
+import { productSku } from "@/lib/variants";
 import { screenVero } from "@/lib/vero";
 import { and, desc, eq } from "drizzle-orm";
 
@@ -76,7 +77,11 @@ export async function POST(request: Request) {
   const limitResponse = await checkPlanCapacity(user.id, planLimits(user.plan), 1);
   if (limitResponse) return limitResponse;
 
-  const final = await publishWithFallback(draft, parseEngine(body.engine), await connectedAccessToken(user.id));
+  const sku = productSku(draft.title);
+  const final = await publishWithFallback(draft, parseEngine(body.engine), await connectedAccessToken(user.id), {
+    userId: user.id,
+    sku,
+  });
 
   const [saved] = await db
     .insert(listings)
@@ -92,9 +97,17 @@ export async function POST(request: Request) {
       status: storedStatus(final),
       ebayItemId: final.itemId,
       aiGenerated: Boolean(body.description),
-      payload: { ...draft, handlingDays: defaults.handlingDays, adRatePct: defaults.adRatePct },
+      payload: { ...draft, sku, handlingDays: defaults.handlingDays, adRatePct: defaults.adRatePct },
     })
     .returning();
+
+  // eBay rejected it: say so rather than reporting success (the draft is kept).
+  if (final.status === "error") {
+    return Response.json(
+      { ok: false, code: "ebay_publish_failed", error: final.message, result: final, listing: saved },
+      { status: 502 },
+    );
+  }
 
   const response =
     vero.risk === "medium" ? { ...final, message: `${final.message} Note: ${vero.reason}` } : final;
