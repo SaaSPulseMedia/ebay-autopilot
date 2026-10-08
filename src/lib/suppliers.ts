@@ -3,7 +3,7 @@ import "server-only";
 import { db } from "@/db";
 import { catalogProducts } from "@/db/schema";
 import { competitionFor, netProfitFor, priceForEbay } from "@/lib/pricing";
-import { SAMPLE_SUPPLIER, STARTER_ROWS } from "@/lib/starter-catalog";
+import { SAMPLE_SUPPLIER, STARTER_ROWS, starterImageUrl } from "@/lib/starter-catalog";
 import { screenVero, stricterRisk } from "@/lib/vero";
 import { desc } from "drizzle-orm";
 
@@ -65,7 +65,7 @@ function starterCatalog(limit: number): SupplierProduct[] {
       category: row.category,
       supplier: SAMPLE_SUPPLIER,
       supplierUrl: null,
-      imageUrl: null,
+      imageUrl: starterImageUrl(row.title),
       supplierPrice: row.supplierPrice,
       suggestedPrice: suggested,
       shippingCost: shipping,

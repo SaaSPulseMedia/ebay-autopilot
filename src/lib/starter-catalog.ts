@@ -11,6 +11,19 @@
 
 /** Shown wherever a sample product's supplier would appear. */
 export const SAMPLE_SUPPLIER = "Example wholesale supplier";
+
+/**
+ * Placeholder photo for a starter product: a stable picsum.photos image seeded
+ * by the title slug (e.g. adjustable-laptop-stand-aluminum-riser). It is a
+ * random photo, not the product — fine for testing the publish flow only.
+ */
+export function starterImageUrl(title: string) {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `https://picsum.photos/seed/${slug}/800/800`;
+}
 export type StarterRow = {
   externalId: string;
   title: string;

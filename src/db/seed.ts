@@ -4,7 +4,8 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
 import { competitionFor, priceForEbay } from "../lib/pricing";
-import { SAMPLE_SUPPLIER, STARTER_ROWS } from "../lib/starter-catalog";
+import { SAMPLE_SUPPLIER, STARTER_ROWS, starterImageUrl } from "../lib/starter-catalog";
+import { backfillStarterImages } from "./backfill-images";
 import { catalogProducts } from "./schema";
 
 /** Loads the 24 starter products (example prices). Safe to run more than once. */
@@ -25,6 +26,7 @@ async function main() {
         title: row.title,
         category: row.category,
         supplier: SAMPLE_SUPPLIER,
+        imageUrl: starterImageUrl(row.title),
         supplierPrice: row.supplierPrice.toFixed(2),
         suggestedPrice: suggested.toFixed(2),
         shippingCost: shipping.toFixed(2),
@@ -45,7 +47,9 @@ async function main() {
       });
   }
 
-  console.log(`Seeded ${STARTER_ROWS.length} catalog products.`);
+  // Existing rows keep any image they already have; only missing ones are filled.
+  const images = await backfillStarterImages(db);
+  console.log(`Seeded ${STARTER_ROWS.length} catalog products; added images to ${images.updated}.`);
   await pool.end();
 }
 
