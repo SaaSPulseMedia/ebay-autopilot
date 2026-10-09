@@ -122,3 +122,26 @@ export const sellerSettings = pgTable("seller_settings", {
   descriptionFooter: text("description_footer").notNull().default(""),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** One Stripe subscription per user. users.plan stays the field the app reads; the webhook keeps it in sync. */
+export const subscriptions = pgTable("subscriptions", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .unique()
+    .references(() => users.id, { onDelete: "cascade" }),
+  stripeCustomerId: text("stripe_customer_id").notNull(),
+  stripeSubscriptionId: text("stripe_subscription_id").unique(),
+  plan: text("plan").notNull(),
+  status: text("status").notNull(),
+  currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Stripe webhook events already processed (Stripe can deliver the same event more than once). */
+export const stripeEvents = pgTable("stripe_events", {
+  id: text("id").primaryKey(),
+  type: text("type").notNull(),
+  processedAt: timestamp("processed_at", { withTimezone: true }).notNull().defaultNow(),
+});
