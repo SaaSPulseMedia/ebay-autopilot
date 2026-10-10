@@ -19,7 +19,52 @@ export type BulkProduct = {
   veroRisk: "low" | "medium" | "high";
   veroMatch: string | null;
   veroReason: string;
+  /** Primary product image; null or empty shows the placeholder. */
+  imageUrl: string | null;
 };
+
+function BoxIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className={className} aria-hidden="true">
+      <path d="M3.5 7.5 12 3l8.5 4.5v9L12 21l-8.5-4.5v-9Z" strokeLinejoin="round" />
+      <path d="M3.5 7.5 12 12l8.5-4.5M12 12v9" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/**
+ * 48×48 product thumbnail. The image stays invisible until it has loaded, so the
+ * tile shows a soft placeholder meanwhile and never a broken-image icon; a box
+ * icon replaces it when there is no URL or the image fails.
+ */
+function ProductThumb({ src }: { src: string | null }) {
+  const [state, setState] = useState<"loading" | "loaded" | "failed">("loading");
+  const url = src?.trim();
+  const showImage = Boolean(url) && state !== "failed";
+  return (
+    <div className="relative flex h-12 w-12 items-center justify-center overflow-hidden rounded-md bg-white/5 text-slate-500">
+      {showImage ? null : <BoxIcon className="h-5 w-5" />}
+      {showImage ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={url}
+          alt=""
+          width={48}
+          height={48}
+          loading="lazy"
+          decoding="async"
+          className={`absolute inset-0 h-12 w-12 object-cover transition-opacity ${state === "loaded" ? "opacity-100" : "opacity-0"}`}
+          onLoad={() => setState("loaded")}
+          onError={() => setState("failed")}
+          // Load/error events that fired before hydration are missed, so read the state on mount.
+          ref={(img) => {
+            if (img?.complete) setState(img.naturalWidth > 0 ? "loaded" : "failed");
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
 
 type Props = {
   products: BulkProduct[];
@@ -212,6 +257,14 @@ export function BulkLister({
         <table className="w-full min-w-[760px] text-left text-sm">
           <thead className="border-b border-white/10 text-[11px] uppercase tracking-wide text-slate-400">
             <tr>
+              <th className="hidden w-16 py-3 pl-4 sm:table-cell">
+                <span className="sr-only">Product photo</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="h-4 w-4" aria-hidden="true">
+                  <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+                  <circle cx="9" cy="10" r="1.6" />
+                  <path d="m20.5 16-5-5-8.5 8.5" strokeLinejoin="round" />
+                </svg>
+              </th>
               <th className="w-10 px-4 py-3" />
               <th className="px-4 py-3">Product</th>
               <th className="px-4 py-3 text-right">Cost</th>
@@ -239,6 +292,9 @@ export function BulkLister({
                         : "cursor-pointer hover:bg-white/[0.03]"
                   }`}
                 >
+                  <td className="hidden py-2 pl-4 sm:table-cell">
+                    <ProductThumb src={product.imageUrl} />
+                  </td>
                   <td className="px-4 py-3">
                     <input
                       type="checkbox"
@@ -288,6 +344,7 @@ export function BulkLister({
                 </tr>
                 {whyOpen ? (
                   <tr className="border-b border-white/5">
+                    <td className="hidden sm:table-cell" />
                     <td />
                     <td colSpan={5} className="px-4 pb-4">
                       <div className="max-w-md">

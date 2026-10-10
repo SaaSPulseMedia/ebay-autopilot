@@ -1,3 +1,5 @@
+import "server-only";
+
 import Link from "next/link";
 
 import { db } from "@/db";
@@ -42,6 +44,7 @@ export default async function BulkPage() {
     veroRisk: product.veroRisk,
     veroMatch: product.veroMatch,
     veroReason: product.veroReason,
+    imageUrl: product.imageUrl,
     };
   });
   const sample = catalog.some(isSampleProduct);
