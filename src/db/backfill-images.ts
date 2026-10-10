@@ -1,14 +1,15 @@
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, isNull, like, or } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { STARTER_ROWS, starterImageUrl } from "../lib/starter-catalog";
+import { LEGACY_PLACEHOLDER_PREFIX, STARTER_ROWS, starterImageUrl } from "../lib/starter-catalog";
 import { catalogProducts } from "./schema";
 
 /**
- * Gives each starter catalog row its placeholder image, in place. Only rows
- * with no image are touched; existing images and every other column are left
- * alone. Safe to run more than once. Shared by `npm run db:seed` and
- * /api/admin/backfill-catalog-images (which runs it on Vercel).
+ * Gives each starter catalog row its current placeholder image, in place. Only
+ * rows with no image or an old picsum.photos placeholder are touched; any other
+ * image URL (a real product photo) and every other column are left alone. Safe
+ * to run more than once. Shared by `npm run db:seed`,
+ * /api/admin/backfill-catalog-images and /api/admin/refresh-catalog-images.
  */
 export async function backfillStarterImages(db: NodePgDatabase<Record<string, unknown>>) {
   const updated: string[] = [];
@@ -19,7 +20,11 @@ export async function backfillStarterImages(db: NodePgDatabase<Record<string, un
       .where(
         and(
           eq(catalogProducts.externalId, row.externalId),
-          or(isNull(catalogProducts.imageUrl), eq(catalogProducts.imageUrl, "")),
+          or(
+            isNull(catalogProducts.imageUrl),
+            eq(catalogProducts.imageUrl, ""),
+            like(catalogProducts.imageUrl, `${LEGACY_PLACEHOLDER_PREFIX}%`),
+          ),
         ),
       )
       .returning({ externalId: catalogProducts.externalId });

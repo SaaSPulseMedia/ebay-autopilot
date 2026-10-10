@@ -13,17 +13,60 @@
 export const SAMPLE_SUPPLIER = "Example wholesale supplier";
 
 /**
- * Placeholder photo for a starter product: a stable picsum.photos image seeded
- * by the title slug (e.g. adjustable-laptop-stand-aluminum-riser). It is a
- * random photo, not the product — fine for testing the publish flow only.
+ * Image keyword per starter product (externalId -> keyword).
+ *
+ * The keywords were meant for Unsplash Source keyword URLs, but Unsplash shut
+ * source.unsplash.com down in 2024 (it answers 503), so every product falls back
+ * to a neutral placehold.co image labelled with its keyword. PNG rather than
+ * placehold.co's default SVG, because eBay only accepts raster picture URLs.
+ * Swap a single entry's URL in `starterImageUrl` once a real photo exists.
+ */
+export const STARTER_IMAGE_KEYWORDS: Record<string, string> = {
+  "seed-001": "laptop-stand",
+  "seed-002": "electric-scrubber",
+  "seed-003": "phone-mount-car",
+  "seed-004": "lumbar-cushion",
+  "seed-005": "tumbler-cup",
+  "seed-006": "closet-light",
+  "seed-007": "garden-hose-nozzle",
+  "seed-008": "silicone-food-container",
+  "seed-009": "resistance-bands",
+  "seed-010": "pet-hair-roller",
+  "seed-011": "kitchen-scale",
+  "seed-012": "cable-management",
+  "seed-013": "car-vacuum",
+  "seed-014": "blackout-curtain",
+  "seed-015": "yoga-mat",
+  "seed-016": "solar-pathway-lights",
+  "seed-017": "shoe-rack",
+  "seed-018": "bathtub-caddy",
+  "seed-019": "doorbell",
+  "seed-020": "baking-mat",
+  "seed-021": "clothes-steamer",
+  "seed-022": "dog-car-seat",
+  "seed-023": "door-hook-rack",
+  "seed-024": "milk-frother",
+};
+
+/** Old random picsum.photos placeholders; the image refresh replaces these. */
+export const LEGACY_PLACEHOLDER_PREFIX = "https://picsum.photos/";
+
+/**
+ * Image URL for a starter product, looked up by title: an 800x800 light-grey
+ * placehold.co PNG labelled with the product's keyword (e.g. "Laptop Stand").
  */
 export function starterImageUrl(title: string) {
-  const slug = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-  return `https://picsum.photos/seed/${slug}/800/800`;
+  const row = STARTER_ROWS.find((r) => r.title === title);
+  const keyword = row ? STARTER_IMAGE_KEYWORDS[row.externalId] : undefined;
+  const label = keyword
+    ? keyword
+        .split("-")
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join("+")
+    : "Product";
+  return `https://placehold.co/800x800/e0e0e0/333333.png?text=${label}`;
 }
+
 export type StarterRow = {
   externalId: string;
   title: string;
