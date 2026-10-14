@@ -26,6 +26,9 @@ export type CjTokenResult = ({ ok: true } & CjToken) | { ok: false; error: strin
 /** CJ token lifetime is documented as both 15 and 180 days; assume the shorter. */
 const DEFAULT_TOKEN_LIFETIME_MS = 15 * 24 * 60 * 60 * 1000;
 
+/** A stalled CJ connection fails after this long instead of hanging the request. */
+const CJ_TIMEOUT_MS = 20_000;
+
 /** Tokens cached per server instance; CJ allows 1 token request/second. */
 const tokenCache = new Map<string, CjToken>();
 
@@ -53,6 +56,7 @@ export async function getCjAccessToken(apiKey: string): Promise<CjTokenResult> {
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ apiKey }),
       cache: "no-store",
+      signal: AbortSignal.timeout(CJ_TIMEOUT_MS),
     });
     const body = await readJson(res);
     const root = asRecord(body);
@@ -99,6 +103,7 @@ export async function getCjAccessToken(apiKey: string): Promise<CjTokenResult> {
 export async function cjFetch(path: string, accessToken: string, init: RequestInit = {}): Promise<unknown> {
   try {
     const res = await fetch(`${CJ_BASE_URL}${path}`, {
+      signal: AbortSignal.timeout(CJ_TIMEOUT_MS),
       ...init,
       headers: {
         ...(init.headers as Record<string, string> | undefined),
