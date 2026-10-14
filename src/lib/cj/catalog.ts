@@ -5,7 +5,8 @@ import { inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { catalogProducts } from "@/db/schema";
 import { cjFetch, getCjAccessToken } from "@/lib/cj/client";
-import { type CjProductFromApi, type CjVariantFromApi, mapCjProductToDraft } from "@/lib/cj/mapper";
+import { type CjProductFromApi, type CjVariantFromApi, mapCjProductToDraft, parseVariantKey } from "@/lib/cj/mapper";
+import { sanitizeCjDescription } from "@/lib/cj/sanitize";
 import { priceForEbay } from "@/lib/pricing";
 
 /**
@@ -182,4 +183,118 @@ export async function importCjProduct(pid: string): Promise<CjResult<{ id: numbe
     // xmax = 0 only on a freshly inserted row.
     .returning({ id: catalogProducts.id, created: sql<boolean>`(xmax = 0)` });
   return { ok: true, data: { id: row.id, externalId, created: row.created } };
+}
+
+export type CjDetailVariant = {
+  vid: string;
+  sku: string;
+  key: string;
+  color: string | null;
+  size: string | null;
+  price: number | null;
+  weightGrams: number | null;
+  /** Length × width × height as CJ sends them (assumed millimetres). */
+  dimensions: { length: number; width: number; height: number } | null;
+  barcode: string;
+  image: string | null;
+};
+
+export type CjProductDetail = {
+  pid: string;
+  /** CJ's original-language name (usually Chinese). */
+  productName: string;
+  productNameEn: string;
+  images: string[];
+  /** Sanitized: plain formatting tags only, no attributes, links or images. */
+  descriptionHtml: string;
+  priceMin: number;
+  priceMax: number;
+  priceLabel: string;
+  weightMinGrams: number;
+  weightMaxGrams: number;
+  category: string;
+  productSku: string;
+  listedNum: number;
+  variants: CjDetailVariant[];
+};
+
+const allNumbers = (value: unknown) =>
+  typeof value === "number" ? [value] : (String(value ?? "").match(/\d+(?:\.\d+)?/g) ?? []).map(Number);
+const optionalNum = (value: unknown) => {
+  const n = allNumbers(value);
+  return n.length ? Math.min(...n) : null;
+};
+
+/** CJ's productName is sometimes a JSON-encoded array of names. */
+function nameText(value: unknown) {
+  const raw = str(value);
+  if (raw.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.filter((v) => typeof v === "string" && v.trim()).join(" / ");
+    } catch {
+      // not JSON; use as-is
+    }
+  }
+  return raw;
+}
+
+/** Full product (detail + variants) for the sourcing modal. Two CJ calls. */
+export async function getCjProductDetail(pid: string): Promise<CjResult<CjProductDetail>> {
+  const detail = await cjGet(`/product/query?pid=${encodeURIComponent(pid)}`);
+  if (!detail.ok) return detail;
+  const product = detail.data as CjProductFromApi | null;
+  if (!product || typeof product !== "object" || !str(product.pid)) {
+    return { ok: false, error: "CJ has no product with that id.", status: 404 };
+  }
+  const variantsRes = await cjGet(`/product/variant/query?pid=${encodeURIComponent(pid)}`);
+  const rawVariants: CjVariantFromApi[] =
+    variantsRes.ok && Array.isArray(variantsRes.data) && variantsRes.data.length
+      ? (variantsRes.data as CjVariantFromApi[])
+      : Array.isArray(product.variants)
+        ? product.variants
+        : [];
+
+  const draft = mapCjProductToDraft({ ...product, variants: [] });
+  const prices = allNumbers(product.sellPrice);
+  const weights = allNumbers(product.productWeight);
+
+  const variants = rawVariants.map((v): CjDetailVariant => {
+    const parsed = parseVariantKey(v.variantKey);
+    const length = optionalNum(v.variantLength);
+    const width = optionalNum(v.variantWidth);
+    const height = optionalNum(v.variantHeight);
+    return {
+      vid: str(v.vid),
+      sku: str(v.variantSku),
+      key: str(v.variantKey),
+      color: parsed?.color ?? null,
+      size: parsed?.size ?? null,
+      price: optionalNum(v.variantSellPrice),
+      weightGrams: optionalNum(v.variantWeight),
+      dimensions: length && width && height ? { length, width, height } : null,
+      barcode: str(v.barcode),
+      image: str(v.variantImage) || null,
+    };
+  });
+
+  return {
+    ok: true,
+    data: {
+      pid: draft.externalId,
+      productName: nameText(product.productName),
+      productNameEn: draft.title,
+      images: draft.images,
+      descriptionHtml: sanitizeCjDescription(product.description),
+      priceMin: prices.length ? Math.min(...prices) : 0,
+      priceMax: prices.length ? Math.max(...prices) : 0,
+      priceLabel: String(product.sellPrice ?? ""),
+      weightMinGrams: weights.length ? Math.min(...weights) : 0,
+      weightMaxGrams: weights.length ? Math.max(...weights) : 0,
+      category: draft.category,
+      productSku: draft.supplierSku,
+      listedNum: draft.listedNum,
+      variants,
+    },
+  };
 }

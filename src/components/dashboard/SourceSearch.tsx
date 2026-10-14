@@ -1,6 +1,15 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useCallback, useState } from "react";
+
+import {
+  type AddState,
+  BoxIcon,
+  OriginBadge,
+  SourceProductModal,
+  type SourceModalItem,
+} from "@/components/dashboard/SourceProductModal";
+import type { CjProductDetail } from "@/lib/cj/catalog";
 
 type SearchItem = {
   pid: string;
@@ -20,18 +29,7 @@ type SearchState =
   | { status: "error"; message: string }
   | { status: "done"; query: string; page: number; pageSize: number; total: number; items: SearchItem[] };
 
-type AddState = "adding" | "added" | { error: string };
-
 const money = (n: number) => `$${n.toFixed(2)}`;
-
-function BoxIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className={className} aria-hidden="true">
-      <path d="M3.5 7.5 12 3l8.5 4.5v9L12 21l-8.5-4.5v-9Z" strokeLinejoin="round" />
-      <path d="M3.5 7.5 12 12l8.5-4.5M12 12v9" strokeLinejoin="round" />
-    </svg>
-  );
-}
 
 /** Square product photo; a box icon replaces it when there is no URL or it fails to load. */
 function ProductImage({ src }: { src: string | null }) {
@@ -55,29 +53,14 @@ function ProductImage({ src }: { src: string | null }) {
   );
 }
 
-function OriginBadge({ origin }: { origin: SearchItem["origin"] }) {
-  if (!origin) return null;
-  return origin === "US" ? (
-    <span
-      title="In stock at CJ's US warehouse"
-      className="rounded-full border border-lime-brand/30 bg-lime-brand/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-lime-brand"
-    >
-      Ships from US
-    </span>
-  ) : (
-    <span
-      title="Not found in CJ's US warehouse; ships from China"
-      className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300"
-    >
-      Ships from CN
-    </span>
-  );
-}
-
 export function SourceSearch() {
   const [query, setQuery] = useState("");
   const [state, setState] = useState<SearchState>({ status: "idle" });
   const [adds, setAdds] = useState<Record<string, AddState>>({});
+  const [openItem, setOpenItem] = useState<(SourceModalItem & { imported: boolean }) | null>(null);
+  // One Map for the page's lifetime: reopening a product doesn't call CJ again.
+  const [detailCache] = useState(() => new Map<string, CjProductDetail>());
+  const closeModal = useCallback(() => setOpenItem(null), []);
 
   async function search(q: string, page: number) {
     const trimmed = q.trim();
@@ -201,14 +184,27 @@ export function SourceSearch() {
               const error = typeof addState === "object" ? addState.error : null;
               return (
                 <div key={item.pid} className="ap-card flex flex-col gap-3 rounded-2xl p-4">
-                  <ProductImage src={item.imageUrl} />
+                  <button
+                    type="button"
+                    onClick={() => setOpenItem(item)}
+                    aria-label={`View details: ${item.title}`}
+                    className="block w-full rounded-xl transition hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
+                  >
+                    <ProductImage src={item.imageUrl} />
+                  </button>
                   <div className="flex-1 space-y-2">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <OriginBadge origin={item.origin} />
                       {item.category ? <span className="text-[11px] text-slate-400">{item.category}</span> : null}
                     </div>
                     <h2 className="line-clamp-2 text-sm font-semibold text-white" title={item.title}>
-                      {item.title}
+                      <button
+                        type="button"
+                        onClick={() => setOpenItem(item)}
+                        className="text-left hover:text-brand-400 hover:underline"
+                      >
+                        {item.title}
+                      </button>
                     </h2>
                     <div className="flex items-baseline justify-between gap-2 text-sm">
                       <span>
@@ -260,6 +256,15 @@ export function SourceSearch() {
             </div>
           ) : null}
         </>
+      ) : null}
+      {openItem ? (
+        <SourceProductModal
+          item={openItem}
+          addState={openItem.imported ? "added" : adds[openItem.pid]}
+          onAdd={(pid) => void add(pid)}
+          onClose={closeModal}
+          cache={detailCache}
+        />
       ) : null}
     </div>
   );
