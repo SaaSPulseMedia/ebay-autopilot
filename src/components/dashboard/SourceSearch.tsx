@@ -1,14 +1,25 @@
 "use client";
 
-import { type FormEvent, useCallback, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
+import {
+  applySourceFilters,
+  activeFilterChips,
+  EMPTY_FILTERS,
+  loadSavedFilters,
+  parseLimit,
+  saveFilters,
+  SourceFilterChips,
+  SourceFilterPanel,
+  type SourceFilterValues,
+} from "@/components/dashboard/SourceFilters";
 import {
   type AddState,
   BoxIcon,
   SourceProductModal,
   type SourceModalItem,
 } from "@/components/dashboard/SourceProductModal";
-import type { CjProductDetail } from "@/lib/cj/catalog";
+import type { CjCategory, CjProductDetail } from "@/lib/cj/catalog";
 
 type SearchItem = {
   pid: string;
@@ -26,7 +37,18 @@ type SearchState =
   | { status: "idle" }
   | { status: "loading"; query: string; page: number }
   | { status: "error"; message: string }
-  | { status: "done"; query: string; page: number; pageSize: number; total: number; items: SearchItem[] };
+  | {
+      status: "done";
+      query: string;
+      page: number;
+      pageSize: number;
+      total: number;
+      items: SearchItem[];
+      /** Results CJ returned that the relevance filter hid. */
+      rejected: number;
+    };
+
+type CategoryState = { status: "idle" | "loading" | "error" | "done"; list: CjCategory[] };
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
@@ -134,19 +156,78 @@ export function SourceSearch() {
   // One Map for the page's lifetime: reopening a product doesn't call CJ again.
   const [detailCache] = useState(() => new Map<string, CjProductDetail>());
   const closeModal = useCallback(() => setOpenItem(null), []);
+  const [filters, setFilters] = useState<SourceFilterValues>(EMPTY_FILTERS);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [categories, setCategories] = useState<CategoryState>({ status: "idle", list: [] });
+
+  // Restore the last used filters after mount (localStorage isn't available during server render).
+  useEffect(() => {
+    setFilters(loadSavedFilters());
+  }, []);
+
+  function updateFilters(patch: Partial<SourceFilterValues>) {
+    setFilters((prev) => {
+      const next = { ...prev, ...patch };
+      saveFilters(next);
+      return next;
+    });
+  }
+
+  function clearFilters() {
+    setFilters(EMPTY_FILTERS);
+    saveFilters(EMPTY_FILTERS);
+  }
+
+  const loadCategories = useCallback(async () => {
+    setCategories((prev) => ({ ...prev, status: "loading" }));
+    try {
+      const res = await fetch("/api/source/categories");
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.ok) throw new Error();
+      setCategories({ status: "done", list: body.categories });
+    } catch {
+      setCategories((prev) => ({ ...prev, status: "error" }));
+    }
+  }, []);
+
+  // Categories load once: when the panel first opens, or when a saved category needs its names.
+  useEffect(() => {
+    if (categories.status === "idle" && (filtersOpen || filters.category)) void loadCategories();
+  }, [categories.status, filtersOpen, filters.category, loadCategories]);
+
+  const chipCount = activeFilterChips(filters).length;
+  const visibleItems = useMemo(
+    () => (state.status === "done" ? applySourceFilters(state.items, filters, categories.list) : []),
+    [state, filters, categories.list],
+  );
 
   async function search(q: string, page: number) {
     const trimmed = q.trim();
     if (!trimmed) return;
     setState({ status: "loading", query: trimmed, page });
     try {
-      const res = await fetch(`/api/source/search?q=${encodeURIComponent(trimmed)}&page=${page}`);
+      const params = new URLSearchParams({ q: trimmed, page: String(page) });
+      // Price and seller limits also narrow what CJ returns; everything is re-checked locally too.
+      const limits = { minPrice: filters.minPrice, maxPrice: filters.maxPrice, minSellers: filters.minSellers, maxSellers: filters.maxSellers };
+      for (const [key, value] of Object.entries(limits)) {
+        const n = parseLimit(value);
+        if (n != null) params.set(key, String(n));
+      }
+      const res = await fetch(`/api/source/search?${params}`);
       const body = await res.json().catch(() => null);
       if (!res.ok || !body?.ok) {
         setState({ status: "error", message: body?.error ?? `Search failed (HTTP ${res.status}).` });
         return;
       }
-      setState({ status: "done", query: trimmed, page: body.page, pageSize: body.pageSize, total: body.total, items: body.items });
+      setState({
+        status: "done",
+        query: trimmed,
+        page: body.page,
+        pageSize: body.pageSize,
+        total: body.total,
+        items: body.items,
+        rejected: body.rejected ?? 0,
+      });
     } catch {
       setState({ status: "error", message: "Couldn't reach AutoPilot. Check your connection and try again." });
     }
@@ -194,6 +275,23 @@ export function SourceSearch() {
           className="min-w-[180px] flex-1 rounded-xl border border-white/15 bg-navy-900 px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
         />
         <button
+          type="button"
+          onClick={() => setFiltersOpen((open) => !open)}
+          aria-expanded={filtersOpen}
+          aria-controls="source-filters"
+          className={`inline-flex items-center justify-center gap-1.5 rounded-full border px-4 py-2.5 text-sm font-medium ${
+            filtersOpen || chipCount ? "border-brand-500/60 bg-brand-500/10 text-white" : "border-white/20 text-slate-200 hover:bg-white/5"
+          }`}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4" aria-hidden="true">
+            <path d="M4 6h16M7 12h10M10 18h4" strokeLinecap="round" />
+          </svg>
+          Filters
+          {chipCount ? (
+            <span className="rounded-full bg-brand-500 px-1.5 text-[11px] font-semibold leading-5 text-white">{chipCount}</span>
+          ) : null}
+        </button>
+        <button
           type="submit"
           disabled={loading || !query.trim()}
           className="rounded-full bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-400 disabled:opacity-50"
@@ -201,6 +299,17 @@ export function SourceSearch() {
           {loading ? "Searching…" : "Search"}
         </button>
       </form>
+
+      {filtersOpen ? (
+        <SourceFilterPanel
+          filters={filters}
+          onChange={updateFilters}
+          onClear={clearFilters}
+          categories={categories}
+          onRetryCategories={() => void loadCategories()}
+        />
+      ) : null}
+      <SourceFilterChips filters={filters} onChange={updateFilters} onClear={clearFilters} />
 
       {state.status === "idle" ? (
         <div className="ap-card rounded-2xl p-6 text-sm text-slate-400">
@@ -239,19 +348,39 @@ export function SourceSearch() {
 
       {state.status === "done" && state.items.length === 0 ? (
         <div className="ap-card rounded-2xl p-6 text-sm text-slate-400">
-          No CJ products match <span className="text-white">&ldquo;{state.query}&rdquo;</span>. Try a broader or
-          different keyword.
+          No CJ products match <span className="text-white">&ldquo;{state.query}&rdquo;</span>
+          {state.rejected ? ` (CJ returned ${state.rejected} unrelated results, hidden)` : ""}. Try a broader or different
+          keyword.
         </div>
       ) : null}
 
-      {state.status === "done" && state.items.length > 0 ? (
+      {state.status === "done" && state.items.length > 0 && visibleItems.length === 0 ? (
+        <div className="ap-card flex flex-wrap items-center justify-between gap-2 rounded-2xl p-6 text-sm text-slate-400">
+          <span>No products match. Try removing a filter.</span>
+          <button type="button" onClick={clearFilters} className="font-semibold text-brand-400 hover:text-brand-500">
+            Clear all filters
+          </button>
+        </div>
+      ) : null}
+
+      {state.status === "done" && visibleItems.length > 0 ? (
         <>
           <p className="text-xs text-slate-400">
-            {state.total.toLocaleString()} results for <span className="text-white">&ldquo;{state.query}&rdquo;</span>
+            {chipCount ? (
+              <>
+                <span className="text-white">{visibleItems.length}</span> {visibleItems.length === 1 ? "result" : "results"} after
+                filtering (of {state.items.length} on this page)
+              </>
+            ) : (
+              <>
+                {state.total.toLocaleString()} results for <span className="text-white">&ldquo;{state.query}&rdquo;</span>
+              </>
+            )}
+            {state.rejected ? ` · ${state.rejected} unrelated ${state.rejected === 1 ? "result" : "results"} hidden` : null}
             {lastPage > 1 ? ` · page ${state.page} of ${lastPage}` : null}
           </p>
           <div className={GRID}>
-            {state.items.map((item) => {
+            {visibleItems.map((item) => {
               const addState: AddState | undefined = item.imported ? "added" : adds[item.pid];
               const error = typeof addState === "object" ? addState.error : null;
               return (

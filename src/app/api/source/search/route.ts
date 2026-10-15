@@ -1,9 +1,13 @@
 import "server-only";
 
 import { getCurrentUser } from "@/lib/auth";
-import { searchCjProducts } from "@/lib/cj/catalog";
+import { type CjSearchFilters, searchCjProducts } from "@/lib/cj/catalog";
 
-/** GET /api/source/search?q=<keyword>&page=<n> — CJ Dropshipping product search. Signed-in users only. */
+/**
+ * GET /api/source/search?q=<keyword>&page=<n> — CJ Dropshipping product search.
+ * Optional minPrice, maxPrice (USD) and minSellers, maxSellers are passed to CJ
+ * to narrow the results. Signed-in users only.
+ */
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
@@ -16,8 +20,22 @@ export async function GET(request: Request) {
   if (q.length > 100) return Response.json({ ok: false, error: "Keep the search under 100 characters." }, { status: 400 });
   const page = Math.min(50, Math.max(1, Number.parseInt(params.get("page") ?? "1", 10) || 1));
 
+  // Non-negative numbers only; anything else is ignored rather than rejected.
+  const numberParam = (name: string) => {
+    const raw = params.get(name)?.trim();
+    if (!raw) return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : undefined;
+  };
+  const filters: CjSearchFilters = {
+    minPrice: numberParam("minPrice"),
+    maxPrice: numberParam("maxPrice"),
+    minSellers: numberParam("minSellers"),
+    maxSellers: numberParam("maxSellers"),
+  };
+
   try {
-    const result = await searchCjProducts(q, page);
+    const result = await searchCjProducts(q, page, filters);
     if (!result.ok) return Response.json({ ok: false, error: result.error }, { status: result.status });
     return Response.json({ ok: true, ...result.data });
   } catch (error) {

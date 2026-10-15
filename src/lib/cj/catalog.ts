@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { catalogProducts } from "@/db/schema";
 import { cjFetch, getCjAccessToken } from "@/lib/cj/client";
 import { type CjProductFromApi, type CjVariantFromApi, mapCjProductToDraft, parseVariantKey } from "@/lib/cj/mapper";
+import { rankByRelevance } from "@/lib/cj/relevance";
 import { sanitizeCjDescription } from "@/lib/cj/sanitize";
 import { priceForEbay } from "@/lib/pricing";
 
@@ -16,7 +17,8 @@ import { priceForEbay } from "@/lib/pricing";
  */
 
 const CJ_GAP_MS = 1100;
-const PAGE_SIZE = 24;
+/** Larger than one screen so the relevance filter still leaves plenty to show. */
+const PAGE_SIZE = 60;
 /** How many US-warehouse matches are checked to label a result "US". */
 const US_LOOKUP_SIZE = 200;
 
@@ -84,13 +86,38 @@ export type CjSearchItem = {
   imported: boolean;
 };
 
-export type CjSearchResult = { items: CjSearchItem[]; page: number; pageSize: number; total: number };
+export type CjSearchResult = {
+  items: CjSearchItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  /** Results on this page dropped because their title shares no word with the search. */
+  rejected: number;
+};
+
+/** Narrowing passed to CJ with the search (CJ's /product/list supports these). */
+export type CjSearchFilters = {
+  minPrice?: number;
+  maxPrice?: number;
+  minSellers?: number;
+  maxSellers?: number;
+};
 
 type CjListData = { list?: Array<Record<string, unknown>>; total?: number | string } | null;
 
-export async function searchCjProducts(keyword: string, page: number): Promise<CjResult<CjSearchResult>> {
+export async function searchCjProducts(
+  keyword: string,
+  page: number,
+  filters: CjSearchFilters = {},
+): Promise<CjResult<CjSearchResult>> {
   const q = encodeURIComponent(keyword);
-  const listed = await cjGet(`/product/list?pageNum=${page}&pageSize=${PAGE_SIZE}&productNameEn=${q}`);
+  const narrow = new URLSearchParams();
+  if (filters.minPrice != null) narrow.set("minPrice", String(filters.minPrice));
+  if (filters.maxPrice != null) narrow.set("maxPrice", String(filters.maxPrice));
+  if (filters.minSellers != null) narrow.set("minListedNum", String(filters.minSellers));
+  if (filters.maxSellers != null) narrow.set("maxListedNum", String(filters.maxSellers));
+  const extra = narrow.size ? `&${narrow}` : "";
+  const listed = await cjGet(`/product/list?pageNum=${page}&pageSize=${PAGE_SIZE}&productNameEn=${q}${extra}`);
   if (!listed.ok) return listed;
   const data = listed.data as CjListData;
   const rows = Array.isArray(data?.list) ? data.list : [];
@@ -132,7 +159,60 @@ export async function searchCjProducts(keyword: string, page: number): Promise<C
     })
     .filter((item): item is CjSearchItem => item !== null);
 
-  return { ok: true, data: { items, page, pageSize: PAGE_SIZE, total: Math.round(num(data?.total)) } };
+  const relevant = rankByRelevance(items, keyword, (item) => item.title);
+  console.log(
+    `[cj-search] q="${keyword}" page=${page} words=${JSON.stringify(relevant.words)} kept=${relevant.kept.length} rejected=${relevant.rejected}`,
+  );
+
+  return {
+    ok: true,
+    data: {
+      items: relevant.kept,
+      page,
+      pageSize: PAGE_SIZE,
+      total: Math.round(num(data?.total)),
+      rejected: relevant.rejected,
+    },
+  };
+}
+
+/** A top-level CJ category and the lower-level category names under it. */
+export type CjCategory = { name: string; subcategoryNames: string[] };
+
+const CATEGORY_TTL_MS = 24 * 60 * 60 * 1000;
+let categoryCache: { at: number; categories: CjCategory[] } | null = null;
+
+type CjCategoryTree = Array<{
+  categoryFirstName?: string;
+  categoryFirstList?: Array<{
+    categorySecondName?: string;
+    categorySecondList?: Array<{ categoryId?: string; categoryName?: string }>;
+  }>;
+}>;
+
+/**
+ * CJ's top-level categories, cached per server instance for a day. CJ only
+ * gives IDs for third-level categories, so search results (which carry the
+ * third-level categoryName) are matched against these name lists.
+ */
+export async function getCjCategories(): Promise<CjResult<CjCategory[]>> {
+  if (categoryCache && Date.now() - categoryCache.at < CATEGORY_TTL_MS) return { ok: true, data: categoryCache.categories };
+  const res = await cjGet("/product/getCategory");
+  if (!res.ok) return res;
+  const tree = Array.isArray(res.data) ? (res.data as CjCategoryTree) : [];
+  const categories = tree
+    .map((first): CjCategory => {
+      const names = new Set<string>();
+      for (const second of first.categoryFirstList ?? []) {
+        if (str(second.categorySecondName)) names.add(str(second.categorySecondName));
+        for (const third of second.categorySecondList ?? []) if (str(third.categoryName)) names.add(str(third.categoryName));
+      }
+      return { name: str(first.categoryFirstName), subcategoryNames: [...names] };
+    })
+    .filter((c) => c.name)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  if (categories.length) categoryCache = { at: Date.now(), categories };
+  return { ok: true, data: categories };
 }
 
 /** CJ's "listed by N sellers" as our competition level. */
