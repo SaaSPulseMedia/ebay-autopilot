@@ -20,7 +20,7 @@ import { hashPassword } from "@/lib/auth";
  */
 export const dynamic = "force-dynamic";
 
-const DEFAULT_ENDPOINT = "https://ebay-autopilot.vercel.app/api/ebay/account-deletion";
+const DEFAULT_ENDPOINT = "https://autopilot-lister.vercel.app/api/ebay/account-deletion";
 
 function endpointUrl() {
   return process.env.EBAY_DELETION_ENDPOINT?.trim() || DEFAULT_ENDPOINT;
