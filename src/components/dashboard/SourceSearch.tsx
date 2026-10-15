@@ -5,7 +5,6 @@ import { type FormEvent, useCallback, useState } from "react";
 import {
   type AddState,
   BoxIcon,
-  OriginBadge,
   SourceProductModal,
   type SourceModalItem,
 } from "@/components/dashboard/SourceProductModal";
@@ -35,7 +34,7 @@ const money = (n: number) => `$${n.toFixed(2)}`;
 function ProductImage({ src }: { src: string | null }) {
   const [failed, setFailed] = useState(false);
   return (
-    <div className="relative flex aspect-square w-full items-center justify-center overflow-hidden rounded-xl bg-white/5 text-slate-500">
+    <div className="relative flex aspect-square w-full items-center justify-center overflow-hidden rounded-lg bg-white/5 text-slate-500">
       {src && !failed ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -47,9 +46,83 @@ function ProductImage({ src }: { src: string | null }) {
           onError={() => setFailed(true)}
         />
       ) : (
-        <BoxIcon className="h-10 w-10" />
+        <BoxIcon className="h-8 w-8" />
       )}
     </div>
+  );
+}
+
+const GRID = "grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5";
+
+/** Origin as a dot in the image corner: green for CJ's US warehouse, grey for China. */
+function OriginDot({ origin }: { origin: SearchItem["origin"] }) {
+  if (!origin) return null;
+  const label = origin === "US" ? "Ships from US warehouse" : "Ships from China";
+  return (
+    <span
+      title={label}
+      className={`absolute left-1.5 top-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-navy-950/80 ${
+        origin === "US" ? "bg-lime-brand" : "bg-slate-400"
+      }`}
+    >
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}
+
+function PlusIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className={className} aria-hidden="true">
+      <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function CheckIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} className={className} aria-hidden="true">
+      <path d="m5 12.5 4.5 4.5L19 7.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/**
+ * Circular add button over the image. Hidden until the card is hovered on
+ * devices that can hover; always shown on touch screens, while adding, and once added.
+ */
+function AddIconButton({ state, onAdd, title }: { state: AddState | undefined; onAdd: () => void; title: string }) {
+  const added = state === "added";
+  const adding = state === "adding";
+  const error = typeof state === "object" ? state.error : null;
+  const label = added ? `Added: ${title}` : error ? `Couldn't add (${error}) — try again` : `Add to my catalog: ${title}`;
+  const tone = added
+    ? "bg-lime-brand text-navy-950"
+    : error
+      ? "bg-red-500 text-white hover:bg-red-400"
+      : "bg-brand-500 text-white hover:bg-brand-400";
+  const visibility =
+    added || adding || error
+      ? "opacity-100"
+      : "opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100";
+  return (
+    <button
+      type="button"
+      onClick={onAdd}
+      disabled={added || adding}
+      title={label}
+      aria-label={label}
+      className={`absolute right-1.5 top-1.5 flex h-8 w-8 items-center justify-center rounded-full shadow-lg shadow-black/40 transition-opacity duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white disabled:cursor-default ${tone} ${visibility}`}
+    >
+      {added ? (
+        <CheckIcon className="h-4 w-4" />
+      ) : adding ? (
+        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
+      ) : error ? (
+        <span className="text-sm font-bold" aria-hidden="true">!</span>
+      ) : (
+        <PlusIcon className="h-4 w-4" />
+      )}
+    </button>
   );
 }
 
@@ -137,12 +210,13 @@ export function SourceSearch() {
       ) : null}
 
       {state.status === "loading" ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label="Loading results">
-          {Array.from({ length: 6 }, (_, i) => (
-            <div key={i} className="ap-card animate-pulse space-y-3 rounded-2xl p-4">
-              <div className="aspect-square w-full rounded-xl bg-white/5" />
-              <div className="h-4 w-3/4 rounded bg-white/5" />
-              <div className="h-4 w-1/2 rounded bg-white/5" />
+        <div className={GRID} aria-busy="true" aria-label="Loading results">
+          {Array.from({ length: 10 }, (_, i) => (
+            <div key={i} className="animate-pulse space-y-2 rounded-xl border border-white/10 bg-white/[0.03] p-2">
+              <div className="aspect-square w-full rounded-lg bg-white/5" />
+              <div className="h-3 w-5/6 rounded bg-white/5" />
+              <div className="h-4 w-1/3 rounded bg-white/5" />
+              <div className="h-2.5 w-1/4 rounded bg-white/5" />
             </div>
           ))}
         </div>
@@ -176,61 +250,51 @@ export function SourceSearch() {
             {state.total.toLocaleString()} results for <span className="text-white">&ldquo;{state.query}&rdquo;</span>
             {lastPage > 1 ? ` · page ${state.page} of ${lastPage}` : null}
           </p>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className={GRID}>
             {state.items.map((item) => {
               const addState: AddState | undefined = item.imported ? "added" : adds[item.pid];
-              const added = addState === "added";
-              const adding = addState === "adding";
               const error = typeof addState === "object" ? addState.error : null;
               return (
-                <div key={item.pid} className="ap-card flex flex-col gap-3 rounded-2xl p-4">
-                  <button
-                    type="button"
-                    onClick={() => setOpenItem(item)}
-                    aria-label={`View details: ${item.title}`}
-                    className="block w-full rounded-xl transition hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
-                  >
-                    <ProductImage src={item.imageUrl} />
-                  </button>
-                  <div className="flex-1 space-y-2">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <OriginBadge origin={item.origin} />
-                      {item.category ? <span className="text-[11px] text-slate-400">{item.category}</span> : null}
-                    </div>
-                    <h2 className="line-clamp-2 text-sm font-semibold text-white" title={item.title}>
-                      <button
-                        type="button"
-                        onClick={() => setOpenItem(item)}
-                        className="text-left hover:text-brand-400 hover:underline"
-                      >
-                        {item.title}
-                      </button>
-                    </h2>
-                    <div className="flex items-baseline justify-between gap-2 text-sm">
-                      <span>
-                        <span className="text-xs text-slate-400">CJ price </span>
-                        <span className="font-semibold text-white" title={item.priceLabel ? `CJ: ${item.priceLabel}` : undefined}>
-                          {item.price > 0 ? money(item.price) : "—"}
-                        </span>
-                      </span>
-                      <span className="text-xs text-slate-400" title="How many CJ sellers have listed this product">
-                        {item.listedNum.toLocaleString()} {item.listedNum === 1 ? "seller" : "sellers"}
-                      </span>
-                    </div>
+                <div
+                  key={item.pid}
+                  className="group rounded-xl border border-white/10 bg-white/[0.03] p-2 transition-colors hover:border-white/20 hover:bg-white/[0.07]"
+                >
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setOpenItem(item)}
+                      aria-label={`View details: ${item.title}`}
+                      className="block w-full rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
+                    >
+                      <ProductImage src={item.imageUrl} />
+                    </button>
+                    <OriginDot origin={item.origin} />
+                    <AddIconButton state={addState} title={item.title} onAdd={() => void add(item.pid)} />
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void add(item.pid)}
-                    disabled={added || adding}
-                    className={
-                      added
-                        ? "rounded-full border border-lime-brand/30 bg-lime-brand/10 px-4 py-2 text-sm font-semibold text-lime-brand"
-                        : "rounded-full bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-400 disabled:opacity-50"
-                    }
-                  >
-                    {added ? "Added ✓" : adding ? "Adding…" : error ? "Try again" : "Add to my catalog"}
-                  </button>
-                  {error ? <p className="text-xs text-red-300">{error}</p> : null}
+                  <div className="px-0.5 pb-0.5 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setOpenItem(item)}
+                      title={item.title}
+                      className="block w-full truncate text-left text-xs text-slate-300 hover:text-white"
+                    >
+                      {item.title}
+                    </button>
+                    <p
+                      className="mt-1 text-base font-bold leading-tight text-white"
+                      title={item.priceLabel ? `CJ price: ${item.priceLabel}` : undefined}
+                    >
+                      {item.price > 0 ? money(item.price) : "—"}
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-slate-400">
+                      {item.listedNum.toLocaleString()} {item.listedNum === 1 ? "seller" : "sellers"}
+                    </p>
+                    {error ? (
+                      <p className="mt-1 truncate text-[11px] text-red-300" title={error}>
+                        {error}
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
               );
             })}
