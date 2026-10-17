@@ -46,6 +46,25 @@ export function ListingsTable({ initialListings }: { initialListings: ListingRow
     }
   }
 
+  async function deleteListing(id: number) {
+    if (!confirm("Delete this listing permanently? This removes it from AutoPilot and can't be undone.")) return;
+    setBusyId(id);
+    try {
+      const res = await fetch(`/api/listings/${id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => null);
+      if (data?.ok) {
+        setItems((prev) => prev.filter((item) => item.id !== id));
+        router.refresh();
+      } else {
+        alert(data?.error ?? "Could not delete listing.");
+      }
+    } catch {
+      alert("Error deleting listing.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   if (!items.length) {
     return (
       <p className="ap-card rounded-2xl p-10 text-center text-sm text-slate-400">
@@ -96,7 +115,20 @@ export function ListingsTable({ initialListings }: { initialListings: ListingRow
               </td>
               <td className="px-4 py-3 text-slate-400 font-mono text-xs">{row.ebayItemId ?? "—"}</td>
               <td className="px-4 py-3 text-right">
-                {row.status !== "ended" ? (
+                {row.status === "ended" || row.status === "draft" ? (
+                  <button
+                    type="button"
+                    onClick={() => deleteListing(row.id)}
+                    disabled={busyId === row.id}
+                    aria-label={`Delete listing: ${row.title}`}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-3 py-1 text-xs font-medium text-slate-300 hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-3.5 w-3.5" aria-hidden="true">
+                      <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    {busyId === row.id ? "Deleting…" : "Delete"}
+                  </button>
+                ) : (
                   <button
                     type="button"
                     onClick={() => endListing(row.id, row.status === "scheduled")}
@@ -105,8 +137,6 @@ export function ListingsTable({ initialListings }: { initialListings: ListingRow
                   >
                     {busyId === row.id ? "Working…" : row.status === "scheduled" ? "Cancel" : "End listing"}
                   </button>
-                ) : (
-                  <span className="text-xs text-slate-500">Ended</span>
                 )}
               </td>
             </tr>
