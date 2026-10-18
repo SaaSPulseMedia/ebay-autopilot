@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { db } from "@/db";
 import { ebayAccounts } from "@/db/schema";
+import { BusinessPolicies } from "@/components/dashboard/BusinessPolicies";
 import { ListingDefaultsForm } from "@/components/dashboard/ListingDefaultsForm";
 import { getCurrentUser } from "@/lib/auth";
 import { isBrowserEngineAvailable } from "@/lib/ebay/browser-list";
@@ -102,6 +103,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             eBay.
           </p>
         )}
+
+        {accounts.length ? <BusinessPolicies /> : null}
 
         <Link
           href="/api/ebay/connect"

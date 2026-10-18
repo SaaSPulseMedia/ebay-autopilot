@@ -1,6 +1,10 @@
 import "server-only";
 
-import { ebayErrorMessage, ebayFetch, ebayRequest, getAccessTokenForUser } from "@/lib/ebay/client";
+import { and, eq } from "drizzle-orm";
+
+import { db } from "@/db";
+import { ebayAccounts } from "@/db/schema";
+import { type EbayErrorBody, ebayErrorMessage, ebayFetch, ebayRequest, getAccessTokenForUser } from "@/lib/ebay/client";
 
 export type BusinessPolicies = {
   fulfillmentPolicyId: string | null;
@@ -8,29 +12,88 @@ export type BusinessPolicies = {
   returnPolicyId: string | null;
 };
 
-type FulfillmentPolicies = { fulfillmentPolicies?: { fulfillmentPolicyId?: string }[] };
-type PaymentPolicies = { paymentPolicies?: { paymentPolicyId?: string }[] };
-type ReturnPolicies = { returnPolicies?: { returnPolicyId?: string }[] };
+export type PolicyOption = { id: string; name: string };
+export type PolicyLists = { fulfillment: PolicyOption[]; payment: PolicyOption[]; returns: PolicyOption[] };
+export type PolicyListResult = ({ ok: true } & PolicyLists) | { ok: false; error: string; notConnected?: true };
+
+type FulfillmentPolicies = { fulfillmentPolicies?: { fulfillmentPolicyId?: string; name?: string }[] };
+type PaymentPolicies = { paymentPolicies?: { paymentPolicyId?: string; name?: string }[] };
+type ReturnPolicies = { returnPolicies?: { returnPolicyId?: string; name?: string }[] };
 type Locations = { locations?: { merchantLocationKey?: string }[] };
 
 const MARKETPLACE = "marketplace_id=EBAY_US";
 
-/** The seller's first shipping, payment and return policy on EBAY_US (null where none exist). */
-export async function fetchBusinessPolicies(userId: number): Promise<BusinessPolicies> {
-  const empty: BusinessPolicies = { fulfillmentPolicyId: null, paymentPolicyId: null, returnPolicyId: null };
+function options<T extends { name?: string }>(items: T[] | undefined, idOf: (item: T) => string | undefined): PolicyOption[] {
+  return (items ?? [])
+    .map((item) => ({ id: idOf(item) ?? "", name: item.name?.trim() || "Untitled policy" }))
+    .filter((option) => option.id);
+}
+
+/** Every shipping, payment and return policy the seller has on EBAY_US, with names. */
+export async function listBusinessPolicies(userId: number): Promise<PolicyListResult> {
   const token = await getAccessTokenForUser(userId);
-  if (!token) return empty;
+  if (!token) return { ok: false, error: "No eBay store connected. Connect your store in Settings.", notConnected: true };
 
   const [fulfillment, payment, returns] = await Promise.all([
-    ebayFetch<FulfillmentPolicies>(`/sell/account/v1/fulfillment_policy?${MARKETPLACE}`, token),
-    ebayFetch<PaymentPolicies>(`/sell/account/v1/payment_policy?${MARKETPLACE}`, token),
-    ebayFetch<ReturnPolicies>(`/sell/account/v1/return_policy?${MARKETPLACE}`, token),
+    ebayFetch<FulfillmentPolicies & EbayErrorBody>(`/sell/account/v1/fulfillment_policy?${MARKETPLACE}`, token),
+    ebayFetch<PaymentPolicies & EbayErrorBody>(`/sell/account/v1/payment_policy?${MARKETPLACE}`, token),
+    ebayFetch<ReturnPolicies & EbayErrorBody>(`/sell/account/v1/return_policy?${MARKETPLACE}`, token),
   ]);
+  const failed = [fulfillment, payment, returns].find((body) => body.errors?.length);
+  if (failed) return { ok: false, error: ebayErrorMessage(failed, "Could not load your business policies from eBay.") };
 
   return {
-    fulfillmentPolicyId: fulfillment.fulfillmentPolicies?.[0]?.fulfillmentPolicyId ?? null,
-    paymentPolicyId: payment.paymentPolicies?.[0]?.paymentPolicyId ?? null,
-    returnPolicyId: returns.returnPolicies?.[0]?.returnPolicyId ?? null,
+    ok: true,
+    fulfillment: options(fulfillment.fulfillmentPolicies, (p) => p.fulfillmentPolicyId),
+    payment: options(payment.paymentPolicies, (p) => p.paymentPolicyId),
+    returns: options(returns.returnPolicies, (p) => p.returnPolicyId),
+  };
+}
+
+/** The policies the seller saved in Settings (all null when none are saved or no store is connected). */
+export async function getSavedPolicyIds(userId: number): Promise<BusinessPolicies> {
+  const [row] = await db
+    .select({
+      fulfillmentPolicyId: ebayAccounts.fulfillmentPolicyId,
+      paymentPolicyId: ebayAccounts.paymentPolicyId,
+      returnPolicyId: ebayAccounts.returnPolicyId,
+    })
+    .from(ebayAccounts)
+    .where(and(eq(ebayAccounts.userId, userId), eq(ebayAccounts.mode, "oauth")))
+    .limit(1);
+  return row ?? { fulfillmentPolicyId: null, paymentPolicyId: null, returnPolicyId: null };
+}
+
+/** The saved policy when it still exists on eBay, otherwise the seller's first one. */
+function pick(options: PolicyOption[], saved: string | null) {
+  if (saved && options.some((o) => o.id === saved)) return saved;
+  return options[0]?.id ?? null;
+}
+
+/**
+ * The shipping, payment and return policy to put on offers. Uses the ones the
+ * seller picked in Settings; for any not picked (or deleted on eBay since),
+ * falls back to the seller's first policy of that kind. Null where none exist.
+ */
+export async function fetchBusinessPolicies(userId: number): Promise<BusinessPolicies> {
+  const empty: BusinessPolicies = { fulfillmentPolicyId: null, paymentPolicyId: null, returnPolicyId: null };
+  const [lists, saved] = await Promise.all([listBusinessPolicies(userId), getSavedPolicyIds(userId)]);
+  if (!lists.ok) return empty;
+
+  for (const [kind, list, id] of [
+    ["fulfillment", lists.fulfillment, saved.fulfillmentPolicyId],
+    ["payment", lists.payment, saved.paymentPolicyId],
+    ["return", lists.returns, saved.returnPolicyId],
+  ] as const) {
+    if (id && !list.some((o) => o.id === id)) {
+      console.warn(`[ebay-policies] user ${userId}: saved ${kind} policy ${id} no longer exists on eBay; using the first one`);
+    }
+  }
+
+  return {
+    fulfillmentPolicyId: pick(lists.fulfillment, saved.fulfillmentPolicyId),
+    paymentPolicyId: pick(lists.payment, saved.paymentPolicyId),
+    returnPolicyId: pick(lists.returns, saved.returnPolicyId),
   };
 }
 

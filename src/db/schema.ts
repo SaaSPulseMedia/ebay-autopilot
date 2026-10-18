@@ -48,6 +48,10 @@ export const ebayAccounts = pgTable("ebay_accounts", {
   tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
   /** AES-256-GCM ciphertext, only populated for the browser-fallback engine. */
   encryptedCredentials: text("encrypted_credentials"),
+  /** Business policies the seller picked in Settings; null = use their first policy of each kind. */
+  fulfillmentPolicyId: text("fulfillment_policy_id"),
+  paymentPolicyId: text("payment_policy_id"),
+  returnPolicyId: text("return_policy_id"),
   connectedAt: timestamp("connected_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
