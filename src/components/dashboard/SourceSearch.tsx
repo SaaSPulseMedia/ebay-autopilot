@@ -53,7 +53,7 @@ type CategoryState = { status: "idle" | "loading" | "error" | "done"; list: CjCa
 const money = (n: number) => `$${n.toFixed(2)}`;
 
 /** Square product photo; a box icon replaces it when there is no URL or it fails to load. */
-function ProductImage({ src }: { src: string | null }) {
+export function ProductImage({ src }: { src: string | null }) {
   const [failed, setFailed] = useState(false);
   return (
     <div className="relative flex aspect-square w-full items-center justify-center overflow-hidden rounded-lg bg-white/5 text-slate-500">
@@ -116,10 +116,10 @@ function RefreshIcon({ className }: { className?: string }) {
   );
 }
 
-const GRID = "grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5";
+export const GRID = "grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5";
 
 /** Origin as a dot in the image corner: green for CJ's US warehouse, grey for China. */
-function OriginDot({ origin }: { origin: SearchItem["origin"] }) {
+export function OriginDot({ origin }: { origin: SearchItem["origin"] }) {
   if (!origin) return null;
   const label = origin === "US" ? "Ships from US warehouse" : "Ships from China";
   return (

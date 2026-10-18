@@ -175,7 +175,16 @@ function variantChoices(variants: CatalogVariant[] = []) {
   return { colors: [...colors], sizes: [...sizes] };
 }
 
-export type ItemResult = { title: string; status: string; variants: number; message: string };
+export type ItemResult = {
+  title: string;
+  status: string;
+  variants: number;
+  message: string;
+  /** eBay listing ID when the item was published. */
+  itemId?: string | null;
+  /** Engine that handled it ("demo" means nothing reached eBay). */
+  engine?: string | null;
+};
 
 /**
  * AI copy → variants → publish now, or store as "scheduled" for drip posting.
@@ -257,6 +266,8 @@ export async function createListing(args: {
   return {
     title: draft.title,
     status: outcome?.status ?? "scheduled",
+    itemId: outcome?.itemId ?? null,
+    engine: outcome?.engine ?? null,
     variants: outcome?.variations ?? variants.length,
     // "Note:" makes the batch summary show the reason for a failed listing.
     message:

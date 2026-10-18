@@ -1,0 +1,550 @@
+"use client";
+
+import Link from "next/link";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+
+import { type AddState, SourceProductModal } from "@/components/dashboard/SourceProductModal";
+import { GRID, OriginDot, ProductImage } from "@/components/dashboard/SourceSearch";
+import type { CjCategory, CjProductDetail, WinningProduct } from "@/lib/cj/catalog";
+
+type Sort = "score" | "margin" | "competition" | "newest";
+
+const SORTS: { id: Sort; label: string }[] = [
+  { id: "score", label: "Winning Score" },
+  { id: "margin", label: "Best margin" },
+  { id: "competition", label: "Lowest competition" },
+  { id: "newest", label: "Newest" },
+];
+
+type Filters = {
+  category: string;
+  minPrice: string;
+  maxPrice: string;
+  /** Minimum net profit in USD, 0–20. */
+  minProfit: number;
+  maxSellers: string;
+  usOnly: boolean;
+};
+
+const DEFAULT_FILTERS: Filters = { category: "", minPrice: "", maxPrice: "", minProfit: 0, maxSellers: "20", usOnly: false };
+const STORAGE_KEY = "autopilot.winning.filters";
+
+type FeedState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "done"; products: WinningProduct[] };
+
+/** Auto-list progress for one product. */
+type ListState =
+  | { status: "working" }
+  | { status: "done"; itemId: string; itemUrl: string; listPrice: number }
+  | { status: "error"; message: string; notConnected?: boolean };
+
+const money = (n: number) => `$${n.toFixed(2)}`;
+const pct = (n: number) => `${Math.round(n * 100)}%`;
+
+function loadFilters(): Filters {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null") as Partial<Filters> | null;
+    if (!saved) return DEFAULT_FILTERS;
+    const text = (v: unknown, fallback: string) => (typeof v === "string" ? v.slice(0, 100) : fallback);
+    return {
+      category: text(saved.category, ""),
+      minPrice: text(saved.minPrice, ""),
+      maxPrice: text(saved.maxPrice, ""),
+      minProfit: typeof saved.minProfit === "number" ? Math.min(20, Math.max(0, saved.minProfit)) : 0,
+      maxSellers: text(saved.maxSellers, "20"),
+      usOnly: saved.usOnly === true,
+    };
+  } catch {
+    return DEFAULT_FILTERS;
+  }
+}
+
+function saveFilters(filters: Filters) {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(filters));
+  } catch {
+    // Storage blocked: filters just won't be remembered.
+  }
+}
+
+function queryFor(filters: Filters) {
+  const params = new URLSearchParams({ limit: "60" });
+  if (filters.category) params.set("category", filters.category);
+  if (filters.minPrice.trim()) params.set("minPrice", filters.minPrice.trim());
+  if (filters.maxPrice.trim()) params.set("maxPrice", filters.maxPrice.trim());
+  if (filters.minProfit > 0) params.set("minMargin", String(filters.minProfit));
+  params.set("maxSellers", filters.maxSellers.trim() || "any");
+  if (filters.usOnly) params.set("usOnly", "1");
+  return params.toString();
+}
+
+function sortProducts(products: WinningProduct[], sort: Sort) {
+  const list = [...products];
+  if (sort === "margin") list.sort((a, b) => b.margin - a.margin || b.profit - a.profit);
+  else if (sort === "competition") list.sort((a, b) => a.listedNum - b.listedNum || b.winningScore - a.winningScore);
+  else if (sort === "newest") list.sort((a, b) => (b.addedAt ?? "").localeCompare(a.addedAt ?? "") || b.winningScore - a.winningScore);
+  else list.sort((a, b) => b.winningScore - a.winningScore || b.profit - a.profit);
+  return list;
+}
+
+function scoreTone(score: number) {
+  if (score >= 70) return "bg-lime-brand text-navy-950";
+  if (score >= 50) return "bg-amber-300 text-navy-950";
+  return "bg-white/80 text-navy-950";
+}
+
+function ScoreBadge({ product }: { product: WinningProduct }) {
+  const p = product.scoreParts;
+  const title = `Winning Score ${product.winningScore}/100 — margin ${Math.round(p.margin * 100)}, competition ${Math.round(
+    p.competition * 100,
+  )}, US warehouse ${p.us ? "yes" : "no"}, recency ${Math.round(p.recency * 100)}`;
+  return (
+    <span
+      title={title}
+      className={`absolute bottom-1.5 left-1.5 rounded-full px-2 py-0.5 text-[11px] font-bold shadow-lg shadow-black/40 ${scoreTone(product.winningScore)}`}
+    >
+      {product.winningScore}
+      <span className="sr-only"> out of 100 Winning Score</span>
+    </span>
+  );
+}
+
+const INPUT =
+  "w-full rounded-lg border border-white/15 bg-navy-900 px-2.5 py-1.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-brand-500";
+const LABEL = "mb-1 block text-xs font-medium text-slate-400";
+
+function FiltersPanel({
+  value,
+  categories,
+  onApply,
+  onReset,
+}: {
+  value: Filters;
+  categories: { status: "loading" | "error" | "done"; list: CjCategory[] };
+  onApply: (filters: Filters) => void;
+  onReset: () => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const set = (patch: Partial<Filters>) => setDraft((prev) => ({ ...prev, ...patch }));
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    onApply(draft);
+  }
+
+  return (
+    <form onSubmit={submit} className="ap-card space-y-4 rounded-2xl p-4" aria-label="Winning product filters">
+      <div>
+        <label htmlFor="w-category" className={LABEL}>
+          Category
+        </label>
+        <select
+          id="w-category"
+          value={draft.category}
+          onChange={(e) => set({ category: e.target.value })}
+          disabled={categories.status !== "done"}
+          className={INPUT}
+        >
+          <option value="">
+            {categories.status === "loading" ? "Loading categories…" : categories.status === "error" ? "Couldn't load" : "Any category"}
+          </option>
+          {draft.category && !categories.list.some((c) => c.name === draft.category) ? (
+            <option value={draft.category}>{draft.category}</option>
+          ) : null}
+          {categories.list.map((c) => (
+            <option key={c.name} value={c.name}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <span className={LABEL}>CJ price (USD)</span>
+        <div className="flex items-center gap-2">
+          <input
+            aria-label="Minimum price"
+            inputMode="decimal"
+            placeholder="Min"
+            value={draft.minPrice}
+            onChange={(e) => set({ minPrice: e.target.value })}
+            className={INPUT}
+          />
+          <span className="text-slate-500">–</span>
+          <input
+            aria-label="Maximum price"
+            inputMode="decimal"
+            placeholder="Max"
+            value={draft.maxPrice}
+            onChange={(e) => set({ maxPrice: e.target.value })}
+            className={INPUT}
+          />
+        </div>
+      </div>
+      <div>
+        <label htmlFor="w-profit" className={LABEL}>
+          Minimum profit per sale: <span className="font-semibold text-white">{money(draft.minProfit)}</span>
+        </label>
+        <input
+          id="w-profit"
+          type="range"
+          min={0}
+          max={20}
+          step={0.5}
+          value={draft.minProfit}
+          onChange={(e) => set({ minProfit: Number(e.target.value) })}
+          className="w-full accent-brand-500"
+        />
+        <div className="flex justify-between text-[10px] text-slate-500">
+          <span>$0</span>
+          <span>$20</span>
+        </div>
+      </div>
+      <div>
+        <label htmlFor="w-sellers" className={LABEL}>
+          Maximum sellers
+        </label>
+        <input
+          id="w-sellers"
+          inputMode="numeric"
+          placeholder="Any"
+          value={draft.maxSellers}
+          onChange={(e) => set({ maxSellers: e.target.value })}
+          className={INPUT}
+        />
+        <p className="mt-1 text-[11px] text-slate-500">CJ sellers already listing it. Fewer means less competition.</p>
+      </div>
+      <label className="flex items-center gap-2 text-sm text-slate-200">
+        <input
+          type="checkbox"
+          checked={draft.usOnly}
+          onChange={(e) => set({ usOnly: e.target.checked })}
+          className="h-4 w-4 accent-lime-500"
+        />
+        US warehouse only
+      </label>
+      <div className="flex gap-2">
+        <button type="submit" className="flex-1 rounded-full bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-400">
+          Apply
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(DEFAULT_FILTERS);
+            onReset();
+          }}
+          className="rounded-full border border-white/20 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-white/5"
+        >
+          Reset
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** CJ products ranked by Winning Score, with one-click import + publish. */
+export function WinningProducts() {
+  const [filters, setFilters] = useState<Filters | null>(null);
+  const [sort, setSort] = useState<Sort>("score");
+  const [feed, setFeed] = useState<FeedState>({ status: "loading" });
+  const [lists, setLists] = useState<Record<string, ListState>>({});
+  const [adds, setAdds] = useState<Record<string, AddState>>({});
+  const [importedNow, setImportedNow] = useState<Set<string>>(() => new Set());
+  const [categories, setCategories] = useState<{ status: "loading" | "error" | "done"; list: CjCategory[] }>({
+    status: "loading",
+    list: [],
+  });
+  const [openItem, setOpenItem] = useState<WinningProduct | null>(null);
+  const [detailCache] = useState(() => new Map<string, CjProductDetail>());
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const closeModal = useCallback(() => setOpenItem(null), []);
+
+  // Saved filters live in localStorage, which only exists after mount.
+  useEffect(() => {
+    setFilters(loadFilters()); // eslint-disable-line react-hooks/set-state-in-effect
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/source/categories")
+      .then((res) => res.json())
+      .then((body) => {
+        if (!cancelled) setCategories(body?.ok ? { status: "done", list: body.categories } : { status: "error", list: [] });
+      })
+      .catch(() => !cancelled && setCategories({ status: "error", list: [] }));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const load = useCallback(async (current: Filters) => {
+    setFeed({ status: "loading" });
+    try {
+      const res = await fetch(`/api/source/winning-products?${queryFor(current)}`);
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.ok) {
+        setFeed({ status: "error", message: body?.error ?? `Couldn't load products (HTTP ${res.status}).` });
+        return;
+      }
+      setFeed({ status: "done", products: body.products });
+    } catch {
+      setFeed({ status: "error", message: "Couldn't reach AutoPilot. Check your connection and try again." });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (filters) void load(filters); // eslint-disable-line react-hooks/set-state-in-effect
+  }, [filters, load]);
+
+  function apply(next: Filters) {
+    saveFilters(next);
+    setFilters(next);
+    setFiltersOpen(false);
+  }
+
+  const products = useMemo(() => (feed.status === "done" ? sortProducts(feed.products, sort) : []), [feed, sort]);
+
+  async function autoList(product: WinningProduct) {
+    const ok = window.confirm(
+      `List "${product.title}" on eBay now?\n\nAutoPilot imports it from CJ and publishes it to your eBay store with your Settings (pricing, quantity, policies).`,
+    );
+    if (!ok) return;
+    setLists((prev) => ({ ...prev, [product.pid]: { status: "working" } }));
+    try {
+      const res = await fetch("/api/source/auto-list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pid: product.pid }),
+      });
+      const body = await res.json().catch(() => null);
+      if (body?.imported || body?.ok) setImportedNow((prev) => new Set(prev).add(product.pid));
+      setLists((prev) => ({
+        ...prev,
+        [product.pid]:
+          res.ok && body?.ok
+            ? { status: "done", itemId: body.itemId, itemUrl: body.itemUrl, listPrice: body.listPrice }
+            : {
+                status: "error",
+                message: body?.error ?? `Couldn't list it (HTTP ${res.status}).`,
+                notConnected: body?.code === "not_connected",
+              },
+      }));
+    } catch {
+      setLists((prev) => ({ ...prev, [product.pid]: { status: "error", message: "Couldn't reach AutoPilot. Try again." } }));
+    }
+  }
+
+  async function addToCatalog(pid: string) {
+    setAdds((prev) => ({ ...prev, [pid]: "adding" }));
+    try {
+      const res = await fetch("/api/source/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pid }),
+      });
+      const body = await res.json().catch(() => null);
+      if (res.ok && body?.ok) {
+        setImportedNow((prev) => new Set(prev).add(pid));
+        setAdds((prev) => ({ ...prev, [pid]: "added" }));
+      } else {
+        setAdds((prev) => ({ ...prev, [pid]: { error: body?.error ?? `Couldn't add it (HTTP ${res.status}).` } }));
+      }
+    } catch {
+      setAdds((prev) => ({ ...prev, [pid]: { error: "Couldn't reach AutoPilot. Try again." } }));
+    }
+  }
+
+  return (
+    <div className="grid gap-5 lg:grid-cols-[260px_1fr]">
+      <aside className="lg:sticky lg:top-4 lg:self-start">
+        <button
+          type="button"
+          onClick={() => setFiltersOpen((v) => !v)}
+          aria-expanded={filtersOpen}
+          className="mb-3 w-full rounded-full border border-white/20 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-white/5 lg:hidden"
+        >
+          {filtersOpen ? "Hide filters" : "Filters"}
+        </button>
+        <div className={filtersOpen ? "block" : "hidden lg:block"}>
+          {filters ? (
+            <FiltersPanel
+              key={JSON.stringify(filters)}
+              value={filters}
+              categories={categories}
+              onApply={apply}
+              onReset={() => apply(DEFAULT_FILTERS)}
+            />
+          ) : null}
+        </div>
+      </aside>
+
+      <section className="min-w-0 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-slate-400" aria-live="polite">
+            {feed.status === "done"
+              ? `${products.length} product${products.length === 1 ? "" : "s"}, ranked from CJ data`
+              : feed.status === "loading"
+                ? "Scoring CJ products…"
+                : ""}
+          </p>
+          <label className="flex items-center gap-2 text-sm text-slate-300">
+            Sort
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as Sort)}
+              className="rounded-lg border border-white/15 bg-navy-900 px-2.5 py-1.5 text-sm text-white outline-none focus:border-brand-500"
+            >
+              {SORTS.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {feed.status === "loading" ? (
+          <div className={GRID} aria-busy="true" aria-label="Loading products">
+            {Array.from({ length: 10 }, (_, i) => (
+              <div key={i} className="rounded-xl border border-white/10 bg-white/[0.03] p-2">
+                <div className="aspect-square animate-pulse rounded-lg bg-white/5" />
+                <div className="mt-2 h-3 w-3/4 animate-pulse rounded bg-white/5" />
+                <div className="mt-2 h-4 w-1/3 animate-pulse rounded bg-white/5" />
+              </div>
+            ))}
+          </div>
+        ) : feed.status === "error" ? (
+          <div className="ap-card rounded-2xl p-6 text-sm text-slate-300">
+            <p>{feed.message}</p>
+            {filters ? (
+              <button type="button" onClick={() => void load(filters)} className="mt-2 font-semibold text-brand-400 hover:text-brand-500">
+                Try again
+              </button>
+            ) : null}
+          </div>
+        ) : products.length === 0 ? (
+          <p className="ap-card rounded-2xl p-10 text-center text-sm text-slate-400">
+            No CJ products match these filters. Try a higher maximum sellers, a lower minimum profit, or another category.
+          </p>
+        ) : (
+          <div className={GRID}>
+            {products.map((product) => {
+              const list = lists[product.pid];
+              const imported = product.imported || importedNow.has(product.pid);
+              return (
+                <div
+                  key={product.pid}
+                  className="group flex flex-col rounded-xl border border-white/10 bg-white/[0.03] p-2 transition-colors hover:border-white/20 hover:bg-white/[0.07]"
+                >
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setOpenItem(product)}
+                      aria-label={`View details: ${product.title}`}
+                      className="block w-full rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500"
+                    >
+                      <ProductImage src={product.imageUrl} />
+                    </button>
+                    <OriginDot origin={product.origin} />
+                    <ScoreBadge product={product} />
+                    {imported ? (
+                      <span className="absolute right-1.5 top-1.5 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-lime-brand">
+                        In catalog
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-1 flex-col px-0.5 pb-0.5 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setOpenItem(product)}
+                      title={product.title}
+                      className="block w-full truncate text-left text-xs text-slate-300 hover:text-white"
+                    >
+                      {product.title}
+                    </button>
+                    <p className="mt-1 text-sm leading-tight text-white">
+                      <span className="font-bold">{money(product.price)}</span>
+                      <span className="text-slate-400"> → {money(product.suggestedPrice)}</span>
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-lime-brand">
+                      +{money(product.profit)} profit · {pct(product.margin)}
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-slate-400">
+                      {product.listedNum.toLocaleString()} {product.listedNum === 1 ? "seller" : "sellers"} · {product.competition}{" "}
+                      competition
+                    </p>
+
+                    <div className="mt-auto pt-2">
+                      {list?.status === "done" ? (
+                        <div className="rounded-lg border border-lime-brand/30 bg-lime-brand/10 px-2 py-1.5 text-[11px] text-lime-brand">
+                          Listed on eBay ✓ at {money(list.listPrice)}
+                          <a
+                            href={list.itemUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-0.5 block truncate font-mono font-semibold underline"
+                          >
+                            #{list.itemId}
+                          </a>
+                        </div>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => void autoList(product)}
+                            disabled={list?.status === "working"}
+                            className="flex w-full items-center justify-center gap-1.5 rounded-full bg-lime-brand px-3 py-2 text-xs font-bold text-navy-950 hover:brightness-110 disabled:opacity-70"
+                          >
+                            {list?.status === "working" ? (
+                              <>
+                                <span
+                                  className="h-3 w-3 animate-spin rounded-full border-2 border-navy-950/30 border-t-navy-950"
+                                  aria-hidden="true"
+                                />
+                                Listing…
+                              </>
+                            ) : (
+                              <>
+                                <span className="sm:hidden">Auto-list</span>
+                                <span className="hidden sm:inline">Auto-list this product</span>
+                              </>
+                            )}
+                          </button>
+                          {list?.status === "error" ? (
+                            <p className="mt-1 text-[11px] leading-snug text-red-300" role="alert">
+                              {list.message}
+                              {list.notConnected ? (
+                                <>
+                                  {" "}
+                                  <Link href="/dashboard/settings" className="underline">
+                                    Settings
+                                  </Link>
+                                </>
+                              ) : null}
+                            </p>
+                          ) : null}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {openItem ? (
+        <SourceProductModal
+          item={openItem}
+          addState={adds[openItem.pid]}
+          imported={openItem.imported || importedNow.has(openItem.pid)}
+          onAdd={(pid) => void addToCatalog(pid)}
+          onClose={closeModal}
+          cache={detailCache}
+        />
+      ) : null}
+    </div>
+  );
+}

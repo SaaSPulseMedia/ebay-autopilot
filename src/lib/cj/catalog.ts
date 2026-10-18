@@ -9,6 +9,7 @@ import { type CjProductFromApi, type CjVariantFromApi, mapCjProductToDraft, pars
 import { rankByRelevance } from "@/lib/cj/relevance";
 import { sanitizeCjDescription } from "@/lib/cj/sanitize";
 import { priceForEbay } from "@/lib/pricing";
+import { type WinningBreakdown, parseCjDate, winningScore } from "@/lib/winning-score";
 
 /**
  * CJ sourcing for the dashboard: keyword search and one-click import into
@@ -380,4 +381,107 @@ export async function getCjProductDetail(pid: string): Promise<CjResult<CjProduc
       variants,
     },
   };
+}
+
+export type WinningFilters = {
+  /** Top-level CJ category name (from getCjCategories); blank = any. */
+  category?: string;
+  minPrice?: number;
+  maxPrice?: number;
+  /** Minimum net profit in USD at the suggested eBay price. */
+  minProfit?: number;
+  maxSellers?: number;
+  usOnly?: boolean;
+  limit: number;
+};
+
+export type WinningProduct = CjSearchItem & Omit<WinningBreakdown, "parts"> & {
+  scoreParts: WinningBreakdown["parts"];
+  /** When CJ added the product (ISO), if CJ says. */
+  addedAt: string | null;
+};
+
+/** CJ rows examined per feed request (one page; CJ's max page size). */
+const FEED_POOL = 200;
+
+/**
+ * The Winning Products feed: CJ products (no keyword) narrowed by price and
+ * seller count at CJ, then scored with winningScore() and filtered by
+ * category, profit and warehouse here. Two CJ calls (all + US warehouse), or
+ * one with usOnly.
+ */
+export async function getWinningProducts(filters: WinningFilters): Promise<CjResult<WinningProduct[]>> {
+  const narrow = new URLSearchParams({ pageNum: "1", pageSize: String(FEED_POOL) });
+  if (filters.minPrice != null) narrow.set("minPrice", String(filters.minPrice));
+  if (filters.maxPrice != null) narrow.set("maxPrice", String(filters.maxPrice));
+  if (filters.maxSellers != null) narrow.set("maxListedNum", String(filters.maxSellers));
+
+  const us = await cjGet(`/product/list?${narrow}&countryCode=US`);
+  const usRows = us.ok && Array.isArray((us.data as CjListData)?.list) ? ((us.data as CjListData)?.list ?? []) : [];
+  const usPids = us.ok ? new Set(usRows.map((r) => str(r.pid)).filter(Boolean)) : null;
+
+  let rows = usRows;
+  if (!filters.usOnly) {
+    const all = await cjGet(`/product/list?${narrow}`);
+    if (!all.ok) return all;
+    const allRows = (all.data as CjListData)?.list;
+    rows = Array.isArray(allRows) ? allRows : [];
+  } else if (!us.ok) {
+    return us;
+  }
+
+  let categoryNames: Set<string> | null = null;
+  if (filters.category) {
+    const categories = await getCjCategories();
+    const selected = categories.ok ? categories.data.find((c) => c.name === filters.category) : undefined;
+    categoryNames = new Set([filters.category, ...(selected?.subcategoryNames ?? [])].map((n) => n.toLowerCase()));
+  }
+
+  const pids = rows.map((r) => str(r.pid)).filter(Boolean);
+  const existing = pids.length
+    ? await db
+        .select({ externalId: catalogProducts.externalId })
+        .from(catalogProducts)
+        .where(inArray(catalogProducts.externalId, pids.map(cjExternalId)))
+    : [];
+  const importedIds = new Set(existing.map((r) => r.externalId));
+
+  const now = Date.now();
+  const seen = new Set<string>();
+  const products: WinningProduct[] = [];
+  for (const row of rows) {
+    const pid = str(row.pid);
+    const cost = num(row.sellPrice);
+    if (!pid || seen.has(pid) || cost <= 0) continue;
+    seen.add(pid);
+    const category = str(row.categoryName);
+    if (categoryNames && !categoryNames.has(category.toLowerCase())) continue;
+    const origin: CjSearchItem["origin"] = usPids ? (usPids.has(pid) ? "US" : "CN") : null;
+    if (filters.usOnly && origin !== "US") continue;
+    const listedNum = Math.round(num(row.listedNum));
+    if (filters.maxSellers != null && listedNum > filters.maxSellers) continue;
+    const added = parseCjDate(row.createTime ?? row.createrTime ?? row.createDate);
+    const { parts, ...score } = winningScore({ cost, listedNum, origin, createdAt: added }, now);
+    if (filters.minProfit != null && score.profit < filters.minProfit) continue;
+    products.push({
+      pid,
+      title: str(row.productNameEn) || "Untitled CJ product",
+      imageUrl: mapCjProductToDraft(row as CjProductFromApi).images[0] ?? null,
+      price: cost,
+      priceLabel: String(row.sellPrice ?? ""),
+      listedNum,
+      category,
+      origin,
+      imported: importedIds.has(cjExternalId(pid)),
+      ...score,
+      scoreParts: parts,
+      addedAt: added ? added.toISOString() : null,
+    });
+  }
+
+  products.sort((a, b) => b.winningScore - a.winningScore || b.profit - a.profit);
+  console.log(
+    `[cj-winning] pool=${rows.length} scored=${products.length} us=${usPids ? usPids.size : "n/a"} filters=${JSON.stringify(filters)}`,
+  );
+  return { ok: true, data: products.slice(0, filters.limit) };
 }

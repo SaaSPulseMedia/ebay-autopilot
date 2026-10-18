@@ -6,7 +6,7 @@ import type { ProductFacts } from "@/lib/cj/facts";
 import { competitionFor, netProfitFor, priceForEbay } from "@/lib/pricing";
 import { SAMPLE_SUPPLIER, STARTER_ROWS, starterImageUrl } from "@/lib/starter-catalog";
 import { screenVero, stricterRisk } from "@/lib/vero";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 
 export type SupplierProduct = {
   externalId: string;
@@ -93,6 +93,35 @@ export async function getCatalog(limit = 36): Promise<CatalogProduct[]> {
   return products.map(withVero);
 }
 
+type CatalogRow = typeof catalogProducts.$inferSelect;
+
+function rowToProduct(row: CatalogRow): SupplierProduct {
+  return {
+    externalId: row.externalId,
+    source: row.source,
+    title: row.title,
+    category: row.category,
+    supplier: row.supplier,
+    supplierUrl: row.supplierUrl,
+    imageUrl: row.imageUrl,
+    images: Array.isArray(row.images) ? row.images.filter((url): url is string => typeof url === "string" && url !== "") : [],
+    variants: Array.isArray(row.variants) ? row.variants.filter((v) => v && typeof v.sku === "string" && v.sku) : [],
+    details: row.details && typeof row.details === "object" ? row.details : null,
+    supplierPrice: Number(row.supplierPrice),
+    suggestedPrice: Number(row.suggestedPrice),
+    shippingCost: Number(row.shippingCost),
+    monthlySales: row.monthlySales,
+    competition: row.competition as SupplierProduct["competition"],
+    veroRisk: row.veroRisk as SupplierProduct["veroRisk"],
+  };
+}
+
+/** One catalog product by externalId (e.g. "cj-<pid>"), with the VeRO screen applied; null if absent. */
+export async function getCatalogProduct(externalId: string): Promise<CatalogProduct | null> {
+  const [row] = await db.select().from(catalogProducts).where(eq(catalogProducts.externalId, externalId)).limit(1);
+  return row ? withVero(rowToProduct(row)) : null;
+}
+
 async function loadCatalog(limit: number): Promise<SupplierProduct[]> {
   try {
     const rows = await db
@@ -101,24 +130,7 @@ async function loadCatalog(limit: number): Promise<SupplierProduct[]> {
       .orderBy(desc(catalogProducts.monthlySales))
       .limit(limit);
     if (rows.length) {
-      return rows.map((row) => ({
-        externalId: row.externalId,
-        source: row.source,
-        title: row.title,
-        category: row.category,
-        supplier: row.supplier,
-        supplierUrl: row.supplierUrl,
-        imageUrl: row.imageUrl,
-        images: Array.isArray(row.images) ? row.images.filter((url): url is string => typeof url === "string" && url !== "") : [],
-        variants: Array.isArray(row.variants) ? row.variants.filter((v) => v && typeof v.sku === "string" && v.sku) : [],
-        details: row.details && typeof row.details === "object" ? row.details : null,
-        supplierPrice: Number(row.supplierPrice),
-        suggestedPrice: Number(row.suggestedPrice),
-        shippingCost: Number(row.shippingCost),
-        monthlySales: row.monthlySales,
-        competition: row.competition as SupplierProduct["competition"],
-        veroRisk: row.veroRisk as SupplierProduct["veroRisk"],
-      }));
+      return rows.map(rowToProduct);
     }
   } catch {
     // Database not reachable yet — fall through to the starter catalog.
