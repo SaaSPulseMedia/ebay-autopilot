@@ -23,19 +23,25 @@ function missingFields(draft: ListingDraft, context?: ApiPublishContext) {
   const missing: string[] = [];
   if (!context?.userId || !context.sku) missing.push("seller context");
   if (!draft.title) missing.push("a title");
-  if (!draft.imageUrl) missing.push("a product image");
+  if (!listingImages(draft).length) missing.push("a product image");
   if (!(draft.listPrice > 0)) missing.push("a price");
   return missing;
 }
 
+/** Every image for the listing, primary first; just `imageUrl` when the draft has no list. */
+function listingImages(draft: ListingDraft): string[] {
+  const all = draft.imageUrls?.length ? draft.imageUrls : [draft.imageUrl];
+  return [...new Set(all.filter((url): url is string => typeof url === "string" && url.trim() !== ""))];
+}
+
 function toCatalogProduct(draft: ListingDraft, context?: ApiPublishContext): CatalogProductForPublish | null {
-  if (!context || !draft.imageUrl || missingFields(draft, context).length) return null;
+  if (!context || missingFields(draft, context).length) return null;
   return {
     userId: context.userId,
     sku: context.sku,
     title: draft.title,
     description: draft.description,
-    imageUrls: [draft.imageUrl],
+    imageUrls: listingImages(draft),
     price: draft.listPrice,
     quantity: draft.quantity && draft.quantity > 0 ? draft.quantity : 1,
   };

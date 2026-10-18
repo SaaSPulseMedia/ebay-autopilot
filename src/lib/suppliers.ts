@@ -15,6 +15,8 @@ export type SupplierProduct = {
   supplier: string;
   supplierUrl: string | null;
   imageUrl: string | null;
+  /** All product images, primary first; empty when only `imageUrl` is known. */
+  images: string[];
   supplierPrice: number;
   suggestedPrice: number;
   shippingCost: number;
@@ -66,6 +68,7 @@ function starterCatalog(limit: number): SupplierProduct[] {
       supplier: SAMPLE_SUPPLIER,
       supplierUrl: null,
       imageUrl: starterImageUrl(row.title),
+      images: [],
       supplierPrice: row.supplierPrice,
       suggestedPrice: suggested,
       shippingCost: shipping,
@@ -99,6 +102,7 @@ async function loadCatalog(limit: number): Promise<SupplierProduct[]> {
         supplier: row.supplier,
         supplierUrl: row.supplierUrl,
         imageUrl: row.imageUrl,
+        images: Array.isArray(row.images) ? row.images.filter((url): url is string => typeof url === "string" && url !== "") : [],
         supplierPrice: Number(row.supplierPrice),
         suggestedPrice: Number(row.suggestedPrice),
         shippingCost: Number(row.shippingCost),

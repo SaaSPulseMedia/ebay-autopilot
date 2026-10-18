@@ -151,6 +151,8 @@ export type ListingSource = {
   listPrice: number;
   sourceUrl: string | null;
   imageUrl: string | null;
+  /** Every product image, primary first (optional; `imageUrl` is the fallback). */
+  images?: string[];
 };
 
 export type ItemResult = { title: string; status: string; variants: number; message: string };
@@ -188,6 +190,7 @@ export async function createListing(args: {
     supplierPrice: source.supplierPrice,
     sourceUrl: source.sourceUrl,
     imageUrl: source.imageUrl,
+    imageUrls: source.images?.length ? source.images : undefined,
     quantity: variants.reduce((sum, variant) => sum + variant.quantity, 0),
   };
 

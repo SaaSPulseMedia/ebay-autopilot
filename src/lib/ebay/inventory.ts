@@ -63,7 +63,8 @@ export async function publishListing(input: PublishInput): Promise<PublishResult
       product: {
         title: input.title.slice(0, 80),
         description: input.description,
-        imageUrls: input.imageUrls.slice(0, 24),
+        // eBay takes up to 24 pictures; the first is the gallery (main) image.
+        imageUrls: [...new Set(input.imageUrls.map((url) => url.trim()).filter(Boolean))].slice(0, 24),
         ...(input.aspects ? { aspects: input.aspects } : {}),
         ...(input.brand ? { brand: input.brand } : {}),
         ...(input.mpn ? { mpn: input.mpn } : {}),

@@ -66,7 +66,10 @@ export const catalogProducts = pgTable(
     category: text("category").notNull().default("General"),
     supplier: text("supplier").notNull().default("Unknown supplier"),
     supplierUrl: text("supplier_url"),
+    /** Primary image (first of `images`), kept for screens that show one thumbnail. */
     imageUrl: text("image_url"),
+    /** Every product image, primary first (CJ imports carry 5–10). Empty for older rows. */
+    images: jsonb("images").$type<string[]>().notNull().default([]),
     supplierPrice: numeric("supplier_price", { precision: 10, scale: 2 }).notNull(),
     suggestedPrice: numeric("suggested_price", { precision: 10, scale: 2 }).notNull(),
     shippingCost: numeric("shipping_cost", { precision: 10, scale: 2 }).notNull().default("0"),

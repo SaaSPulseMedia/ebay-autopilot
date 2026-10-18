@@ -7,6 +7,8 @@ export type ListingDraft = {
   supplierPrice: number;
   sourceUrl?: string | null;
   imageUrl?: string | null;
+  /** All images for the listing, primary first. When empty, `imageUrl` alone is used. */
+  imageUrls?: string[];
   quantity?: number;
 };
 

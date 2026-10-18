@@ -106,8 +106,21 @@ export function parseVariantKey(key: string | null | undefined): { color: string
   return null;
 }
 
+/** Absolute http(s) URL, or null. CJ sometimes sends protocol-relative ("//cf.cjdropshipping.com/…") links. */
+function imageUrl(raw: string): string | null {
+  const url = raw.trim().startsWith("//") ? `https:${raw.trim()}` : raw.trim();
+  return /^https?:\/\//i.test(url) ? url : null;
+}
+
 export function mapCjProductToDraft(product: CjProductFromApi): CatalogProductDraft {
-  const images = [...new Set([...imageList(product.productImageSet), ...imageList(product.productImage)])];
+  // productImageSet is the full gallery; productImage (the main photo) only adds anything when the set is missing.
+  const images = [
+    ...new Set(
+      [...imageList(product.productImageSet), ...imageList(product.productImage)]
+        .map(imageUrl)
+        .filter((url): url is string => url !== null),
+    ),
+  ];
 
   const variants: CatalogProductDraft["variants"] = [];
   for (const v of product.variants ?? []) {

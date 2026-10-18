@@ -55,6 +55,7 @@ async function releaseScheduled() {
         supplierPrice: Number(payload.supplierPrice ?? 0),
         sourceUrl: payload.sourceUrl ?? null,
         imageUrl: payload.imageUrl ?? null,
+        imageUrls: Array.isArray(payload.imageUrls) ? payload.imageUrls : undefined,
         quantity: Number(payload.quantity ?? 1),
       };
       const sku = typeof payload.sku === "string" && payload.sku ? payload.sku : productSku(draft.title);

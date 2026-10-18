@@ -11,13 +11,14 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: "ebay_accounts", column: "fulfillment_policy_id", definition: "text" },
   { table: "ebay_accounts", column: "payment_policy_id", definition: "text" },
   { table: "ebay_accounts", column: "return_policy_id", definition: "text" },
+  { table: "catalog_products", column: "images", definition: "jsonb NOT NULL DEFAULT '[]'::jsonb" },
 ];
 
 export async function ensureAddedColumns(db: NodePgDatabase<Record<string, unknown>>) {
   const result = await db.execute<{ table_name: string; column_name: string }>(sql`
     select table_name, column_name from information_schema.columns
     where table_schema = current_schema()
-      and table_name in ('ebay_accounts')
+      and table_name in ('ebay_accounts', 'catalog_products')
   `);
   const present = new Set(result.rows.map((r) => `${r.table_name}.${r.column_name}`));
   const added: string[] = [];
