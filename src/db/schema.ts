@@ -1,3 +1,4 @@
+import type { ProductFacts } from "../lib/cj/facts";
 import {
   boolean,
   integer,
@@ -85,6 +86,8 @@ export const catalogProducts = pgTable(
     images: jsonb("images").$type<string[]>().notNull().default([]),
     /** Real supplier variants (CJ imports). Empty for single-variant and older rows. */
     variants: jsonb("variants").$type<CatalogVariant[]>().notNull().default([]),
+    /** Supplier facts for listing copy (CJ imports); null for older and sample rows. */
+    details: jsonb("details").$type<ProductFacts>(),
     supplierPrice: numeric("supplier_price", { precision: 10, scale: 2 }).notNull(),
     suggestedPrice: numeric("suggested_price", { precision: 10, scale: 2 }).notNull(),
     shippingCost: numeric("shipping_cost", { precision: 10, scale: 2 }).notNull().default("0"),

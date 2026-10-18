@@ -250,6 +250,7 @@ export async function importCjProduct(pid: string): Promise<CjResult<{ id: numbe
     imageUrl: draft.images[0] ?? null,
     images: draft.images,
     variants: draft.variants,
+    details: draft.facts,
     supplierPrice: draft.supplierPrice.toFixed(2),
     suggestedPrice: suggested.toFixed(2),
     shippingCost: shipping.toFixed(2),

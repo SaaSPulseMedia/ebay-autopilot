@@ -34,13 +34,35 @@ function listingImages(draft: ListingDraft): string[] {
   return [...new Set(all.filter((url): url is string => typeof url === "string" && url.trim() !== ""))];
 }
 
+const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/**
+ * eBay renders descriptions as HTML, so plain-text line breaks would collapse
+ * the sections into one paragraph. Blank-line blocks become paragraphs, line
+ * breaks become <br>, and "FEATURES:"-style headings are bolded. Text that
+ * already contains HTML is sent as written.
+ */
+export function descriptionHtml(text: string) {
+  if (/<\/?(?:p|br|div|ul|ol|li|b|strong|h[1-6]|table)\b/i.test(text)) return text;
+  return text
+    .trim()
+    .split(/\n\s*\n/)
+    .map((block) =>
+      `<p>${block
+        .split("\n")
+        .map((line) => (/^[A-Z][A-Z &'’]+:$/.test(line.trim()) ? `<strong>${escapeHtml(line.trim())}</strong>` : escapeHtml(line.trim())))
+        .join("<br>")}</p>`,
+    )
+    .join("\n");
+}
+
 function toCatalogProduct(draft: ListingDraft, context?: ApiPublishContext): CatalogProductForPublish | null {
   if (!context || missingFields(draft, context).length) return null;
   return {
     userId: context.userId,
     sku: context.sku,
     title: draft.title,
-    description: draft.description,
+    description: descriptionHtml(draft.description),
     imageUrls: listingImages(draft),
     price: draft.listPrice,
     quantity: draft.quantity && draft.quantity > 0 ? draft.quantity : 1,

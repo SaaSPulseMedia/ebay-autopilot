@@ -12,6 +12,7 @@
     "create-sandbox-policies": "tsx --conditions=react-server scripts/create-sandbox-policies.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
     "@types/bcryptjs": "^2.4.6",
     "bcryptjs": "^3.0.3",
     "dotenv": "17.3.1",

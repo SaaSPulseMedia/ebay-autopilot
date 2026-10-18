@@ -86,6 +86,7 @@ export async function POST(request: Request) {
           imageUrl: product.imageUrl,
           images: product.images,
           variants: product.variants,
+          details: product.details,
         },
         requested,
         accessToken,

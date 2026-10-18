@@ -13,7 +13,8 @@ import type { ListingDraft, ListingEngine, ListingResult } from "@/lib/ebay/type
 import { nextPlanUp, planLimits, type PlanLimits } from "@/lib/limits";
 import { withFooter, type ListingDefaults } from "@/lib/listing-defaults";
 import type { CatalogVariant } from "@/db/schema";
-import { listingVariants, productSku } from "@/lib/variants";
+import type { ProductFacts } from "@/lib/cj/facts";
+import { listingVariants, productSku, variantOptions } from "@/lib/variants";
 
 /**
  * One place for everything every listing route shares: engine routing, the
@@ -156,7 +157,21 @@ export type ListingSource = {
   images?: string[];
   /** Real supplier variants (CJ imports); two or more become eBay variations. */
   variants?: CatalogVariant[];
+  /** Supplier facts (CJ imports) that ground the AI description. */
+  details?: ProductFacts | null;
 };
+
+/** Distinct Color and Size values across the supplier's variants. */
+function variantChoices(variants: CatalogVariant[] = []) {
+  const colors = new Set<string>();
+  const sizes = new Set<string>();
+  for (const variant of variants) {
+    const options = variantOptions(variant);
+    if (options.Color) colors.add(options.Color);
+    if (options.Size) sizes.add(options.Size);
+  }
+  return { colors: [...colors], sizes: [...sizes] };
+}
 
 export type ItemResult = { title: string; status: string; variants: number; message: string };
 
@@ -180,6 +195,8 @@ export async function createListing(args: {
     category: source.category,
     supplierPrice: source.supplierPrice,
     listPrice: source.listPrice,
+    facts: source.details,
+    options: variantChoices(source.variants),
   });
   const sku = productSku(source.title);
   const variants = listingVariants({

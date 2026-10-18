@@ -1,5 +1,7 @@
 import "server-only";
 
+import { extractFacts, type ProductFacts } from "@/lib/cj/facts";
+
 /**
  * Maps a CJ Dropshipping product (from GET /product/query) to an AutoPilot
  * catalog draft. Pure: no I/O. CJ sends many numbers as strings, sometimes as
@@ -47,6 +49,8 @@ export type CatalogProductDraft = {
   supplierSku: string;
   weightGrams: number;
   listedNum: number;
+  /** Description text, specs, packing list, weight, dimensions, material — for listing copy. */
+  facts: ProductFacts;
   variants: Array<{
     sku: string;
     name: string;
@@ -140,6 +144,11 @@ export function mapCjProductToDraft(product: CjProductFromApi): CatalogProductDr
     });
   }
 
+  // CJ puts dimensions on variants; the first variant with all three stands for the product.
+  const sized = (product.variants ?? [])
+    .map((v) => ({ length: maxOf(v.variantLength), width: maxOf(v.variantWidth), height: maxOf(v.variantHeight) }))
+    .find((d) => d.length > 0 && d.width > 0 && d.height > 0);
+
   return {
     externalId: text(product.pid),
     title: text(product.productNameEn),
@@ -153,6 +162,12 @@ export function mapCjProductToDraft(product: CjProductFromApi): CatalogProductDr
     supplierSku: text(product.productSku),
     weightGrams: maxOf(product.productWeight),
     listedNum: Math.round(maxOf(product.listedNum)),
+    facts: extractFacts({
+      descriptionHtml: text(product.description),
+      weightGrams: maxOf(product.productWeight),
+      material: product.materialNameEn,
+      dimensionsMm: sized ?? null,
+    }),
     variants,
   };
 }
