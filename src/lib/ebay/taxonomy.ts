@@ -1,6 +1,7 @@
 import "server-only";
 
 import { ebayErrorMessage, ebayFetch, getAccessTokenForUser } from "@/lib/ebay/client";
+import { isFootwearPath } from "@/lib/ebay/shoe-sizes";
 
 /**
  * Picks the eBay category for a product title and reports which item
@@ -23,6 +24,19 @@ export type CategorySuggestion = {
   optionalAspects: CategoryAspect[];
   /** Aspect names this category allows a multi-variation listing to vary by (e.g. Color, Size). */
   variationAspects: string[];
+  /**
+   * Footwear categories only: the standardized shoe-size aspect (e.g. "US Shoe
+   * Size") with every value eBay accepts. eBay rejects custom size values there.
+   */
+  shoeSize: ShoeSizeAspect | null;
+};
+
+export type ShoeSizeAspect = {
+  name: string;
+  required: boolean;
+  enabledForVariations: boolean;
+  /** All allowed values; empty when the aspect is free text with no list. */
+  values: string[];
 };
 
 export type ResolveCategoryResult =
@@ -69,6 +83,27 @@ function toAspect(aspect: NonNullable<AspectsResponse["aspects"]>[number]): Cate
   };
 }
 
+/**
+ * The category's shoe-size aspect, when it is a footwear category: "US Shoe
+ * Size" first, else any "… Shoe Size", else a plain "Size" in a category whose
+ * path is about shoes.
+ */
+function shoeSizeAspect(response: AspectsResponse, path: string): ShoeSizeAspect | null {
+  const aspects = response.aspects ?? [];
+  const named = (test: (name: string) => boolean) => aspects.find((a) => test((a.localizedAspectName ?? "").trim()));
+  const aspect =
+    named((n) => /^us shoe size/i.test(n)) ??
+    named((n) => /shoe size/i.test(n)) ??
+    (isFootwearPath(path) ? named((n) => /^size$/i.test(n)) : undefined);
+  if (!aspect?.localizedAspectName) return null;
+  return {
+    name: aspect.localizedAspectName,
+    required: Boolean(aspect.aspectConstraint?.aspectRequired),
+    enabledForVariations: Boolean(aspect.aspectConstraint?.aspectEnabledForVariations),
+    values: (aspect.aspectValues ?? []).map((v) => v.localizedValue?.trim() ?? "").filter(Boolean),
+  };
+}
+
 export async function resolveCategory(userId: number, productTitle: string): Promise<ResolveCategoryResult> {
   try {
     const token = await getAccessTokenForUser(userId);
@@ -105,6 +140,7 @@ export async function resolveCategory(userId: number, productTitle: string): Pro
       return { ok: false, error: ebayErrorMessage(aspectsResponse, "eBay did not return this category's item specifics.") };
     }
     const aspects = (aspectsResponse.aspects ?? []).map(toAspect).filter((a) => a.name);
+    const shoeSize = shoeSizeAspect(aspectsResponse, categoryPath(top));
     const variationAspects = (aspectsResponse.aspects ?? [])
       .filter((a) => a.aspectConstraint?.aspectEnabledForVariations && a.localizedAspectName)
       .map((a) => a.localizedAspectName as string);
@@ -118,6 +154,7 @@ export async function resolveCategory(userId: number, productTitle: string): Pro
         requiredAspects: aspects.filter((a) => a.required),
         optionalAspects: aspects.filter((a) => !a.required),
         variationAspects,
+        shoeSize,
       },
       alternatives: rest.slice(0, MAX_ALTERNATIVES).map((s) => ({
         categoryId: s.category?.categoryId ?? "",

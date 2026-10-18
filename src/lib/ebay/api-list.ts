@@ -99,10 +99,14 @@ export async function publishViaApi(
       : result.variationFallback
         ? `. Note: published as a single listing without variations because ${result.variationFallback}.`
         : ".";
+  // Only worth saying when some sizes did go out as variations; a fallback note already names them.
+  const sizes = result.skippedSizes?.length && result.variations > 1
+    ? ` Sizes left out because eBay has no matching standard size: ${result.skippedSizes.join(", ")}.`
+    : "";
   return {
     engine: "api",
     status: "published",
-    message: `${where}${variants}`,
+    message: `${where}${variants}${sizes}`,
     variations: result.variations,
     itemId: result.listingId,
     title: draft.title,

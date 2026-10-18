@@ -1,6 +1,7 @@
 import "server-only";
 
 import { publishListing } from "@/lib/ebay/inventory";
+import { genderFromCategoryPath, standardizeShoeSizes } from "@/lib/ebay/shoe-sizes";
 import { type CategoryAspect, resolveCategory } from "@/lib/ebay/taxonomy";
 import { type Variant, variationProblem } from "@/lib/variants";
 
@@ -39,6 +40,8 @@ export type PublishWithResolverResult =
       variations: number;
       /** Why the product's variants went out as a single listing, if they did. */
       variationFallback?: string;
+      /** Supplier sizes left out because the eBay footwear category has no matching size value. */
+      skippedSizes?: string[];
     }
   | { ok: false; step: "setup" | "item" | "offer" | "publish" | "category"; error: string };
 
@@ -87,11 +90,40 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     );
   }
 
+  // Footwear categories accept only their standardized sizes (custom values are
+  // rejected): map each supplier size to the category's size list, and leave
+  // out variants whose size has no match.
+  let variants = input.variations ?? [];
+  let variationFallback: string | undefined;
+  let skippedSizes: string[] = [];
+  const shoeSize = resolved.ok ? resolved.suggestion.shoeSize : null;
+  if (shoeSize && variants.length > 1) {
+    const plan = standardizeShoeSizes(variants, shoeSize, genderFromCategoryPath(categoryPath));
+    skippedSizes = plan.skipped;
+    if (skippedSizes.length) {
+      console.warn(
+        `[ebay-sizes] sku ${input.sku}: no ${shoeSize.name} value in ${categoryId} matches supplier size(s) ${skippedSizes.join(", ")}; those variants are left out.`,
+      );
+    }
+    if (plan.variants.length < 2) {
+      variationFallback = plan.variants.length
+        ? `only one of the supplier's sizes matches an eBay ${shoeSize.name}`
+        : `none of the supplier's sizes (${skippedSizes.join(", ")}) match an eBay ${shoeSize.name}`;
+      console.warn(`[ebay-sizes] sku ${input.sku}: publishing as a single listing because ${variationFallback}.`);
+      // A single listing still needs a valid size: use the one size that matched, if there is exactly one.
+      const only = plan.variants[0]?.options[shoeSize.name];
+      if (only) aspects = { ...aspects, [shoeSize.name]: [only] };
+      else if (shoeSize.required && aspects[shoeSize.name]?.[0]) {
+        // eBay requires a size here and none of the supplier's maps, so the category default stands in.
+        variationFallback += `; eBay requires a ${shoeSize.name}, so the listing shows ${aspects[shoeSize.name][0]}: correct it in Seller Hub`;
+      }
+    }
+    variants = plan.variants;
+  }
+
   // Variants go out as eBay variations only when the category lets the listing
   // vary by every one of their aspects; otherwise the product is one listing.
-  const variants = input.variations ?? [];
-  let variationFallback: string | undefined;
-  if (variants.length > 1) {
+  if (variants.length > 1 && !variationFallback) {
     const problem = resolved.ok
       ? variationProblem(variants, resolved.suggestion.variationAspects)
       : "the eBay category could not be resolved";
@@ -133,5 +165,6 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     usedFallbackCategory: !resolved.ok,
     variations: result.variations ?? 1,
     variationFallback,
+    skippedSizes: skippedSizes.length ? skippedSizes : undefined,
   };
 }
