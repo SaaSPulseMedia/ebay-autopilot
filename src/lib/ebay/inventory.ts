@@ -84,9 +84,13 @@ async function prepareSeller(userId: number): Promise<{ ok: true; seller: Seller
   };
 }
 
-/** eBay takes up to 24 pictures; the first is the gallery (main) image. */
+/**
+ * eBay takes up to 24 pictures; the first is the gallery (main) image. Every
+ * picture goes as an external http(s) URL that eBay fetches itself, so
+ * anything else (e.g. a data: URI) is dropped rather than rejected by eBay.
+ */
 function pictureList(urls: Array<string | null | undefined>) {
-  return [...new Set(urls.map((url) => url?.trim() ?? "").filter(Boolean))].slice(0, 24);
+  return [...new Set(urls.map((url) => url?.trim() ?? "").filter((url) => /^https?:\/\/\S+$/i.test(url)))].slice(0, 24);
 }
 
 function offerBody(

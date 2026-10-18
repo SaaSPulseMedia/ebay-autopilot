@@ -9,6 +9,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { DRIP_PER_RUN, planLimits } from "@/lib/limits";
 import { listPriceFor, priceBreakdown } from "@/lib/pricing";
 import { getListingDefaults } from "@/lib/seller-settings";
+import { withUserImages } from "@/lib/product-images";
 import { getCatalog, isSampleProduct } from "@/lib/suppliers";
 import { listingVariants } from "@/lib/variants";
 import { and, count, eq, ne } from "drizzle-orm";
@@ -31,7 +32,8 @@ export default async function BulkPage() {
       .where(and(eq(listings.userId, user.id), ne(listings.status, "ended"))),
   ]);
 
-  const products: BulkProduct[] = catalog.map((product) => {
+  const withImages = await withUserImages(user.id, catalog);
+  const products: BulkProduct[] = withImages.map((product) => {
     const listPrice = listPriceFor(defaults, product.supplierPrice, product.shippingCost, product.suggestedPrice);
     return {
     externalId: product.externalId,
@@ -53,6 +55,8 @@ export default async function BulkPage() {
     veroMatch: product.veroMatch,
     veroReason: product.veroReason,
     imageUrl: product.imageUrl,
+    imageCount: product.images.length || (product.imageUrl ? 1 : 0),
+    customImages: product.customImages,
     };
   });
   const sample = catalog.some(isSampleProduct);

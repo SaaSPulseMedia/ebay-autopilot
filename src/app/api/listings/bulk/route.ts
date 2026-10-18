@@ -13,6 +13,7 @@ import {
 } from "@/lib/listing-pipeline";
 import { listPriceFor, netProfitFor } from "@/lib/pricing";
 import { getListingDefaults } from "@/lib/seller-settings";
+import { withUserImages } from "@/lib/product-images";
 import { getCatalog } from "@/lib/suppliers";
 
 export const dynamic = "force-dynamic";
@@ -35,7 +36,11 @@ export async function POST(request: Request) {
   if (limitResponse) return limitResponse;
 
   const [catalog, defaults] = await Promise.all([getCatalog(200), getListingDefaults(user.id)]);
-  const found = catalog.filter((product) => ids.includes(product.externalId));
+  // The seller's own image order (and uploads) replaces the supplier's images where saved.
+  const found = await withUserImages(
+    user.id,
+    catalog.filter((product) => ids.includes(product.externalId)),
+  );
   if (!found.length) {
     return Response.json({ ok: false, error: "None of those products are in the catalog." }, { status: 404 });
   }

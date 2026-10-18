@@ -5,6 +5,7 @@ import {
   jsonb,
   numeric,
   pgTable,
+  primaryKey,
   real,
   serial,
   text,
@@ -98,6 +99,40 @@ export const catalogProducts = pgTable(
   },
   (table) => [uniqueIndex("catalog_products_external_unique").on(table.externalId)],
 );
+
+/**
+ * A seller's own image list for a catalog product (custom order, removed
+ * photos, their uploads). catalog_products is shared by every seller, so
+ * edits live here instead and survive a CJ refresh. No row = supplier images.
+ */
+export const productImages = pgTable(
+  "product_images",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    /** Public image URLs, main image first (max 24, eBay's limit). */
+    images: jsonb("images").$type<string[]>().notNull().default([]),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.externalId] })],
+);
+
+/** Images sellers upload, served publicly at /api/images/<id>.jpg so eBay can fetch them. */
+export const uploadedImages = pgTable("uploaded_images", {
+  id: text("id").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  contentType: text("content_type").notNull().default("image/jpeg"),
+  /** Base64 image bytes (already resized and re-encoded). */
+  data: text("data").notNull(),
+  width: integer("width").notNull(),
+  height: integer("height").notNull(),
+  bytes: integer("bytes").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 export const listings = pgTable("listings", {
   id: serial("id").primaryKey(),
