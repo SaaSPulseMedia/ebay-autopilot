@@ -12,6 +12,7 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: "ebay_accounts", column: "payment_policy_id", definition: "text" },
   { table: "ebay_accounts", column: "return_policy_id", definition: "text" },
   { table: "catalog_products", column: "images", definition: "jsonb NOT NULL DEFAULT '[]'::jsonb" },
+  { table: "catalog_products", column: "variants", definition: "jsonb NOT NULL DEFAULT '[]'::jsonb" },
 ];
 
 export async function ensureAddedColumns(db: NodePgDatabase<Record<string, unknown>>) {

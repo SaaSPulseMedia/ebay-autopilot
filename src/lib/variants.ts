@@ -1,17 +1,15 @@
 import { createHash } from "node:crypto";
 
+import type { CatalogVariant } from "@/db/schema";
+
+/** One listing variant. `options` holds its variation aspects, e.g. { Color: "Black", Size: "36" }. */
 export type Variant = {
   sku: string;
   options: Record<string, string>;
   price: number;
   quantity: number;
+  imageUrl?: string | null;
 };
-
-const APPAREL = ["clothing", "shirt", "tee", "hoodie", "jacket", "shoe", "sneaker", "dress", "apparel", "sock", "hat"];
-const COLOR_GOODS = ["mat", "cushion", "curtain", "tumbler", "case", "cover", "band", "mount", "organizer", "light"];
-
-const SIZES = ["S", "M", "L", "XL", "2XL"];
-const COLORS = ["Black", "White", "Navy", "Gray", "Red"];
 
 function slug(value: string) {
   return value
@@ -30,49 +28,87 @@ export function productSku(title: string) {
   return `${slug(title) || "ITEM"}-${hash}`;
 }
 
+/** eBay SKUs: at most 50 characters; keep to letters, digits and - _ . */
+export function ebaySku(value: string) {
+  return value.replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 50);
+}
+
+/** "36", "XL", "2XL", "10.5", "30cm", "One Size" — values that name a size rather than a color. */
+const SIZE_LIKE =
+  /^(?:\d+(?:\.\d+)?\s*(?:cm|mm|m|in|inch|inches|ft|ml|l|oz|g|kg|")?|(?:\d?x{0,3})?[sml]|\d?x{1,3}l|one size|free size)$/i;
+
 /**
- * Expands a supplier product into eBay multi-variant rows.
- * Deterministic so the same product always produces the same SKUs.
+ * Variation aspects for one CJ variant. CJ's key gives color and size by
+ * position; a lone value that reads like a size ("XL", "36") is a Size, and a
+ * pair written size-first ("36-Black") is swapped.
  */
-export function buildVariants(title: string, category: string, basePrice: number, maxVariants = 20): Variant[] {
-  const haystack = `${title} ${category}`.toLowerCase();
-  // Whole-word matching only: substring matching turned "steel" into "tee"
-  // and gave a stainless tumbler clothing sizes.
-  const hasWord = (word: string) => new RegExp(`\\b${word}s?\\b`).test(haystack);
-  const isApparel = APPAREL.some(hasWord);
-  const hasColors = isApparel || COLOR_GOODS.some(hasWord);
+export function variantOptions(variant: Pick<CatalogVariant, "color" | "size">): Record<string, string> {
+  let color = variant.color?.trim() || "";
+  let size = variant.size?.trim() || "";
+  if (color && !size && SIZE_LIKE.test(color)) [color, size] = ["", color];
+  else if (color && size && SIZE_LIKE.test(color) && !SIZE_LIKE.test(size)) [color, size] = [size, color];
+  const options: Record<string, string> = {};
+  if (color) options.Color = color;
+  if (size) options.Size = size;
+  return options;
+}
 
-  const base = slug(title);
+/**
+ * The variants a listing is published with. Only real supplier variants are
+ * used; a product without at least two of them is one listing with one
+ * variant. Each variant is priced from the base list price in proportion to
+ * its supplier cost (never below the base price).
+ */
+export function listingVariants(args: {
+  sku: string;
+  listPrice: number;
+  supplierPrice: number;
+  quantity: number;
+  supplierVariants?: CatalogVariant[];
+  maxVariants: number;
+}): Variant[] {
+  const single: Variant[] = [{ sku: args.sku, options: {}, price: args.listPrice, quantity: args.quantity }];
+  const supplied = (args.supplierVariants ?? []).slice(0, Math.max(1, args.maxVariants));
+  if (supplied.length < 2) return single;
+
+  const seen = new Set<string>();
   const rows: Variant[] = [];
-
-  if (isApparel) {
-    for (const size of SIZES) {
-      for (const color of COLORS.slice(0, 3)) {
-        rows.push({
-          sku: `${base}-${size}-${slug(color)}`,
-          options: { Size: size, Color: color },
-          price: Math.round((basePrice + (size === "2XL" ? 2 : size === "XL" ? 1 : 0)) * 100) / 100,
-          quantity: 10,
-        });
-      }
-    }
-  } else if (hasColors) {
-    for (const color of COLORS.slice(0, 4)) {
-      rows.push({
-        sku: `${base}-${slug(color)}`,
-        options: { Color: color },
-        price: Math.round(basePrice * 100) / 100,
-        quantity: 15,
-      });
-    }
-  } else {
+  for (const variant of supplied) {
+    const sku = ebaySku(variant.sku);
+    if (!sku || seen.has(sku)) continue;
+    seen.add(sku);
+    const ratio = args.supplierPrice > 0 && variant.price > 0 ? variant.price / args.supplierPrice : 1;
     rows.push({
-      sku: base || "DEFAULT",
-      options: { Style: "Standard" },
-      price: Math.round(basePrice * 100) / 100,
-      quantity: 20,
+      sku,
+      options: variantOptions(variant),
+      price: Math.round(Math.max(args.listPrice, args.listPrice * ratio) * 100) / 100,
+      quantity: args.quantity,
+      imageUrl: variant.image || null,
     });
   }
+  return rows.length >= 2 ? rows : single;
+}
 
-  return rows.slice(0, Math.max(1, maxVariants));
+/**
+ * Why these variants can't be one eBay multi-variation listing, or null if
+ * they can. Every variant needs the same aspect names (all within what the
+ * category allows for variations), with no two variants alike.
+ */
+export function variationProblem(variants: Variant[], allowedAspects: string[]): string | null {
+  if (variants.length < 2) return "fewer than two variants";
+  const names = Object.keys(variants[0].options).sort();
+  if (!names.length) return "the supplier's variant names could not be read as Color or Size";
+  const allowed = new Set(allowedAspects.map((name) => name.toLowerCase()));
+  const blocked = names.filter((name) => !allowed.has(name.toLowerCase()));
+  if (blocked.length) return `this eBay category does not allow variations by ${blocked.join(" and ")}`;
+  const combos = new Set<string>();
+  for (const variant of variants) {
+    if (Object.keys(variant.options).sort().join("|") !== names.join("|")) {
+      return "the supplier's variants do not all have the same options";
+    }
+    const combo = names.map((name) => variant.options[name].toLowerCase()).join("|");
+    if (combos.has(combo)) return `two variants are both "${names.map((name) => variant.options[name]).join(" / ")}"`;
+    combos.add(combo);
+  }
+  return null;
 }

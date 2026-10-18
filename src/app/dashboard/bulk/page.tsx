@@ -10,7 +10,7 @@ import { DRIP_PER_RUN, planLimits } from "@/lib/limits";
 import { listPriceFor, priceBreakdown } from "@/lib/pricing";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { getCatalog, isSampleProduct } from "@/lib/suppliers";
-import { buildVariants } from "@/lib/variants";
+import { listingVariants } from "@/lib/variants";
 import { and, count, eq, ne } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -40,7 +40,15 @@ export default async function BulkPage() {
     supplierPrice: product.supplierPrice,
     listPrice,
     breakdown: priceBreakdown(listPrice, product.supplierPrice, product.shippingCost, defaults.adRatePct),
-    variants: buildVariants(product.title, product.category, product.suggestedPrice, limits.maxVariants).length,
+    // Real supplier variants only; a product without them lists as one item.
+    variants: listingVariants({
+      sku: product.externalId,
+      listPrice,
+      supplierPrice: product.supplierPrice,
+      quantity: defaults.quantityPerVariant,
+      supplierVariants: product.variants,
+      maxVariants: limits.maxVariants,
+    }).length,
     veroRisk: product.veroRisk,
     veroMatch: product.veroMatch,
     veroReason: product.veroReason,

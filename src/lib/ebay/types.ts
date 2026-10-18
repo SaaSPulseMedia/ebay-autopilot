@@ -1,3 +1,5 @@
+import type { Variant } from "@/lib/variants";
+
 export type ListingEngine = "api" | "browser" | "demo";
 
 export type ListingDraft = {
@@ -10,6 +12,8 @@ export type ListingDraft = {
   /** All images for the listing, primary first. When empty, `imageUrl` alone is used. */
   imageUrls?: string[];
   quantity?: number;
+  /** Real supplier variants; two or more are published as one multi-variation eBay listing. */
+  variations?: Variant[];
 };
 
 export type ListingResult = {
@@ -18,6 +22,8 @@ export type ListingResult = {
   message: string;
   itemId: string | null;
   title: string;
+  /** Variants on the published eBay listing, when the engine reports it (1 = single listing). */
+  variations?: number;
 };
 
 export const ENGINES: { id: ListingEngine; label: string; blurb: string }[] = [

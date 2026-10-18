@@ -57,12 +57,19 @@ async function releaseScheduled() {
         imageUrl: payload.imageUrl ?? null,
         imageUrls: Array.isArray(payload.imageUrls) ? payload.imageUrls : undefined,
         quantity: Number(payload.quantity ?? 1),
+        // Only listings stored since variation publishing carry `variations` (real supplier variants).
+        variations: Array.isArray(payload.variations) && payload.variations.length > 1 ? payload.variations : undefined,
       };
       const sku = typeof payload.sku === "string" && payload.sku ? payload.sku : productSku(draft.title);
       const result = await publishWithFallback(draft, parseEngine(payload.requestedEngine), accessToken, { userId, sku });
       await db
         .update(listings)
-        .set({ status: storedStatus(result), engine: result.engine, ebayItemId: result.itemId })
+        .set({
+          status: storedStatus(result),
+          engine: result.engine,
+          ebayItemId: result.itemId,
+          ...(result.variations ? { variantCount: result.variations } : {}),
+        })
         .where(eq(listings.id, row.id));
       released += 1;
     }

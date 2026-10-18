@@ -55,6 +55,19 @@ export const ebayAccounts = pgTable("ebay_accounts", {
   connectedAt: timestamp("connected_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** One supplier variant (e.g. CJ "Black-36"), as imported. `price` is the supplier cost in USD. */
+export type CatalogVariant = {
+  sku: string;
+  name: string;
+  key: string;
+  color: string | null;
+  size: string | null;
+  image: string;
+  price: number;
+  weightGrams: number;
+  barcode: string;
+};
+
 /** Supplier catalog rows powering the winning-products research view. */
 export const catalogProducts = pgTable(
   "catalog_products",
@@ -70,6 +83,8 @@ export const catalogProducts = pgTable(
     imageUrl: text("image_url"),
     /** Every product image, primary first (CJ imports carry 5–10). Empty for older rows. */
     images: jsonb("images").$type<string[]>().notNull().default([]),
+    /** Real supplier variants (CJ imports). Empty for single-variant and older rows. */
+    variants: jsonb("variants").$type<CatalogVariant[]>().notNull().default([]),
     supplierPrice: numeric("supplier_price", { precision: 10, scale: 2 }).notNull(),
     suggestedPrice: numeric("suggested_price", { precision: 10, scale: 2 }).notNull(),
     shippingCost: numeric("shipping_cost", { precision: 10, scale: 2 }).notNull().default("0"),

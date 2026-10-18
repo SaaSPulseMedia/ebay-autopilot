@@ -2,6 +2,7 @@ import "server-only";
 
 import { publishListing } from "@/lib/ebay/inventory";
 import { type CategoryAspect, resolveCategory } from "@/lib/ebay/taxonomy";
+import { type Variant, variationProblem } from "@/lib/variants";
 
 /**
  * Publishes a catalog product with its eBay category resolved from the title
@@ -22,6 +23,8 @@ export type CatalogProductForPublish = {
   /** Product-supplied item specifics; these always win over defaults. */
   userAspects?: Record<string, string[]>;
   condition?: string;
+  /** Real supplier variants; two or more publish as one multi-variation listing when the category allows. */
+  variations?: Variant[];
 };
 
 export type PublishWithResolverResult =
@@ -32,6 +35,10 @@ export type PublishWithResolverResult =
       categoryId: string;
       categoryPath: string;
       usedFallbackCategory: boolean;
+      /** Variants on the eBay listing (1 for a single listing). */
+      variations: number;
+      /** Why the product's variants went out as a single listing, if they did. */
+      variationFallback?: string;
     }
   | { ok: false; step: "setup" | "item" | "offer" | "publish" | "category"; error: string };
 
@@ -80,6 +87,26 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     );
   }
 
+  // Variants go out as eBay variations only when the category lets the listing
+  // vary by every one of their aspects; otherwise the product is one listing.
+  const variants = input.variations ?? [];
+  let variationFallback: string | undefined;
+  if (variants.length > 1) {
+    const problem = resolved.ok
+      ? variationProblem(variants, resolved.suggestion.variationAspects)
+      : "the eBay category could not be resolved";
+    if (problem) {
+      variationFallback = problem;
+      console.warn(
+        `[ebay-variations] sku ${input.sku}: publishing ${variants.length} variants as a single listing in ${categoryId} because ${problem}.`,
+      );
+    }
+  }
+  const variations =
+    variants.length > 1 && !variationFallback
+      ? variants.map((v) => ({ sku: v.sku, aspects: v.options, price: v.price, quantity: v.quantity, imageUrl: v.imageUrl }))
+      : undefined;
+
   const result = await publishListing({
     userId: input.userId,
     sku: input.sku,
@@ -93,6 +120,7 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     mpn: input.mpn,
     aspects,
     condition: input.condition,
+    variations,
   });
   if (!result.ok) return { ok: false, step: result.step, error: result.error };
 
@@ -103,5 +131,7 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     categoryId,
     categoryPath,
     usedFallbackCategory: !resolved.ok,
+    variations: result.variations ?? 1,
+    variationFallback,
   };
 }

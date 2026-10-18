@@ -12,7 +12,8 @@ import { getValidAccessToken } from "@/lib/ebay/tokens";
 import type { ListingDraft, ListingEngine, ListingResult } from "@/lib/ebay/types";
 import { nextPlanUp, planLimits, type PlanLimits } from "@/lib/limits";
 import { withFooter, type ListingDefaults } from "@/lib/listing-defaults";
-import { buildVariants, productSku } from "@/lib/variants";
+import type { CatalogVariant } from "@/db/schema";
+import { listingVariants, productSku } from "@/lib/variants";
 
 /**
  * One place for everything every listing route shares: engine routing, the
@@ -153,6 +154,8 @@ export type ListingSource = {
   imageUrl: string | null;
   /** Every product image, primary first (optional; `imageUrl` is the fallback). */
   images?: string[];
+  /** Real supplier variants (CJ imports); two or more become eBay variations. */
+  variants?: CatalogVariant[];
 };
 
 export type ItemResult = { title: string; status: string; variants: number; message: string };
@@ -178,11 +181,16 @@ export async function createListing(args: {
     supplierPrice: source.supplierPrice,
     listPrice: source.listPrice,
   });
-  const variants = buildVariants(source.title, source.category ?? "", source.listPrice, limits.maxVariants).map(
-    (variant) => ({ ...variant, quantity: defaults.quantityPerVariant }),
-  );
-
   const sku = productSku(source.title);
+  const variants = listingVariants({
+    sku,
+    listPrice: source.listPrice,
+    supplierPrice: source.supplierPrice,
+    quantity: defaults.quantityPerVariant,
+    supplierVariants: source.variants,
+    maxVariants: limits.maxVariants,
+  });
+
   const draft: ListingDraft = {
     title: copy.title,
     description: withFooter(copy.description, defaults.descriptionFooter),
@@ -192,6 +200,7 @@ export async function createListing(args: {
     imageUrl: source.imageUrl,
     imageUrls: source.images?.length ? source.images : undefined,
     quantity: variants.reduce((sum, variant) => sum + variant.quantity, 0),
+    variations: variants.length > 1 ? variants : undefined,
   };
 
   const outcome = args.drip
@@ -210,7 +219,8 @@ export async function createListing(args: {
     status: outcome ? storedStatus(outcome) : "scheduled",
     ebayItemId: outcome?.itemId ?? null,
     aiGenerated: copy.source === "claude",
-    variantCount: variants.length,
+    // What eBay actually got: a category without variations lists the product once.
+    variantCount: outcome?.variations ?? variants.length,
     batchId: args.batchId,
     payload: {
       ...draft,
@@ -227,7 +237,7 @@ export async function createListing(args: {
   return {
     title: draft.title,
     status: outcome?.status ?? "scheduled",
-    variants: variants.length,
+    variants: outcome?.variations ?? variants.length,
     // "Note:" makes the batch summary show the reason for a failed listing.
     message:
       outcome?.status === "error"

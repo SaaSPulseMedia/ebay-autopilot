@@ -44,6 +44,7 @@ function toCatalogProduct(draft: ListingDraft, context?: ApiPublishContext): Cat
     imageUrls: listingImages(draft),
     price: draft.listPrice,
     quantity: draft.quantity && draft.quantity > 0 ? draft.quantity : 1,
+    variations: draft.variations && draft.variations.length > 1 ? draft.variations : undefined,
   };
 }
 
@@ -67,12 +68,20 @@ export async function publishViaApi(
   if (!result.ok) {
     return { engine: "api", status: "error", message: `eBay ${result.step} step failed: ${result.error}`, itemId: null, title: draft.title };
   }
+  const where = result.usedFallbackCategory
+    ? `Published to eBay under ${result.categoryPath} (category could not be matched)`
+    : `Published to eBay in ${result.categoryPath}`;
+  const variants =
+    result.variations > 1
+      ? ` with ${result.variations} variations.`
+      : result.variationFallback
+        ? `. Note: published as a single listing without variations because ${result.variationFallback}.`
+        : ".";
   return {
     engine: "api",
     status: "published",
-    message: result.usedFallbackCategory
-      ? `Published to eBay under ${result.categoryPath} (category could not be matched).`
-      : `Published to eBay in ${result.categoryPath}.`,
+    message: `${where}${variants}`,
+    variations: result.variations,
     itemId: result.listingId,
     title: draft.title,
   };

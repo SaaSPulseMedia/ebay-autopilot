@@ -21,6 +21,8 @@ export type CategorySuggestion = {
   categoryPath: string;
   requiredAspects: CategoryAspect[];
   optionalAspects: CategoryAspect[];
+  /** Aspect names this category allows a multi-variation listing to vary by (e.g. Color, Size). */
+  variationAspects: string[];
 };
 
 export type ResolveCategoryResult =
@@ -40,7 +42,7 @@ type SuggestionsResponse = {
 type AspectsResponse = {
   aspects?: {
     localizedAspectName?: string;
-    aspectConstraint?: { aspectRequired?: boolean; aspectMode?: string };
+    aspectConstraint?: { aspectRequired?: boolean; aspectMode?: string; aspectEnabledForVariations?: boolean };
     aspectValues?: { localizedValue?: string }[];
   }[];
 };
@@ -103,6 +105,9 @@ export async function resolveCategory(userId: number, productTitle: string): Pro
       return { ok: false, error: ebayErrorMessage(aspectsResponse, "eBay did not return this category's item specifics.") };
     }
     const aspects = (aspectsResponse.aspects ?? []).map(toAspect).filter((a) => a.name);
+    const variationAspects = (aspectsResponse.aspects ?? [])
+      .filter((a) => a.aspectConstraint?.aspectEnabledForVariations && a.localizedAspectName)
+      .map((a) => a.localizedAspectName as string);
 
     return {
       ok: true,
@@ -112,6 +117,7 @@ export async function resolveCategory(userId: number, productTitle: string): Pro
         categoryPath: categoryPath(top),
         requiredAspects: aspects.filter((a) => a.required),
         optionalAspects: aspects.filter((a) => !a.required),
+        variationAspects,
       },
       alternatives: rest.slice(0, MAX_ALTERNATIVES).map((s) => ({
         categoryId: s.category?.categoryId ?? "",

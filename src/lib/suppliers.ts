@@ -1,7 +1,7 @@
 import "server-only";
 
 import { db } from "@/db";
-import { catalogProducts } from "@/db/schema";
+import { type CatalogVariant, catalogProducts } from "@/db/schema";
 import { competitionFor, netProfitFor, priceForEbay } from "@/lib/pricing";
 import { SAMPLE_SUPPLIER, STARTER_ROWS, starterImageUrl } from "@/lib/starter-catalog";
 import { screenVero, stricterRisk } from "@/lib/vero";
@@ -17,6 +17,8 @@ export type SupplierProduct = {
   imageUrl: string | null;
   /** All product images, primary first; empty when only `imageUrl` is known. */
   images: string[];
+  /** Real supplier variants; empty when the product has no stored variants. */
+  variants: CatalogVariant[];
   supplierPrice: number;
   suggestedPrice: number;
   shippingCost: number;
@@ -69,6 +71,7 @@ function starterCatalog(limit: number): SupplierProduct[] {
       supplierUrl: null,
       imageUrl: starterImageUrl(row.title),
       images: [],
+      variants: [],
       supplierPrice: row.supplierPrice,
       suggestedPrice: suggested,
       shippingCost: shipping,
@@ -103,6 +106,7 @@ async function loadCatalog(limit: number): Promise<SupplierProduct[]> {
         supplierUrl: row.supplierUrl,
         imageUrl: row.imageUrl,
         images: Array.isArray(row.images) ? row.images.filter((url): url is string => typeof url === "string" && url !== "") : [],
+        variants: Array.isArray(row.variants) ? row.variants.filter((v) => v && typeof v.sku === "string" && v.sku) : [],
         supplierPrice: Number(row.supplierPrice),
         suggestedPrice: Number(row.suggestedPrice),
         shippingCost: Number(row.shippingCost),
