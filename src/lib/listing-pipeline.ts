@@ -159,6 +159,8 @@ export type ListingSource = {
   variants?: CatalogVariant[];
   /** Supplier facts (CJ imports) that ground the AI description. */
   details?: ProductFacts | null;
+  /** Catalog product this listing came from (e.g. "cj-<pid>"), so orders can be traced back to the supplier. */
+  externalId?: string;
 };
 
 /** Distinct Color and Size values across the supplier's variants. */
@@ -242,6 +244,7 @@ export async function createListing(args: {
     payload: {
       ...draft,
       sku,
+      externalId: source.externalId ?? null,
       variants,
       itemSpecifics: copy.itemSpecifics,
       bullets: copy.bullets,

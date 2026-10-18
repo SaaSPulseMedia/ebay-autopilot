@@ -1,0 +1,142 @@
+import "server-only";
+
+import { ebayErrorMessage, ebayFetch, getAccessTokenForUser } from "@/lib/ebay/client";
+
+/**
+ * Reads the seller's orders from eBay's Fulfillment API
+ * (GET /sell/fulfillment/v1/order). Read-only: nothing here changes an order,
+ * and buyer details are only passed through, never stored or logged.
+ */
+
+export type ShipTo = {
+  fullName: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  stateOrProvince: string;
+  postalCode: string;
+  countryCode: string;
+  phone: string;
+};
+
+export type EbayOrderLine = {
+  lineItemId: string;
+  title: string;
+  sku: string;
+  quantity: number;
+  /** e.g. "Color: Black · Size: 36" for variation listings. */
+  variation: string;
+  legacyItemId: string;
+};
+
+export type EbayOrder = {
+  orderId: string;
+  createdAt: string;
+  /** NOT_STARTED, IN_PROGRESS or FULFILLED. */
+  fulfillmentStatus: string;
+  paymentStatus: string;
+  buyerUsername: string;
+  total: string;
+  shipTo: ShipTo | null;
+  lines: EbayOrderLine[];
+};
+
+export type OrdersResult =
+  | { ok: true; orders: EbayOrder[]; total: number }
+  | { ok: false; notConnected?: boolean; error: string };
+
+type Amount = { value?: string; currency?: string };
+type OrdersResponse = {
+  total?: number;
+  orders?: Array<{
+    orderId?: string;
+    creationDate?: string;
+    orderFulfillmentStatus?: string;
+    orderPaymentStatus?: string;
+    buyer?: { username?: string };
+    pricingSummary?: { total?: Amount };
+    fulfillmentStartInstructions?: Array<{
+      shippingStep?: {
+        shipTo?: {
+          fullName?: string;
+          contactAddress?: {
+            addressLine1?: string;
+            addressLine2?: string;
+            city?: string;
+            stateOrProvince?: string;
+            postalCode?: string;
+            countryCode?: string;
+          };
+          primaryPhone?: { phoneNumber?: string };
+        };
+      };
+    }>;
+    lineItems?: Array<{
+      lineItemId?: string;
+      title?: string;
+      sku?: string;
+      quantity?: number;
+      legacyItemId?: string;
+      variationAspects?: Array<{ name?: string; value?: string }>;
+    }>;
+  }>;
+};
+
+const s = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+
+function money(amount: Amount | undefined) {
+  const value = Number(amount?.value);
+  if (!Number.isFinite(value)) return "";
+  return amount?.currency && amount.currency !== "USD" ? `${value.toFixed(2)} ${amount.currency}` : `$${value.toFixed(2)}`;
+}
+
+export async function fetchEbayOrders(userId: number, options: { awaitingOnly: boolean }): Promise<OrdersResult> {
+  const token = await getAccessTokenForUser(userId);
+  if (!token) return { ok: false, notConnected: true, error: "No eBay store connected. Connect your store in Settings." };
+
+  const params = new URLSearchParams({ limit: "100" });
+  // Without a creation-date filter eBay returns the last 90 days.
+  if (options.awaitingOnly) params.set("filter", "orderfulfillmentstatus:{NOT_STARTED|IN_PROGRESS}");
+  const res = await ebayFetch<OrdersResponse>(`/sell/fulfillment/v1/order?${params}`, token);
+  if (res.errors?.length) {
+    console.error(`[ebay-orders] user ${userId}: fetching orders failed: ${ebayErrorMessage(res, "unknown error")}`);
+    return { ok: false, error: ebayErrorMessage(res, "eBay did not return your orders.") };
+  }
+
+  const orders = (res.orders ?? []).map((order): EbayOrder => {
+    const shipTo = order.fulfillmentStartInstructions?.find((i) => i.shippingStep?.shipTo)?.shippingStep?.shipTo;
+    const address = shipTo?.contactAddress;
+    return {
+      orderId: s(order.orderId),
+      createdAt: s(order.creationDate),
+      fulfillmentStatus: s(order.orderFulfillmentStatus),
+      paymentStatus: s(order.orderPaymentStatus),
+      buyerUsername: s(order.buyer?.username),
+      total: money(order.pricingSummary?.total),
+      shipTo: shipTo
+        ? {
+            fullName: s(shipTo.fullName),
+            addressLine1: s(address?.addressLine1),
+            addressLine2: s(address?.addressLine2),
+            city: s(address?.city),
+            stateOrProvince: s(address?.stateOrProvince),
+            postalCode: s(address?.postalCode),
+            countryCode: s(address?.countryCode),
+            phone: s(shipTo.primaryPhone?.phoneNumber),
+          }
+        : null,
+      lines: (order.lineItems ?? []).map((line) => ({
+        lineItemId: s(line.lineItemId),
+        title: s(line.title),
+        sku: s(line.sku),
+        quantity: typeof line.quantity === "number" ? line.quantity : 1,
+        variation: (line.variationAspects ?? [])
+          .filter((a) => a.name && a.value)
+          .map((a) => `${a.name}: ${a.value}`)
+          .join(" · "),
+        legacyItemId: s(line.legacyItemId),
+      })),
+    };
+  });
+  return { ok: true, orders, total: res.total ?? orders.length };
+}

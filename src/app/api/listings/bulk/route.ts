@@ -92,6 +92,7 @@ export async function POST(request: Request) {
           images: product.images,
           variants: product.variants,
           details: product.details,
+          externalId: product.externalId,
         },
         requested,
         accessToken,
