@@ -74,6 +74,48 @@ function ProductImage({ src }: { src: string | null }) {
   );
 }
 
+/** How long "Added ✓" / "Refreshed ✓" stays before the button returns to "Refresh from CJ". */
+const CONFIRM_MS = 2500;
+
+/**
+ * Small text button under an imported card: re-imports the product from CJ to
+ * pick up new images, variants and facts. Spinner while it runs, then "Refreshed ✓".
+ */
+function RefreshButton({ state, onRefresh, title }: { state: AddState | undefined; onRefresh: () => void; title: string }) {
+  const refreshing = state === "refreshing";
+  const done = state === "refreshed" || state === "added";
+  return (
+    <button
+      type="button"
+      onClick={onRefresh}
+      disabled={refreshing || done}
+      aria-label={`Refresh from CJ: ${title}`}
+      className={`mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] font-medium leading-none transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500 disabled:cursor-default ${
+        done
+          ? "border-lime-brand/30 bg-lime-brand/10 text-lime-brand"
+          : "border-white/15 text-slate-300 hover:border-white/30 hover:text-white"
+      }`}
+    >
+      {refreshing ? (
+        <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden="true" />
+      ) : done ? null : (
+        <RefreshIcon className="h-3 w-3 shrink-0" />
+      )}
+      <span className="truncate">
+        {refreshing ? "Refreshing…" : state === "added" ? "Added ✓" : state === "refreshed" ? "Refreshed ✓" : "Refresh from CJ"}
+      </span>
+    </button>
+  );
+}
+
+function RefreshIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className={className} aria-hidden="true">
+      <path d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 const GRID = "grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5";
 
 /** Origin as a dot in the image corner: green for CJ's US warehouse, grey for China. */
@@ -152,6 +194,8 @@ export function SourceSearch() {
   const [query, setQuery] = useState("");
   const [state, setState] = useState<SearchState>({ status: "idle" });
   const [adds, setAdds] = useState<Record<string, AddState>>({});
+  /** Products imported during this visit (search results only know what was imported before). */
+  const [importedNow, setImportedNow] = useState<Set<string>>(() => new Set());
   const [openItem, setOpenItem] = useState<(SourceModalItem & { imported: boolean }) | null>(null);
   // One Map for the page's lifetime: reopening a product doesn't call CJ again.
   const [detailCache] = useState(() => new Map<string, CjProductDetail>());
@@ -233,8 +277,14 @@ export function SourceSearch() {
     }
   }
 
-  async function add(pid: string) {
-    setAdds((prev) => ({ ...prev, [pid]: "adding" }));
+  /**
+   * Adds a product, or re-imports one already in the catalog (same endpoint:
+   * importing a pid again refreshes its images, variants and facts). The
+   * "Added ✓" / "Refreshed ✓" confirmation clears after a moment.
+   */
+  async function runImport(pid: string, refresh: boolean) {
+    setAdds((prev) => ({ ...prev, [pid]: refresh ? "refreshing" : "adding" }));
+    const verb = refresh ? "refresh" : "add";
     try {
       const res = await fetch("/api/source/import", {
         method: "POST",
@@ -242,14 +292,27 @@ export function SourceSearch() {
         body: JSON.stringify({ pid }),
       });
       const body = await res.json().catch(() => null);
-      setAdds((prev) => ({
-        ...prev,
-        [pid]: res.ok && body?.ok ? "added" : { error: body?.error ?? `Couldn't add it (HTTP ${res.status}).` },
-      }));
+      if (res.ok && body?.ok) {
+        const done = refresh ? "refreshed" : "added";
+        setImportedNow((prev) => new Set(prev).add(pid));
+        setAdds((prev) => ({ ...prev, [pid]: done }));
+        setTimeout(() => {
+          setAdds((prev) => {
+            if (prev[pid] !== done) return prev;
+            const next = { ...prev };
+            delete next[pid];
+            return next;
+          });
+        }, CONFIRM_MS);
+      } else {
+        setAdds((prev) => ({ ...prev, [pid]: { error: body?.error ?? `Couldn't ${verb} it (HTTP ${res.status}).` } }));
+      }
     } catch {
       setAdds((prev) => ({ ...prev, [pid]: { error: "Couldn't reach AutoPilot. Try again." } }));
     }
   }
+
+  const isImported = (item: { pid: string; imported: boolean }) => item.imported || importedNow.has(item.pid);
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -381,8 +444,11 @@ export function SourceSearch() {
           </p>
           <div className={GRID}>
             {visibleItems.map((item) => {
-              const addState: AddState | undefined = item.imported ? "added" : adds[item.pid];
-              const error = typeof addState === "object" ? addState.error : null;
+              const imported = isImported(item);
+              const importState = adds[item.pid];
+              // The corner icon stays a ✓ once the product is in the catalog.
+              const addState: AddState | undefined = imported ? "added" : importState;
+              const error = typeof importState === "object" ? importState.error : null;
               return (
                 <div
                   key={item.pid}
@@ -398,7 +464,7 @@ export function SourceSearch() {
                       <ProductImage src={item.imageUrl} />
                     </button>
                     <OriginDot origin={item.origin} />
-                    <AddIconButton state={addState} title={item.title} onAdd={() => void add(item.pid)} />
+                    <AddIconButton state={addState} title={item.title} onAdd={() => void runImport(item.pid, false)} />
                   </div>
                   <div className="px-0.5 pb-0.5 pt-2">
                     <button
@@ -418,6 +484,9 @@ export function SourceSearch() {
                     <p className="mt-0.5 text-[11px] text-slate-400">
                       {item.listedNum.toLocaleString()} {item.listedNum === 1 ? "seller" : "sellers"}
                     </p>
+                    {imported ? (
+                      <RefreshButton state={importState} title={item.title} onRefresh={() => void runImport(item.pid, true)} />
+                    ) : null}
                     {error ? (
                       <p className="mt-1 truncate text-[11px] text-red-300" title={error}>
                         {error}
@@ -453,8 +522,9 @@ export function SourceSearch() {
       {openItem ? (
         <SourceProductModal
           item={openItem}
-          addState={openItem.imported ? "added" : adds[openItem.pid]}
-          onAdd={(pid) => void add(pid)}
+          addState={adds[openItem.pid]}
+          imported={isImported(openItem)}
+          onAdd={(pid) => void runImport(pid, isImported(openItem))}
           onClose={closeModal}
           cache={detailCache}
         />

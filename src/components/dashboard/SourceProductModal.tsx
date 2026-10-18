@@ -16,7 +16,8 @@ export type SourceModalItem = {
   origin: SourceOrigin;
 };
 
-export type AddState = "adding" | "added" | { error: string };
+/** Import progress for one product. "added" and "refreshed" are shown briefly, then cleared. */
+export type AddState = "adding" | "added" | "refreshing" | "refreshed" | { error: string };
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
@@ -73,13 +74,15 @@ type DetailState = { status: "loading" } | { status: "error"; message: string } 
 type Props = {
   item: SourceModalItem;
   addState: AddState | undefined;
+  /** Already in the catalog: the button re-imports ("Refresh from CJ") instead of adding. */
+  imported: boolean;
   onAdd: (pid: string) => void;
   onClose: () => void;
   /** Details already fetched this session, keyed by pid (avoids re-calling CJ). */
   cache: Map<string, CjProductDetail>;
 };
 
-export function SourceProductModal({ item, addState, onAdd, onClose, cache }: Props) {
+export function SourceProductModal({ item, addState, imported, onAdd, onClose, cache }: Props) {
   const cached = cache.get(item.pid);
   const [state, setState] = useState<DetailState>(cached ? { status: "done", product: cached } : { status: "loading" });
   const [active, setActive] = useState(0);
@@ -132,6 +135,8 @@ export function SourceProductModal({ item, addState, onAdd, onClose, cache }: Pr
   const mainImage = images[Math.min(active, Math.max(0, images.length - 1))] ?? null;
   const added = addState === "added";
   const adding = addState === "adding";
+  const refreshing = addState === "refreshing";
+  const refreshed = addState === "refreshed";
   const addError = typeof addState === "object" ? addState.error : null;
   const sellers = product?.listedNum ?? item.listedNum;
 
@@ -319,14 +324,31 @@ export function SourceProductModal({ item, addState, onAdd, onClose, cache }: Pr
           <button
             type="button"
             onClick={() => onAdd(item.pid)}
-            disabled={added || adding}
+            disabled={added || adding || refreshing || refreshed}
             className={
-              added
+              added || refreshed
                 ? "rounded-full border border-lime-brand/30 bg-lime-brand/10 px-5 py-2 text-sm font-semibold text-lime-brand"
-                : "rounded-full bg-brand-500 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-400 disabled:opacity-50"
+                : imported
+                  ? "inline-flex items-center gap-2 rounded-full border border-white/20 px-5 py-2 text-sm font-semibold text-slate-100 hover:bg-white/5 disabled:opacity-60"
+                  : "rounded-full bg-brand-500 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-400 disabled:opacity-50"
             }
           >
-            {added ? "Added ✓" : adding ? "Adding…" : addError ? "Try again" : "Add to my catalog"}
+            {refreshing ? (
+              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden="true" />
+            ) : null}
+            {added
+              ? "Added ✓"
+              : refreshed
+                ? "Refreshed ✓"
+                : refreshing
+                  ? "Refreshing…"
+                  : imported
+                    ? "Refresh from CJ"
+                    : adding
+                      ? "Adding…"
+                      : addError
+                        ? "Try again"
+                        : "Add to my catalog"}
           </button>
         </div>
       </div>
