@@ -108,41 +108,40 @@ export type CjSearchFilters = {
 
 type CjListData = { list?: Array<Record<string, unknown>>; total?: number | string } | null;
 
-export async function searchCjProducts(
-  userId: number,
+/**
+ * One page of CJ results for a keyword: labelled US/CN, relevance-filtered,
+ * `imported` left false (see markImported). Two CJ calls (results + a US
+ * warehouse lookup), or one with usOnly, which asks CJ for US stock only.
+ */
+async function searchCjPage(
   keyword: string,
   page: number,
-  filters: CjSearchFilters = {},
-): Promise<CjResult<CjSearchResult>> {
+  pageSize: number,
+  filters: CjSearchFilters & { usOnly?: boolean } = {},
+): Promise<CjResult<{ items: CjSearchItem[]; total: number; rejected: number; words: string[] }>> {
   const q = encodeURIComponent(keyword);
   const narrow = new URLSearchParams();
   if (filters.minPrice != null) narrow.set("minPrice", String(filters.minPrice));
   if (filters.maxPrice != null) narrow.set("maxPrice", String(filters.maxPrice));
   if (filters.minSellers != null) narrow.set("minListedNum", String(filters.minSellers));
   if (filters.maxSellers != null) narrow.set("maxListedNum", String(filters.maxSellers));
+  if (filters.usOnly) narrow.set("countryCode", "US");
   const extra = narrow.size ? `&${narrow}` : "";
-  const listed = await cjGet(`/product/list?pageNum=${page}&pageSize=${PAGE_SIZE}&productNameEn=${q}${extra}`);
+  const listed = await cjGet(`/product/list?pageNum=${page}&pageSize=${pageSize}&productNameEn=${q}${extra}`);
   if (!listed.ok) return listed;
   const data = listed.data as CjListData;
   const rows = Array.isArray(data?.list) ? data.list : [];
 
   let usPids: Set<string> | null = null;
-  if (rows.length) {
+  if (filters.usOnly) {
+    usPids = new Set(rows.map((r) => str(r.pid)).filter(Boolean));
+  } else if (rows.length) {
     const us = await cjGet(`/product/list?pageNum=1&pageSize=${US_LOOKUP_SIZE}&productNameEn=${q}&countryCode=US`);
     if (us.ok) {
       const usRows = (us.data as CjListData)?.list;
       usPids = new Set((Array.isArray(usRows) ? usRows : []).map((r) => str(r.pid)).filter(Boolean));
     }
   }
-
-  const pids = rows.map((r) => str(r.pid)).filter(Boolean);
-  const existing = pids.length
-    ? await db
-        .select({ externalId: catalogProducts.externalId })
-        .from(catalogProducts)
-        .where(and(eq(catalogProducts.userId, userId), inArray(catalogProducts.externalId, pids.map(cjExternalId))))
-    : [];
-  const importedIds = new Set(existing.map((r) => r.externalId));
 
   const items = rows
     .map((row): CjSearchItem | null => {
@@ -158,7 +157,7 @@ export async function searchCjProducts(
         listedNum: Math.round(num(row.listedNum)),
         category: str(row.categoryName),
         origin: usPids ? (usPids.has(pid) ? "US" : "CN") : null,
-        imported: importedIds.has(cjExternalId(pid)),
+        imported: false,
         addedAt: parseCjDate(row.createTime ?? row.createrTime ?? row.createDate)?.toISOString() ?? null,
       };
     })
@@ -166,19 +165,118 @@ export async function searchCjProducts(
 
   const relevant = rankByRelevance(items, keyword, (item) => item.title);
   console.log(
-    `[cj-search] q="${keyword}" page=${page} words=${JSON.stringify(relevant.words)} kept=${relevant.kept.length} rejected=${relevant.rejected}`,
+    `[cj-search] q="${keyword}" page=${page} size=${pageSize} words=${JSON.stringify(relevant.words)} kept=${relevant.kept.length} rejected=${relevant.rejected}`,
   );
+  return {
+    ok: true,
+    data: { items: relevant.kept, total: Math.round(num(data?.total)), rejected: relevant.rejected, words: relevant.words },
+  };
+}
 
+/** Sets `imported` on items the seller already has in their catalog (one query). */
+async function markImported(userId: number, items: CjSearchItem[]) {
+  if (!items.length) return items;
+  const existing = await db
+    .select({ externalId: catalogProducts.externalId })
+    .from(catalogProducts)
+    .where(and(eq(catalogProducts.userId, userId), inArray(catalogProducts.externalId, items.map((i) => cjExternalId(i.pid)))));
+  const importedIds = new Set(existing.map((r) => r.externalId));
+  return items.map((item) => ({ ...item, imported: importedIds.has(cjExternalId(item.pid)) }));
+}
+
+/** The Source page's keyword search: one page of PAGE_SIZE results. */
+export async function searchCjProducts(
+  userId: number,
+  keyword: string,
+  page: number,
+  filters: CjSearchFilters = {},
+): Promise<CjResult<CjSearchResult>> {
+  const result = await searchCjPage(keyword, page, PAGE_SIZE, filters);
+  if (!result.ok) return result;
   return {
     ok: true,
     data: {
-      items: relevant.kept,
+      items: await markImported(userId, result.data.items),
       page,
       pageSize: PAGE_SIZE,
-      total: Math.round(num(data?.total)),
-      rejected: relevant.rejected,
+      total: result.data.total,
+      rejected: result.data.rejected,
     },
   };
+}
+
+/** CJ results asked for per keyword in a multi-keyword search. */
+const MULTI_PAGE_SIZE = 100;
+/** A keyword returning fewer relevant results than this is retried with a broader phrase. */
+const BROADEN_BELOW = 25;
+/** No broadening retries once a multi-keyword search has run this long (it must fit a 60 s request). */
+const BROADEN_BUDGET_MS = 25_000;
+
+export type KeywordSearchStat = {
+  keyword: string;
+  /** Relevant CJ results for this keyword (both queries, before de-duplication). */
+  found: number;
+  /** The broader phrase also searched when the keyword alone found too little. */
+  broadenedTo?: string;
+  error?: string;
+};
+
+/**
+ * The broader phrase for a long keyword: its last two words, which in English
+ * product names are usually the product itself ("cordless electric spin
+ * scrubber" → "spin scrubber"). Null when there is nothing to drop.
+ */
+export function broaderPhrase(keyword: string) {
+  const words = keyword.trim().split(/\s+/);
+  return words.length >= 3 ? words.slice(-2).join(" ") : null;
+}
+
+/**
+ * Searches CJ for up to 5 keywords, one after another through the shared
+ * 1.1 s queue: MULTI_PAGE_SIZE results each, plus one broader retry for a
+ * keyword that finds fewer than BROADEN_BELOW. Results are pooled and
+ * de-duplicated by PID (first keyword to find a product keeps it), then
+ * capped at maxTotal. Fails only if every keyword's search failed.
+ */
+export async function searchCjKeywords(
+  userId: number,
+  keywords: string[],
+  options: { filters?: CjSearchFilters & { usOnly?: boolean }; maxTotal?: number } = {},
+): Promise<CjResult<{ items: CjSearchItem[]; searches: KeywordSearchStat[] }>> {
+  const started = Date.now();
+  const maxTotal = options.maxTotal ?? 200;
+  const searches: KeywordSearchStat[] = [];
+  const pool = new Map<string, CjSearchItem>();
+  let lastError: { ok: false; error: string; status: number } | null = null;
+
+  for (const keyword of keywords.slice(0, 5)) {
+    const stat: KeywordSearchStat = { keyword, found: 0 };
+    searches.push(stat);
+    const first = await searchCjPage(keyword, 1, MULTI_PAGE_SIZE, options.filters);
+    if (!first.ok) {
+      lastError = first;
+      stat.error = first.error;
+      continue;
+    }
+    const found = [...first.data.items];
+    const broader = broaderPhrase(keyword);
+    if (found.length < BROADEN_BELOW && broader && Date.now() - started < BROADEN_BUDGET_MS) {
+      const second = await searchCjPage(broader, 1, MULTI_PAGE_SIZE, options.filters);
+      if (second.ok) {
+        stat.broadenedTo = broader;
+        found.push(...second.data.items);
+      }
+    }
+    stat.found = found.length;
+    for (const item of found) if (!pool.has(item.pid)) pool.set(item.pid, item);
+  }
+  if (lastError && searches.every((s) => s.error)) return lastError;
+
+  const items = await markImported(userId, [...pool.values()].slice(0, maxTotal));
+  console.log(
+    `[cj-multi-search] keywords=${JSON.stringify(keywords)} unique=${pool.size} returned=${items.length} ms=${Date.now() - started}`,
+  );
+  return { ok: true, data: { items, searches } };
 }
 
 /** A top-level CJ category and the lower-level category names under it. */
@@ -549,48 +647,40 @@ export async function getWinningProducts(userId: number, filters: WinningFilters
   return { ok: true, data: products.slice(0, filters.limit) };
 }
 
-/** Results kept from each keyword's search before scoring. */
-const PER_KEYWORD = 20;
+/** Most products pooled from a keyword run before scoring (5 keywords × up to 2 × 100 results). */
+const KEYWORD_POOL_MAX = 1000;
 
 export type KeywordWinners = {
   products: WinningProduct[];
-  /** Per keyword: products CJ returned (after the relevance check), or why the search failed. */
-  searches: Array<{ keyword: string; found: number; error?: string }>;
+  searches: KeywordSearchStat[];
+  /** Unique CJ products found across all keywords, before the page's filters. */
+  pooled: number;
+  /** Of those, how many the page's filters (profit, sellers, US warehouse) hid. */
+  hiddenByFilters: number;
 };
 
 /**
- * Winning products for a set of search keywords: each keyword runs through
- * searchCjProducts (the Source page's search, 2 CJ calls through the same
- * 1.1 s queue), the top PER_KEYWORD results of each are pooled and
- * de-duplicated, then scored with winningScore() and filtered like the feed.
+ * Winning products for a set of search keywords: searchCjKeywords pools and
+ * de-duplicates every keyword's CJ results, then each is scored with
+ * winningScore() and filtered like the feed; the best `limit` are returned.
+ * CJ is asked for the price and seller ranges up front, so the 100 results
+ * per keyword are ones the filters can keep.
  */
 export async function getKeywordWinners(
   userId: number,
   keywords: string[],
   filters: Omit<WinningFilters, "category">,
 ): Promise<CjResult<KeywordWinners>> {
-  const searches: KeywordWinners["searches"] = [];
-  const pool = new Map<string, CjSearchItem>();
-  let lastError: CjResult<never> | null = null;
-  for (const keyword of keywords) {
-    const result = await searchCjProducts(userId, keyword, 1, {
-      minPrice: filters.minPrice,
-      maxPrice: filters.maxPrice,
-      maxSellers: filters.maxSellers,
-    });
-    if (!result.ok) {
-      lastError = result;
-      searches.push({ keyword, found: 0, error: result.error });
-      continue;
-    }
-    searches.push({ keyword, found: result.data.items.length });
-    for (const item of result.data.items.slice(0, PER_KEYWORD)) if (!pool.has(item.pid)) pool.set(item.pid, item);
-  }
-  if (lastError && searches.every((s) => s.error)) return lastError;
+  const found = await searchCjKeywords(userId, keywords, {
+    filters: { minPrice: filters.minPrice, maxPrice: filters.maxPrice, maxSellers: filters.maxSellers, usOnly: filters.usOnly },
+    maxTotal: KEYWORD_POOL_MAX,
+  });
+  if (!found.ok) return found;
+  const pool = found.data.items;
 
   const now = Date.now();
   const products: WinningProduct[] = [];
-  for (const item of pool.values()) {
+  for (const item of pool) {
     if (item.price <= 0) continue;
     if (filters.usOnly && item.origin !== "US") continue;
     if (filters.maxSellers != null && item.listedNum > filters.maxSellers) continue;
@@ -605,7 +695,15 @@ export async function getKeywordWinners(
 
   products.sort((a, b) => b.winningScore - a.winningScore || b.profit - a.profit);
   console.log(
-    `[cj-keyword-winners] keywords=${JSON.stringify(keywords)} pool=${pool.size} scored=${products.length} filters=${JSON.stringify(filters)}`,
+    `[cj-keyword-winners] keywords=${JSON.stringify(keywords)} pool=${pool.length} scored=${products.length} filters=${JSON.stringify(filters)}`,
   );
-  return { ok: true, data: { products: products.slice(0, filters.limit), searches } };
+  return {
+    ok: true,
+    data: {
+      products: products.slice(0, filters.limit),
+      searches: found.data.searches,
+      pooled: pool.length,
+      hiddenByFilters: pool.length - products.length,
+    },
+  };
 }

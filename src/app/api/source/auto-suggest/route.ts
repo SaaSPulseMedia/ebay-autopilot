@@ -8,17 +8,18 @@ import { findNiche } from "@/lib/niches";
 /**
  * GET /api/source/auto-suggest?niche=… — "✨ Auto-Suggest Winners": Claude
  * picks 5 product keywords for the niche (5 fixed keywords per niche if it
- * can't), each keyword is searched on CJ like the Source page, and the pooled,
- * de-duplicated results come back ranked by Winning Score (top 50).
+ * can't), CJ is searched for each (up to 100 results apiece, see
+ * searchCjKeywords), and the pooled, de-duplicated results come back ranked by
+ * Winning Score (top 200).
  * Takes the feed's filters too: minPrice, maxPrice, minMargin, maxSellers
  * (default 20), usOnly=1. Signed-in users only.
  */
 export const dynamic = "force-dynamic";
-// Claude, then 5 keywords × 2 CJ calls spaced 1.1 s apart.
+// Claude, then 5 keywords × 2–4 CJ calls spaced 1.1 s apart.
 export const maxDuration = 60;
 
 const DEFAULT_MAX_SELLERS = 20;
-const LIMIT = 50;
+const LIMIT = 200;
 
 export async function GET(request: Request) {
   const user = await getCurrentUser();
@@ -55,6 +56,8 @@ export async function GET(request: Request) {
       keywords: suggestion.keywords,
       keywordSource: suggestion.source,
       searches: result.data.searches,
+      pooled: result.data.pooled,
+      hiddenByFilters: result.data.hiddenByFilters,
       products: result.data.products,
     });
   } catch (error) {

@@ -36,7 +36,10 @@ type Suggestion = {
   niche: string;
   keywords: string[];
   keywordSource: "claude" | "fallback";
-  searches: Array<{ keyword: string; found: number; error?: string }>;
+  searches: Array<{ keyword: string; found: number; broadenedTo?: string; error?: string }>;
+  /** Unique CJ products found, and how many of them the filters hid. */
+  pooled: number;
+  hiddenByFilters: number;
 };
 
 type FeedState =
@@ -398,7 +401,14 @@ export function WinningProducts() {
       setFeed({
         status: "done",
         products: body.products,
-        suggestion: { niche: body.niche, keywords: body.keywords, keywordSource: body.keywordSource, searches: body.searches },
+        suggestion: {
+          niche: body.niche,
+          keywords: body.keywords,
+          keywordSource: body.keywordSource,
+          searches: body.searches,
+          pooled: body.pooled ?? body.products.length,
+          hiddenByFilters: body.hiddenByFilters ?? 0,
+        },
       });
     } catch {
       if (id === requestId.current) {
@@ -506,7 +516,7 @@ export function WinningProducts() {
                 : `${products.length} product${products.length === 1 ? "" : "s"}, ranked from CJ data`
               : feed.status === "loading"
                 ? feed.suggesting
-                  ? `Asking Claude for ${feed.suggesting} keywords and searching CJ for each (about 15–30 seconds)…`
+                  ? `Asking Claude for ${feed.suggesting} keywords and searching CJ for each (about 20–40 seconds)…`
                   : "Scoring CJ products…"
                 : ""}
           </p>
@@ -535,12 +545,20 @@ export function WinningProducts() {
               {feed.suggestion.searches.map((s) => (
                 <span
                   key={s.keyword}
-                  title={s.error ? `CJ search failed: ${s.error}` : `${s.found} CJ result${s.found === 1 ? "" : "s"}`}
+                  title={
+                    s.error
+                      ? `CJ search failed: ${s.error}`
+                      : `${s.found} CJ result${s.found === 1 ? "" : "s"}${
+                          s.broadenedTo ? ` (few exact matches, so "${s.broadenedTo}" was searched too)` : ""
+                        }`
+                  }
                   className={`rounded-full border px-2.5 py-0.5 text-xs ${
                     s.error ? "border-red-400/40 text-red-300" : "border-white/15 text-slate-200"
                   }`}
                 >
-                  {s.keyword} <span className="text-slate-500">· {s.error ? "failed" : s.found}</span>
+                  {s.keyword}
+                  {s.broadenedTo ? <span className="text-slate-500"> + {s.broadenedTo}</span> : null}{" "}
+                  <span className="text-slate-500">· {s.error ? "failed" : s.found}</span>
                 </span>
               ))}
               <button
@@ -554,6 +572,12 @@ export function WinningProducts() {
             {feed.suggestion.keywordSource === "fallback" ? (
               <p className="text-xs text-amber-200">
                 Claude wasn&apos;t available, so these are AutoPilot&apos;s standard keywords for this niche.
+              </p>
+            ) : null}
+            {feed.suggestion.hiddenByFilters > 0 ? (
+              <p className="text-xs text-slate-400">
+                Found {feed.suggestion.pooled} unique CJ products; your filters (minimum profit, maximum sellers, US
+                warehouse) hid {feed.suggestion.hiddenByFilters}. Loosen them in Filters to see more.
               </p>
             ) : null}
           </div>
