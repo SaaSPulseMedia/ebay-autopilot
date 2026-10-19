@@ -3,6 +3,7 @@ import Link from "next/link";
 import { db } from "@/db";
 import { listings } from "@/db/schema";
 import { ListingsTable } from "@/components/dashboard/ListingsTable";
+import { SyncFromEbay } from "@/components/dashboard/SyncFromEbay";
 import { getCurrentUser } from "@/lib/auth";
 import { DRIP_PER_RUN, planLimits } from "@/lib/limits";
 import { and, count, desc, eq, ne } from "drizzle-orm";
@@ -63,6 +64,8 @@ export default async function ListingsPage() {
         </div>
       </div>
 
+      <SyncFromEbay />
+
       {scheduled ? (
         <p className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-200">
           {scheduled} listing{scheduled === 1 ? " is" : "s are"} scheduled for drip posting.{" "}
@@ -72,7 +75,8 @@ export default async function ListingsPage() {
         </p>
       ) : null}
 
-      <ListingsTable initialListings={rows} />
+      {/* Keyed on statuses so a sync's router.refresh() remounts the table with the new rows. */}
+      <ListingsTable key={rows.map((row) => `${row.id}:${row.status}`).join(",")} initialListings={rows} />
     </div>
   );
 }
