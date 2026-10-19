@@ -1,6 +1,6 @@
 import "server-only";
 
-import { inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { catalogProducts } from "@/db/schema";
@@ -107,6 +107,7 @@ export type CjSearchFilters = {
 type CjListData = { list?: Array<Record<string, unknown>>; total?: number | string } | null;
 
 export async function searchCjProducts(
+  userId: number,
   keyword: string,
   page: number,
   filters: CjSearchFilters = {},
@@ -137,7 +138,7 @@ export async function searchCjProducts(
     ? await db
         .select({ externalId: catalogProducts.externalId })
         .from(catalogProducts)
-        .where(inArray(catalogProducts.externalId, pids.map(cjExternalId)))
+        .where(and(eq(catalogProducts.userId, userId), inArray(catalogProducts.externalId, pids.map(cjExternalId))))
     : [];
   const importedIds = new Set(existing.map((r) => r.externalId));
 
@@ -223,8 +224,14 @@ function competitionFromListed(listedNum: number): "low" | "medium" | "high" {
   return "low";
 }
 
-/** Fetches a CJ product with its variants and upserts it into catalog_products. */
-export async function importCjProduct(pid: string): Promise<CjResult<{ id: number; externalId: string; created: boolean }>> {
+/**
+ * Fetches a CJ product with its variants and upserts it into `userId`'s catalog
+ * (one row per seller per product; null writes a shared, ownerless row).
+ */
+export async function importCjProduct(
+  pid: string,
+  userId: number | null,
+): Promise<CjResult<{ id: number; externalId: string; created: boolean }>> {
   const detail = await cjGet(`/product/query?pid=${encodeURIComponent(pid)}`);
   if (!detail.ok) return detail;
   const product = detail.data as CjProductFromApi | null;
@@ -243,6 +250,7 @@ export async function importCjProduct(pid: string): Promise<CjResult<{ id: numbe
   const { shipping, suggested } = priceForEbay(draft.supplierPrice);
   const externalId = cjExternalId(draft.externalId);
   const values = {
+    userId,
     externalId,
     source: "cj",
     title: draft.title,
@@ -260,10 +268,16 @@ export async function importCjProduct(pid: string): Promise<CjResult<{ id: numbe
   const [row] = await db
     .insert(catalogProducts)
     .values(values)
-    .onConflictDoUpdate({
-      target: catalogProducts.externalId,
-      set: { ...values, refreshedAt: new Date() },
-    })
+    // Matches the partial unique indexes on catalog_products (see schema.ts).
+    .onConflictDoUpdate(
+      userId == null
+        ? { target: catalogProducts.externalId, targetWhere: sql`user_id is null`, set: { ...values, refreshedAt: new Date() } }
+        : {
+            target: [catalogProducts.userId, catalogProducts.externalId],
+            targetWhere: sql`user_id is not null`,
+            set: { ...values, refreshedAt: new Date() },
+          },
+    )
     // xmax = 0 only on a freshly inserted row.
     .returning({ id: catalogProducts.id, created: sql<boolean>`(xmax = 0)` });
   return { ok: true, data: { id: row.id, externalId, created: row.created } };
@@ -410,7 +424,7 @@ const FEED_POOL = 200;
  * category, profit and warehouse here. Two CJ calls (all + US warehouse), or
  * one with usOnly.
  */
-export async function getWinningProducts(filters: WinningFilters): Promise<CjResult<WinningProduct[]>> {
+export async function getWinningProducts(userId: number, filters: WinningFilters): Promise<CjResult<WinningProduct[]>> {
   const narrow = new URLSearchParams({ pageNum: "1", pageSize: String(FEED_POOL) });
   if (filters.minPrice != null) narrow.set("minPrice", String(filters.minPrice));
   if (filters.maxPrice != null) narrow.set("maxPrice", String(filters.maxPrice));
@@ -442,7 +456,7 @@ export async function getWinningProducts(filters: WinningFilters): Promise<CjRes
     ? await db
         .select({ externalId: catalogProducts.externalId })
         .from(catalogProducts)
-        .where(inArray(catalogProducts.externalId, pids.map(cjExternalId)))
+        .where(and(eq(catalogProducts.userId, userId), inArray(catalogProducts.externalId, pids.map(cjExternalId))))
     : [];
   const importedIds = new Set(existing.map((r) => r.externalId));
 

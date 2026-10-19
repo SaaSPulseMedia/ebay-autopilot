@@ -35,7 +35,7 @@ export async function GET(request: Request) {
   };
 
   try {
-    const result = await searchCjProducts(q, page, filters);
+    const result = await searchCjProducts(user.id, q, page, filters);
     if (!result.ok) return Response.json({ ok: false, error: result.error }, { status: result.status });
     return Response.json({ ok: true, ...result.data });
   } catch (error) {

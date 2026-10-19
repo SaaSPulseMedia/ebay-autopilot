@@ -35,7 +35,7 @@ export async function POST(request: Request) {
   const limitResponse = await checkPlanCapacity(user.id, limits, ids.length, { drip });
   if (limitResponse) return limitResponse;
 
-  const [catalog, defaults] = await Promise.all([getCatalog(200), getListingDefaults(user.id)]);
+  const [catalog, defaults] = await Promise.all([getCatalog(user.id, 200), getListingDefaults(user.id)]);
   // The seller's own image order (and uploads) replaces the supplier's images where saved.
   const found = await withUserImages(
     user.id,

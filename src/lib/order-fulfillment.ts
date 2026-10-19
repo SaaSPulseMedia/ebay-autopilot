@@ -1,6 +1,6 @@
 import "server-only";
 
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 import { db } from "@/db";
 import { catalogProducts, listings } from "@/db/schema";
@@ -74,7 +74,7 @@ export async function matchSkusToCj(userId: number, skus: string[]): Promise<Rec
       variants: catalogProducts.variants,
     })
     .from(catalogProducts)
-    .where(eq(catalogProducts.source, "cj"))) as CatalogRow[];
+    .where(and(eq(catalogProducts.source, "cj"), eq(catalogProducts.userId, userId)))) as CatalogRow[];
 
   const byVariantSku = new Map<string, { product: CatalogRow; variant: Variant }>();
   const byExternalId = new Map<string, CatalogRow>();

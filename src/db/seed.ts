@@ -1,5 +1,6 @@
 import "dotenv/config";
 
+import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
@@ -35,7 +36,9 @@ async function main() {
         veroRisk: row.veroRisk,
       })
       .onConflictDoUpdate({
+        // Sample products are shared: no owner, unique on externalId alone.
         target: catalogProducts.externalId,
+        targetWhere: sql`user_id is null`,
         set: {
           supplier: SAMPLE_SUPPLIER,
           supplierPrice: row.supplierPrice.toFixed(2),

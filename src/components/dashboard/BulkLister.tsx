@@ -26,6 +26,8 @@ export type BulkProduct = {
   imageCount: number;
   /** True when the seller saved their own image order or uploads. */
   customImages: boolean;
+  /** False for the shared sample products, which no seller can delete. */
+  deletable: boolean;
 };
 
 function BoxIcon({ className }: { className?: string }) {
@@ -333,20 +335,22 @@ export function BulkLister({
                         {product.customImages ? " · custom" : ""}
                       </span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDeleting(product);
-                      }}
-                      title="Delete from catalog"
-                      aria-label={`Delete ${product.title} from catalog`}
-                      className="my-1 ml-1.5 inline-flex items-center rounded-full border border-white/15 p-1.5 text-slate-400 hover:border-red-400/50 hover:text-red-300"
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-3.5 w-3.5" aria-hidden="true">
-                        <path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    </button>
+                    {product.deletable ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleting(product);
+                        }}
+                        title="Delete from catalog"
+                        aria-label={`Delete ${product.title} from catalog`}
+                        className="my-1 ml-1.5 inline-flex items-center rounded-full border border-white/15 p-1.5 text-slate-400 hover:border-red-400/50 hover:text-red-300"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-3.5 w-3.5" aria-hidden="true">
+                          <path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </button>
+                    ) : null}
                     <span className="block text-[11px] text-slate-500">
                       {product.category}
                       {product.veroRisk === "high" ? (

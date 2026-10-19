@@ -6,7 +6,7 @@ import type { ProductFacts } from "@/lib/cj/facts";
 import { competitionFor, netProfitFor, priceForEbay } from "@/lib/pricing";
 import { SAMPLE_SUPPLIER, STARTER_ROWS, starterImageUrl } from "@/lib/starter-catalog";
 import { screenVero, stricterRisk } from "@/lib/vero";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
 
 export type SupplierProduct = {
   externalId: string;
@@ -88,8 +88,19 @@ function starterCatalog(limit: number): SupplierProduct[] {
 
 export type CatalogProduct = ReturnType<typeof withVero>;
 
-export async function getCatalog(limit = 36): Promise<CatalogProduct[]> {
-  const products = await loadCatalog(limit);
+/**
+ * Rows a seller can see: their own products plus the shared sample products
+ * (user_id is null). With no seller (marketing pages), only the shared ones.
+ */
+export function visibleTo(userId: number | null) {
+  return userId == null
+    ? isNull(catalogProducts.userId)
+    : or(eq(catalogProducts.userId, userId), isNull(catalogProducts.userId));
+}
+
+/** The catalog as `userId` sees it; null for the shared sample products only. */
+export async function getCatalog(userId: number | null, limit = 36): Promise<CatalogProduct[]> {
+  const products = await loadCatalog(userId, limit);
   return products.map(withVero);
 }
 
@@ -116,17 +127,26 @@ function rowToProduct(row: CatalogRow): SupplierProduct {
   };
 }
 
-/** One catalog product by externalId (e.g. "cj-<pid>"), with the VeRO screen applied; null if absent. */
-export async function getCatalogProduct(externalId: string): Promise<CatalogProduct | null> {
-  const [row] = await db.select().from(catalogProducts).where(eq(catalogProducts.externalId, externalId)).limit(1);
+/**
+ * One catalog product by externalId (e.g. "cj-<pid>") as `userId` sees it, with
+ * the VeRO screen applied; null if absent. The seller's own row wins over a shared one.
+ */
+export async function getCatalogProduct(userId: number, externalId: string): Promise<CatalogProduct | null> {
+  const [row] = await db
+    .select()
+    .from(catalogProducts)
+    .where(and(eq(catalogProducts.externalId, externalId), visibleTo(userId)))
+    .orderBy(sql`${catalogProducts.userId} is null`)
+    .limit(1);
   return row ? withVero(rowToProduct(row)) : null;
 }
 
-async function loadCatalog(limit: number): Promise<SupplierProduct[]> {
+async function loadCatalog(userId: number | null, limit: number): Promise<SupplierProduct[]> {
   try {
     const rows = await db
       .select()
       .from(catalogProducts)
+      .where(visibleTo(userId))
       .orderBy(desc(catalogProducts.monthlySales))
       .limit(limit);
     if (rows.length) {
@@ -149,8 +169,8 @@ export type CatalogStats = {
 };
 
 /** Numbers shown on the marketing site are computed from this — never hardcoded. */
-export async function getCatalogStats(): Promise<CatalogStats> {
-  const products = await getCatalog(60);
+export async function getCatalogStats(userId: number | null = null): Promise<CatalogStats> {
+  const products = await getCatalog(userId, 60);
   if (!products.length) {
     return { productCount: 0, categoryCount: 0, supplierCount: 0, medianMarginPct: 0, averageNetProfit: 0, sample: false };
   }

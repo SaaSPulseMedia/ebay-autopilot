@@ -8,8 +8,9 @@ export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs" || !process.env.DATABASE_URL) return;
   try {
     const [{ db }, { ensureAddedColumns }] = await Promise.all([import("@/db"), import("@/db/ensure-columns")]);
-    const { added } = await ensureAddedColumns(db);
+    const { added, catalogRowsAssigned } = await ensureAddedColumns(db);
     if (added.length) console.log("[schema] added columns:", added.join(", "));
+    if (catalogRowsAssigned) console.log(`[schema] assigned ${catalogRowsAssigned} shared CJ catalog rows to their owner`);
   } catch (error) {
     console.error("[schema] could not check for new columns:", error instanceof Error ? error.message : error);
   }

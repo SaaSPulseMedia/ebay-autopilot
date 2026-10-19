@@ -14,7 +14,33 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: "catalog_products", column: "images", definition: "jsonb NOT NULL DEFAULT '[]'::jsonb" },
   { table: "catalog_products", column: "variants", definition: "jsonb NOT NULL DEFAULT '[]'::jsonb" },
   { table: "catalog_products", column: "details", definition: "jsonb" },
+  { table: "catalog_products", column: "user_id", definition: "integer REFERENCES users(id) ON DELETE CASCADE" },
 ];
+
+/**
+ * catalog_products became per-seller: unique per (user_id, external_id), with
+ * ownerless sample rows unique on external_id alone. The new indexes are built
+ * before the old global one is dropped, so imports never run unprotected.
+ */
+const CATALOG_INDEXES: Array<{ name: string; ddl: string }> = [
+  {
+    name: "catalog_products_user_external_unique",
+    ddl: "CREATE UNIQUE INDEX IF NOT EXISTS catalog_products_user_external_unique ON catalog_products (user_id, external_id) WHERE user_id IS NOT NULL",
+  },
+  {
+    name: "catalog_products_shared_external_unique",
+    ddl: "CREATE UNIQUE INDEX IF NOT EXISTS catalog_products_shared_external_unique ON catalog_products (external_id) WHERE user_id IS NULL",
+  },
+];
+const OLD_CATALOG_INDEX = "catalog_products_external_unique";
+
+/**
+ * CJ products imported while the catalog was shared belong to the store's
+ * original seller. New imports always carry an owner, so after the first run
+ * this matches nothing; it stays idempotent and is a no-op if that account
+ * doesn't exist.
+ */
+const LEGACY_CATALOG_OWNER_EMAIL = "itsy@store.com";
 
 /** Tables added after launch, created when missing (same reason as ADDED_COLUMNS). */
 const ADDED_TABLES: Array<{ table: string; ddl: string }> = [
@@ -68,5 +94,25 @@ export async function ensureAddedColumns(db: NodePgDatabase<Record<string, unkno
     await db.execute(sql.raw(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${definition}`));
     added.push(`${table}.${column}`);
   }
-  return { added };
+  const indexes = await db.execute<{ indexname: string }>(sql`
+    select indexname from pg_indexes where schemaname = current_schema() and tablename = 'catalog_products'
+  `);
+  const indexNames = new Set(indexes.rows.map((r) => r.indexname));
+  for (const { name, ddl } of CATALOG_INDEXES) {
+    if (indexNames.has(name)) continue;
+    await db.execute(sql.raw(ddl));
+    added.push(`index ${name}`);
+  }
+  if (indexNames.has(OLD_CATALOG_INDEX)) {
+    await db.execute(sql.raw(`DROP INDEX IF EXISTS ${OLD_CATALOG_INDEX}`));
+    added.push(`dropped index ${OLD_CATALOG_INDEX}`);
+  }
+
+  const backfill = await db.execute(sql`
+    update catalog_products set user_id = (select id from users where email = ${LEGACY_CATALOG_OWNER_EMAIL})
+    where user_id is null and source = 'cj'
+      and exists (select 1 from users where email = ${LEGACY_CATALOG_OWNER_EMAIL})
+  `);
+  const catalogRowsAssigned = backfill.rowCount ?? 0;
+  return { added, catalogRowsAssigned };
 }

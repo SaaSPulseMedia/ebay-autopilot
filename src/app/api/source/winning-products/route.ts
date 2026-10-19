@@ -31,7 +31,7 @@ export async function GET(request: Request) {
   const maxSellers = sellersParam === "" || sellersParam === "any" ? undefined : (numberParam("maxSellers") ?? DEFAULT_MAX_SELLERS);
 
   try {
-    const result = await getWinningProducts({
+    const result = await getWinningProducts(user.id, {
       category: params.get("category")?.trim().slice(0, 100) || undefined,
       minPrice: numberParam("minPrice"),
       maxPrice: numberParam("maxPrice"),

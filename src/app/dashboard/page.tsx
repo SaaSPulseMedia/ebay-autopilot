@@ -21,7 +21,7 @@ export default async function OverviewPage() {
     db.select().from(listings).where(eq(listings.userId, user.id)).orderBy(desc(listings.createdAt)).limit(5),
     db.select({ count: count() }).from(listings).where(and(eq(listings.userId, user.id), ne(listings.status, "ended"))),
     db.select().from(orders).where(eq(orders.userId, user.id)).limit(200),
-    getCatalogStats(),
+    getCatalogStats(user.id),
   ]);
 
   const revenue = myOrders.reduce((sum, order) => sum + Number(order.salePrice), 0);

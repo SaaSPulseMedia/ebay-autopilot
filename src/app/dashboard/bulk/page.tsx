@@ -24,7 +24,7 @@ export default async function BulkPage() {
 
   const limits = planLimits(user.plan);
   const [catalog, defaults, [{ count: activeUsed }]] = await Promise.all([
-    getCatalog(120),
+    getCatalog(user.id, 120),
     getListingDefaults(user.id),
     db
       .select({ count: count() })
@@ -57,6 +57,8 @@ export default async function BulkPage() {
     imageUrl: product.imageUrl,
     imageCount: product.images.length || (product.imageUrl ? 1 : 0),
     customImages: product.customImages,
+    // Shared sample products belong to no one, so no seller can delete them.
+    deletable: !isSampleProduct(product),
     };
   });
   const sample = catalog.some(isSampleProduct);

@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { getCurrentUser } from "@/lib/auth";
 import { getCatalog, isSampleProduct, marginPct, netProfit } from "@/lib/suppliers";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +13,8 @@ export default async function ResearchPage({
   searchParams: Promise<{ q?: string; category?: string }>;
 }) {
   const params = await searchParams;
-  const all = await getCatalog(60);
+  const user = await getCurrentUser();
+  const all = await getCatalog(user?.id ?? null, 60);
   const categories = Array.from(new Set(all.map((p) => p.category))).sort();
 
   const query = (params.q ?? "").toLowerCase();

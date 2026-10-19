@@ -1,4 +1,4 @@
-import type { ProductFacts } from "../lib/cj/facts";
+import { sql } from "drizzle-orm";
 import {
   boolean,
   integer,
@@ -12,6 +12,8 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+
+import type { ProductFacts } from "../lib/cj/facts";
 
 export const users = pgTable(
   "users",
@@ -75,6 +77,8 @@ export const catalogProducts = pgTable(
   "catalog_products",
   {
     id: serial("id").primaryKey(),
+    /** Owning seller. Null for the shared sample products every seller sees. */
+    userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }),
     externalId: text("external_id").notNull(),
     source: text("source").notNull().default("seed"),
     title: text("title").notNull(),
@@ -97,13 +101,19 @@ export const catalogProducts = pgTable(
     veroRisk: text("vero_risk").notNull().default("low"),
     refreshedAt: timestamp("refreshed_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex("catalog_products_external_unique").on(table.externalId)],
+  // One row per seller per product; shared rows (no owner) are unique on their own.
+  (table) => [
+    uniqueIndex("catalog_products_user_external_unique")
+      .on(table.userId, table.externalId)
+      .where(sql`user_id is not null`),
+    uniqueIndex("catalog_products_shared_external_unique").on(table.externalId).where(sql`user_id is null`),
+  ],
 );
 
 /**
  * A seller's own image list for a catalog product (custom order, removed
- * photos, their uploads). catalog_products is shared by every seller, so
- * edits live here instead and survive a CJ refresh. No row = supplier images.
+ * photos, their uploads). Kept apart from catalog_products so edits survive
+ * a CJ refresh. No row = supplier images.
  */
 export const productImages = pgTable(
   "product_images",

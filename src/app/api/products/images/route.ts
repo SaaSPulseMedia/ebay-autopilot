@@ -22,15 +22,15 @@ import { getCatalog } from "@/lib/suppliers";
  */
 export const dynamic = "force-dynamic";
 
-async function findProduct(externalId: string) {
-  return (await getCatalog(500)).find((p) => p.externalId === externalId) ?? null;
+async function findProduct(userId: number, externalId: string) {
+  return (await getCatalog(userId, 500)).find((p) => p.externalId === externalId) ?? null;
 }
 
 export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ ok: false, error: "Sign in first." }, { status: 401 });
   const externalId = new URL(request.url).searchParams.get("externalId") ?? "";
-  const product = externalId ? await findProduct(externalId) : null;
+  const product = externalId ? await findProduct(user.id, externalId) : null;
   if (!product) return Response.json({ ok: false, error: "That product is not in the catalog." }, { status: 404 });
 
   const supplier = supplierImages(product);
@@ -43,7 +43,7 @@ export async function PUT(request: Request) {
   if (!user) return Response.json({ ok: false, error: "Sign in first." }, { status: 401 });
   const body = (await request.json().catch(() => null)) as { externalId?: unknown; images?: unknown } | null;
   const externalId = typeof body?.externalId === "string" ? body.externalId : "";
-  const product = externalId ? await findProduct(externalId) : null;
+  const product = externalId ? await findProduct(user.id, externalId) : null;
   if (!product) return Response.json({ ok: false, error: "That product is not in the catalog." }, { status: 404 });
 
   const images = [...new Set((Array.isArray(body?.images) ? body.images : []).filter(isWebUrl).map((u) => u.trim()))];
@@ -66,7 +66,7 @@ export async function DELETE(request: Request) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ ok: false, error: "Sign in first." }, { status: 401 });
   const externalId = new URL(request.url).searchParams.get("externalId") ?? "";
-  const product = externalId ? await findProduct(externalId) : null;
+  const product = externalId ? await findProduct(user.id, externalId) : null;
   if (!product) return Response.json({ ok: false, error: "That product is not in the catalog." }, { status: 404 });
   await resetImageList(user.id, externalId);
   return Response.json({ ok: true, images: supplierImages(product), custom: false });

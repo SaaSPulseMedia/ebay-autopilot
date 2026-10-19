@@ -41,10 +41,10 @@ export async function POST(request: Request) {
   const limitResponse = await checkPlanCapacity(user.id, limits, 1);
   if (limitResponse) return limitResponse;
 
-  const imported = await importCjProduct(pid);
+  const imported = await importCjProduct(pid, user.id);
   if (!imported.ok) return Response.json({ ok: false, step: "import", error: imported.error }, { status: imported.status });
 
-  const found = await getCatalogProduct(cjExternalId(pid));
+  const found = await getCatalogProduct(user.id, cjExternalId(pid));
   if (!found) return Response.json({ ok: false, step: "import", error: "The product didn't save. Try again." }, { status: 500 });
   const [product] = await withUserImages(user.id, [found]);
 

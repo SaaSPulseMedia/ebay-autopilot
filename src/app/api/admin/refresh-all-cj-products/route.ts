@@ -8,7 +8,8 @@ import { importCjProduct } from "@/lib/cj/catalog";
 /**
  * POST /api/admin/refresh-all-cj-products — re-imports every CJ product in
  * catalog_products (source = 'cj') with the same logic as /api/source/import,
- * so old imports pick up all images, variants and product facts.
+ * so old imports pick up all images, variants and product facts. Each row is
+ * refreshed in place for the seller who owns it.
  *
  * CJ calls are queued at least 1.1 s apart (see src/lib/cj/catalog.ts), which
  * is the delay between imports. A run stops starting new imports after
@@ -29,7 +30,7 @@ export async function POST(request: Request) {
 
   try {
     const rows = await db
-      .select({ externalId: catalogProducts.externalId })
+      .select({ externalId: catalogProducts.externalId, userId: catalogProducts.userId })
       .from(catalogProducts)
       .where(eq(catalogProducts.source, "cj"))
       .orderBy(asc(catalogProducts.id));
@@ -39,10 +40,10 @@ export async function POST(request: Request) {
     let index = offset;
     for (; index < rows.length; index += 1) {
       if (Date.now() - started > TIME_BUDGET_MS) break;
-      const { externalId } = rows[index];
+      const { externalId, userId } = rows[index];
       const pid = externalId.replace(/^cj-/, "");
       try {
-        const result = await importCjProduct(pid);
+        const result = await importCjProduct(pid, userId);
         if (result.ok) refreshed += 1;
         else errors.push({ externalId, error: result.error });
       } catch (error) {

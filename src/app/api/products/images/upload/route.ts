@@ -36,7 +36,7 @@ export async function POST(request: Request) {
   if (file.size > MAX_UPLOAD_BYTES) {
     return Response.json({ ok: false, error: "That image is over 4 MB. Choose a smaller one." }, { status: 413 });
   }
-  const product = (await getCatalog(500)).find((p) => p.externalId === externalId);
+  const product = (await getCatalog(user.id, 500)).find((p) => p.externalId === externalId);
   if (!product) return Response.json({ ok: false, error: "That product is not in the catalog." }, { status: 404 });
   if ((await uploadCount(user.id)) >= MAX_UPLOADS_PER_USER) {
     return Response.json({ ok: false, error: `You've reached the limit of ${MAX_UPLOADS_PER_USER} uploaded images.` }, { status: 400 });
