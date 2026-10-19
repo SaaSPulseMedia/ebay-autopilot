@@ -85,6 +85,8 @@ export type CjSearchItem = {
   /** "US" when CJ lists it in its US warehouse, "CN" otherwise; null if that lookup failed. */
   origin: "US" | "CN" | null;
   imported: boolean;
+  /** When CJ added the product (ISO), if CJ says. */
+  addedAt: string | null;
 };
 
 export type CjSearchResult = {
@@ -157,6 +159,7 @@ export async function searchCjProducts(
         category: str(row.categoryName),
         origin: usPids ? (usPids.has(pid) ? "US" : "CN") : null,
         imported: importedIds.has(cjExternalId(pid)),
+        addedAt: parseCjDate(row.createTime ?? row.createrTime ?? row.createDate)?.toISOString() ?? null,
       };
     })
     .filter((item): item is CjSearchItem => item !== null);
@@ -544,4 +547,65 @@ export async function getWinningProducts(userId: number, filters: WinningFilters
     `[cj-winning] queries=${scopes.length} pool=${rows.length} scored=${products.length} us=${usPids ? usPids.size : "n/a"} filters=${JSON.stringify(filters)}`,
   );
   return { ok: true, data: products.slice(0, filters.limit) };
+}
+
+/** Results kept from each keyword's search before scoring. */
+const PER_KEYWORD = 20;
+
+export type KeywordWinners = {
+  products: WinningProduct[];
+  /** Per keyword: products CJ returned (after the relevance check), or why the search failed. */
+  searches: Array<{ keyword: string; found: number; error?: string }>;
+};
+
+/**
+ * Winning products for a set of search keywords: each keyword runs through
+ * searchCjProducts (the Source page's search, 2 CJ calls through the same
+ * 1.1 s queue), the top PER_KEYWORD results of each are pooled and
+ * de-duplicated, then scored with winningScore() and filtered like the feed.
+ */
+export async function getKeywordWinners(
+  userId: number,
+  keywords: string[],
+  filters: Omit<WinningFilters, "category">,
+): Promise<CjResult<KeywordWinners>> {
+  const searches: KeywordWinners["searches"] = [];
+  const pool = new Map<string, CjSearchItem>();
+  let lastError: CjResult<never> | null = null;
+  for (const keyword of keywords) {
+    const result = await searchCjProducts(userId, keyword, 1, {
+      minPrice: filters.minPrice,
+      maxPrice: filters.maxPrice,
+      maxSellers: filters.maxSellers,
+    });
+    if (!result.ok) {
+      lastError = result;
+      searches.push({ keyword, found: 0, error: result.error });
+      continue;
+    }
+    searches.push({ keyword, found: result.data.items.length });
+    for (const item of result.data.items.slice(0, PER_KEYWORD)) if (!pool.has(item.pid)) pool.set(item.pid, item);
+  }
+  if (lastError && searches.every((s) => s.error)) return lastError;
+
+  const now = Date.now();
+  const products: WinningProduct[] = [];
+  for (const item of pool.values()) {
+    if (item.price <= 0) continue;
+    if (filters.usOnly && item.origin !== "US") continue;
+    if (filters.maxSellers != null && item.listedNum > filters.maxSellers) continue;
+    const added = item.addedAt ? new Date(item.addedAt) : null;
+    const { parts, ...score } = winningScore(
+      { cost: item.price, listedNum: item.listedNum, origin: item.origin, createdAt: added },
+      now,
+    );
+    if (filters.minProfit != null && score.profit < filters.minProfit) continue;
+    products.push({ ...item, ...score, scoreParts: parts });
+  }
+
+  products.sort((a, b) => b.winningScore - a.winningScore || b.profit - a.profit);
+  console.log(
+    `[cj-keyword-winners] keywords=${JSON.stringify(keywords)} pool=${pool.size} scored=${products.length} filters=${JSON.stringify(filters)}`,
+  );
+  return { ok: true, data: { products: products.slice(0, filters.limit), searches } };
 }

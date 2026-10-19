@@ -6,6 +6,7 @@ import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } fro
 import { type AddState, SourceProductModal } from "@/components/dashboard/SourceProductModal";
 import { GRID, OriginDot, ProductImage } from "@/components/dashboard/SourceSearch";
 import type { CjCategory, CjProductDetail, WinningProduct } from "@/lib/cj/catalog";
+import { NICHES } from "@/lib/niches";
 
 type Sort = "score" | "margin" | "competition" | "newest";
 
@@ -28,11 +29,20 @@ type Filters = {
 
 const DEFAULT_FILTERS: Filters = { category: "", minPrice: "", maxPrice: "", minProfit: 0, maxSellers: "20", usOnly: false };
 const STORAGE_KEY = "autopilot.winning.filters";
+const NICHE_KEY = "autopilot.winning.niche";
+
+/** What the last "✨ Auto-Suggest Winners" run searched. */
+type Suggestion = {
+  niche: string;
+  keywords: string[];
+  keywordSource: "claude" | "fallback";
+  searches: Array<{ keyword: string; found: number; error?: string }>;
+};
 
 type FeedState =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "done"; products: WinningProduct[] };
+  | { status: "loading"; suggesting?: string }
+  | { status: "error"; message: string; suggesting?: string }
+  | { status: "done"; products: WinningProduct[]; suggestion?: Suggestion };
 
 /** Auto-list progress for one product. */
 type ListState =
@@ -67,6 +77,65 @@ function saveFilters(filters: Filters) {
   } catch {
     // Storage blocked: filters just won't be remembered.
   }
+}
+
+function loadNiche(): string {
+  try {
+    const saved = window.localStorage.getItem(NICHE_KEY);
+    return NICHES.some((n) => n.name === saved) ? (saved as string) : NICHES[0].name;
+  } catch {
+    return NICHES[0].name;
+  }
+}
+
+function saveNiche(niche: string) {
+  try {
+    window.localStorage.setItem(NICHE_KEY, niche);
+  } catch {
+    // Storage blocked: the niche just won't be remembered.
+  }
+}
+
+/** "Product Niche" + "✨ Auto-Suggest Winners": Claude-picked keywords searched on CJ. */
+function NichePanel({
+  niche,
+  onNiche,
+  onSuggest,
+  busy,
+}: {
+  niche: string;
+  onNiche: (niche: string) => void;
+  onSuggest: () => void;
+  busy: boolean;
+}) {
+  return (
+    <div className="ap-card space-y-3 rounded-2xl p-4">
+      <div>
+        <label htmlFor="w-niche" className={LABEL}>
+          Product Niche
+        </label>
+        <select id="w-niche" value={niche} onChange={(e) => onNiche(e.target.value)} className={INPUT}>
+          {NICHES.map((n) => (
+            <option key={n.name} value={n.name}>
+              {n.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <button
+        type="button"
+        onClick={onSuggest}
+        disabled={busy}
+        className="w-full rounded-full bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-400 disabled:opacity-60"
+      >
+        {busy ? "Finding winners…" : "✨ Auto-Suggest Winners"}
+      </button>
+      <p className="text-[11px] leading-snug text-slate-500">
+        Claude picks 5 product keywords for this niche, AutoPilot searches CJ for each and ranks the results by Winning
+        Score. Uses your price, seller, profit and US warehouse filters.
+      </p>
+    </div>
+  );
 }
 
 function queryFor(filters: Filters) {
@@ -260,9 +329,12 @@ export function WinningProducts() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const closeModal = useCallback(() => setOpenItem(null), []);
 
+  const [niche, setNiche] = useState<string>(NICHES[0].name);
+
   // Saved filters live in localStorage, which only exists after mount.
   useEffect(() => {
     setFilters(loadFilters()); // eslint-disable-line react-hooks/set-state-in-effect
+    setNiche(loadNiche());
   }, []);
 
   useEffect(() => {
@@ -303,6 +375,39 @@ export function WinningProducts() {
   useEffect(() => {
     if (filters) void load(filters); // eslint-disable-line react-hooks/set-state-in-effect
   }, [filters, load]);
+
+  // Shares requestId with load(): whichever was started last fills the feed.
+  async function suggest() {
+    if (!filters) return;
+    const id = ++requestId.current;
+    const chosen = niche;
+    saveNiche(chosen);
+    setFeed({ status: "loading", suggesting: chosen });
+    try {
+      const params = new URLSearchParams(queryFor(filters));
+      params.delete("category");
+      params.delete("limit");
+      params.set("niche", chosen);
+      const res = await fetch(`/api/source/auto-suggest?${params}`);
+      const body = await res.json().catch(() => null);
+      if (id !== requestId.current) return;
+      if (!res.ok || !body?.ok) {
+        setFeed({ status: "error", suggesting: chosen, message: body?.error ?? `Couldn't find suggestions (HTTP ${res.status}).` });
+        return;
+      }
+      setFeed({
+        status: "done",
+        products: body.products,
+        suggestion: { niche: body.niche, keywords: body.keywords, keywordSource: body.keywordSource, searches: body.searches },
+      });
+    } catch {
+      if (id === requestId.current) {
+        setFeed({ status: "error", suggesting: chosen, message: "Couldn't reach AutoPilot. Check your connection and try again." });
+      }
+    }
+  }
+
+  const suggesting = feed.status === "done" ? feed.suggestion?.niche : feed.suggesting;
 
   function apply(next: Filters) {
     saveFilters(next);
@@ -364,7 +469,13 @@ export function WinningProducts() {
 
   return (
     <div className="grid gap-5 lg:grid-cols-[260px_1fr]">
-      <aside className="lg:sticky lg:top-4 lg:self-start">
+      <aside className="space-y-3 lg:sticky lg:top-4 lg:self-start">
+        <NichePanel
+          niche={niche}
+          onNiche={setNiche}
+          onSuggest={() => void suggest()}
+          busy={feed.status === "loading" && Boolean(feed.suggesting)}
+        />
         <button
           type="button"
           onClick={() => setFiltersOpen((v) => !v)}
@@ -390,9 +501,13 @@ export function WinningProducts() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-slate-400" aria-live="polite">
             {feed.status === "done"
-              ? `${products.length} product${products.length === 1 ? "" : "s"}, ranked from CJ data`
+              ? feed.suggestion
+                ? `${products.length} suggested winner${products.length === 1 ? "" : "s"} for ${feed.suggestion.niche}, ranked from CJ data`
+                : `${products.length} product${products.length === 1 ? "" : "s"}, ranked from CJ data`
               : feed.status === "loading"
-                ? "Scoring CJ products…"
+                ? feed.suggesting
+                  ? `Asking Claude for ${feed.suggesting} keywords and searching CJ for each (about 15–30 seconds)…`
+                  : "Scoring CJ products…"
                 : ""}
           </p>
           <label className="flex items-center gap-2 text-sm text-slate-300">
@@ -411,6 +526,39 @@ export function WinningProducts() {
           </label>
         </div>
 
+        {feed.status === "done" && feed.suggestion ? (
+          <div className="ap-card space-y-2 rounded-2xl p-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-slate-400">
+                {feed.suggestion.keywordSource === "claude" ? "Claude's keywords:" : "Keywords:"}
+              </span>
+              {feed.suggestion.searches.map((s) => (
+                <span
+                  key={s.keyword}
+                  title={s.error ? `CJ search failed: ${s.error}` : `${s.found} CJ result${s.found === 1 ? "" : "s"}`}
+                  className={`rounded-full border px-2.5 py-0.5 text-xs ${
+                    s.error ? "border-red-400/40 text-red-300" : "border-white/15 text-slate-200"
+                  }`}
+                >
+                  {s.keyword} <span className="text-slate-500">· {s.error ? "failed" : s.found}</span>
+                </span>
+              ))}
+              <button
+                type="button"
+                onClick={() => filters && void load(filters)}
+                className="ml-auto text-xs font-semibold text-brand-400 hover:text-brand-500"
+              >
+                Back to feed
+              </button>
+            </div>
+            {feed.suggestion.keywordSource === "fallback" ? (
+              <p className="text-xs text-amber-200">
+                Claude wasn&apos;t available, so these are AutoPilot&apos;s standard keywords for this niche.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
         {feed.status === "loading" ? (
           <div className={GRID} aria-busy="true" aria-label="Loading products">
             {Array.from({ length: 10 }, (_, i) => (
@@ -425,16 +573,22 @@ export function WinningProducts() {
           <div className="ap-card rounded-2xl p-6 text-sm text-slate-300">
             <p>{feed.message}</p>
             {filters ? (
-              <button type="button" onClick={() => void load(filters)} className="mt-2 font-semibold text-brand-400 hover:text-brand-500">
+              <button
+                type="button"
+                onClick={() => void (feed.suggesting ? suggest() : load(filters))}
+                className="mt-2 font-semibold text-brand-400 hover:text-brand-500"
+              >
                 Try again
               </button>
             ) : null}
           </div>
         ) : products.length === 0 ? (
           <p className="ap-card rounded-2xl p-10 text-center text-sm text-slate-400">
-            {filters?.category
-              ? "No products found for this category. Try a different category or turn off the US warehouse filter."
-              : "No CJ products match these filters. Try a higher maximum sellers, a lower minimum profit, or another category."}
+            {suggesting
+              ? "No products found for these keywords. Try another niche, or loosen the filters (US warehouse, maximum sellers, minimum profit)."
+              : filters?.category
+                ? "No products found for this category. Try a different category or turn off the US warehouse filter."
+                : "No CJ products match these filters. Try a higher maximum sellers, a lower minimum profit, or another category."}
           </p>
         ) : (
           <div className={GRID}>

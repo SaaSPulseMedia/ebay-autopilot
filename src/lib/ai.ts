@@ -335,3 +335,77 @@ export async function generateListingCopy(input: ListingCopyInput): Promise<List
     return fallback;
   }
 }
+
+export const KEYWORD_COUNT = 5;
+
+const KEYWORD_SYSTEM_PROMPT = `You pick product search keywords for a US eBay dropshipping seller who sources from CJ Dropshipping.
+
+Given a product niche, return ${KEYWORD_COUNT} search keywords for specific physical products in that niche that are likely to sell well on eBay right now. Each keyword is what you would type into CJ's product search to find one product type.
+
+Rules:
+- Each keyword is 2 to 5 words, lowercase, plain English, naming one specific product type (for example "led cloud light", "cordless electric spin scrubber"), not a broad category ("home decor", "kitchen items").
+- Generic, unbranded products only. Never include brand names, trademarks, licensed characters, sports teams or celebrity names; eBay removes those listings.
+- Products a dropshipper can sell: small, light, inexpensive to ship, typically costing a supplier under about $30. No food, supplements, medicines, cosmetics that touch the eyes, weapons, adult products, hazardous batteries or anything needing certification.
+- Prefer products with visible appeal, a clear problem they solve, or giftability, and with room for a healthy margin.
+- All ${KEYWORD_COUNT} keywords must be different product types.`;
+
+const KEYWORDS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["keywords"],
+  properties: { keywords: { type: "array", items: { type: "string" } } },
+} as const;
+
+/** A usable CJ search keyword: 2–5 plain words, at most 50 characters. */
+function cleanKeyword(value: string) {
+  const keyword = value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const words = keyword.split(" ").filter(Boolean).length;
+  return words >= 2 && words <= 5 && keyword.length <= 50 ? keyword : "";
+}
+
+export type KeywordSuggestion = { keywords: string[]; source: "claude" | "fallback" };
+
+/**
+ * KEYWORD_COUNT CJ search keywords for a product niche, from Claude. Any
+ * Claude keyword that isn't usable is replaced from `fallback`; with no API
+ * key, or when the call fails, `fallback` is returned as is.
+ */
+export async function suggestNicheKeywords(niche: string, fallback: readonly string[]): Promise<KeywordSuggestion> {
+  const fromFallback = { keywords: fallback.slice(0, KEYWORD_COUNT), source: "fallback" as const };
+  if (!process.env.ANTHROPIC_API_KEY) return fromFallback;
+  client ??= new Anthropic({ timeout: 45_000, maxRetries: 1 });
+
+  try {
+    const response = await client.beta.messages.create({
+      model: MODEL,
+      max_tokens: 16000,
+      system: KEYWORD_SYSTEM_PROMPT,
+      // A short list from general product knowledge: low effort keeps the button quick.
+      output_config: { effort: "low", format: { type: "json_schema", schema: KEYWORDS_SCHEMA } },
+      ...(FALLBACK_MODELS.has(MODEL) ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
+      messages: [{ role: "user", content: `Product niche: ${niche}` }],
+    });
+    if (response.stop_reason !== "end_turn") {
+      console.warn(`[niche-keywords] Claude stopped with ${response.stop_reason}; using the fallback keywords.`);
+      return fromFallback;
+    }
+    const text = response.content.find((block) => block.type === "text");
+    if (!text || text.type !== "text") return fromFallback;
+    const parsed = JSON.parse(text.text) as { keywords: string[] };
+
+    const keywords = [...new Set(parsed.keywords.map(cleanKeyword).filter(Boolean))].slice(0, KEYWORD_COUNT);
+    if (!keywords.length) return fromFallback;
+    for (const extra of fallback) {
+      if (keywords.length >= KEYWORD_COUNT) break;
+      if (!keywords.includes(extra)) keywords.push(extra);
+    }
+    return { keywords, source: "claude" };
+  } catch (error) {
+    console.warn("[niche-keywords] Claude call failed; using the fallback keywords:", error instanceof Error ? error.message : error);
+    return fromFallback;
+  }
+}
