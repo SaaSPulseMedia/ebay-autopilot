@@ -1,7 +1,7 @@
 import "server-only";
 
 import { publishListing } from "@/lib/ebay/inventory";
-import { genderFromCategoryPath, standardizeShoeSizes } from "@/lib/ebay/shoe-sizes";
+import { defaultSizeValue, genderFromCategoryPath, standardizeSizes } from "@/lib/ebay/sizes";
 import { type CategoryAspect, resolveCategory } from "@/lib/ebay/taxonomy";
 import { type Variant, variationProblem } from "@/lib/variants";
 
@@ -40,10 +40,21 @@ export type PublishWithResolverResult =
       variations: number;
       /** Why the product's variants went out as a single listing, if they did. */
       variationFallback?: string;
-      /** Supplier sizes left out because the eBay footwear category has no matching size value. */
-      skippedSizes?: string[];
+      /** Size standardization in a size-constrained category (apparel, footwear). */
+      sizes?: SizeReport;
     }
   | { ok: false; step: "setup" | "item" | "offer" | "publish" | "category"; error: string };
+
+export type SizeReport = {
+  /** The category's size aspect, e.g. "Size" or "US Shoe Size". */
+  aspect: string;
+  /** eBay size values the listing went out with. */
+  published: string[];
+  /** Supplier sizes with no valid eBay value; their variants were left out. */
+  dropped: string[];
+  /** Set when no supplier size fit and eBay requires one: the stand-in value used. */
+  defaulted?: string;
+};
 
 /** Everything Else > Other: no required item specifics. */
 export const FALLBACK_CATEGORY_ID = "88433";
@@ -90,33 +101,32 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     );
   }
 
-  // Footwear categories accept only their standardized sizes (custom values are
-  // rejected): map each supplier size to the category's size list, and leave
-  // out variants whose size has no match.
+  // Size-constrained categories (apparel "Size", footwear "US Shoe Size", …)
+  // accept only their standardized values: map each supplier size to the
+  // category's list and leave out variants whose size has no match.
   let variants = input.variations ?? [];
   let variationFallback: string | undefined;
-  let skippedSizes: string[] = [];
-  const shoeSize = resolved.ok ? resolved.suggestion.shoeSize : null;
-  if (shoeSize && variants.length > 1) {
-    const plan = standardizeShoeSizes(variants, shoeSize, genderFromCategoryPath(categoryPath));
-    skippedSizes = plan.skipped;
-    if (skippedSizes.length) {
+  const sizeAspect = resolved.ok ? resolved.suggestion.sizeAspect : null;
+  // Enforced when eBay gives a list to check against; shoe sizes are also converted to US without one.
+  const sizeRule = sizeAspect && (sizeAspect.values.length || sizeAspect.kind === "shoe") ? sizeAspect : null;
+  let sizes: SizeReport | undefined;
+  /** The one supplier size a single listing goes out at, when exactly one matched. */
+  let matchedSize: string | undefined;
+  if (sizeRule && variants.length > 1) {
+    const plan = standardizeSizes(variants, sizeRule, genderFromCategoryPath(categoryPath));
+    sizes = { aspect: sizeRule.name, published: plan.mapped, dropped: plan.skipped };
+    if (plan.skipped.length) {
       console.warn(
-        `[ebay-sizes] sku ${input.sku}: no ${shoeSize.name} value in ${categoryId} matches supplier size(s) ${skippedSizes.join(", ")}; those variants are left out.`,
+        `[ebay-sizes] sku ${input.sku}: no ${sizeRule.name} value in ${categoryId} matches supplier size(s) ${plan.skipped.join(", ")}; those variants are left out.`,
       );
     }
     if (plan.variants.length < 2) {
       variationFallback = plan.variants.length
-        ? `only one of the supplier's sizes matches an eBay ${shoeSize.name}`
-        : `none of the supplier's sizes (${skippedSizes.join(", ")}) match an eBay ${shoeSize.name}`;
+        ? `only one of the supplier's sizes matches an eBay ${sizeRule.name}`
+        : `none of the supplier's sizes match an eBay ${sizeRule.name}`;
       console.warn(`[ebay-sizes] sku ${input.sku}: publishing as a single listing because ${variationFallback}.`);
-      // A single listing still needs a valid size: use the one size that matched, if there is exactly one.
-      const only = plan.variants[0]?.options[shoeSize.name];
-      if (only) aspects = { ...aspects, [shoeSize.name]: [only] };
-      else if (shoeSize.required && aspects[shoeSize.name]?.[0]) {
-        // eBay requires a size here and none of the supplier's maps, so the category default stands in.
-        variationFallback += `; eBay requires a ${shoeSize.name}, so the listing shows ${aspects[shoeSize.name][0]}: correct it in Seller Hub`;
-      }
+      // A single listing at the one size that matched.
+      matchedSize = plan.variants[0]?.options[sizeRule.name];
     }
     variants = plan.variants;
   }
@@ -138,6 +148,30 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     variants.length > 1 && !variationFallback
       ? variants.map((v) => ({ sku: v.sku, aspects: v.options, price: v.price, quantity: v.quantity, imageUrl: v.imageUrl }))
       : undefined;
+
+  // When the size doesn't vary (a single listing, or variations by Color only),
+  // the listing's own size value must still be one eBay accepts — never a
+  // generic default like "Other".
+  if (sizeRule && !variations?.some((v) => sizeRule.name in v.aspects)) {
+    if (matchedSize) {
+      aspects = { ...aspects, [sizeRule.name]: [matchedSize] };
+      sizes = { ...(sizes ?? { aspect: sizeRule.name, dropped: [] }), published: [matchedSize] };
+    } else if (sizeRule.required) {
+      // No supplier size to use (none given, or none matched): eBay still
+      // requires one, so stand in its "One Size" or first value, and say so.
+      const standIn = defaultSizeValue(sizeRule.values) ?? aspects[sizeRule.name]?.[0];
+      if (standIn) {
+        aspects = { ...aspects, [sizeRule.name]: [standIn] };
+        sizes = { ...(sizes ?? { aspect: sizeRule.name, dropped: [] }), published: [standIn], defaulted: standIn };
+        console.warn(
+          `[ebay-sizes] sku ${input.sku}: ${categoryId} requires a ${sizeRule.name} and no supplier size fits; using "${standIn}".`,
+        );
+      }
+    } else {
+      // Not required: leave the size off rather than send a value the supplier never gave.
+      aspects = Object.fromEntries(Object.entries(aspects).filter(([name]) => name !== sizeRule.name));
+    }
+  }
 
   const result = await publishListing({
     userId: input.userId,
@@ -165,6 +199,6 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     usedFallbackCategory: !resolved.ok,
     variations: result.variations ?? 1,
     variationFallback,
-    skippedSizes: skippedSizes.length ? skippedSizes : undefined,
+    sizes,
   };
 }

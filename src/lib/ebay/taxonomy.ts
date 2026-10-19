@@ -1,7 +1,7 @@
 import "server-only";
 
 import { ebayErrorMessage, ebayFetch, getAccessTokenForUser } from "@/lib/ebay/client";
-import { isFootwearPath } from "@/lib/ebay/shoe-sizes";
+import { isFootwearPath, type SizeAspectKind } from "@/lib/ebay/sizes";
 
 /**
  * Picks the eBay category for a product title and reports which item
@@ -25,14 +25,17 @@ export type CategorySuggestion = {
   /** Aspect names this category allows a multi-variation listing to vary by (e.g. Color, Size). */
   variationAspects: string[];
   /**
-   * Footwear categories only: the standardized shoe-size aspect (e.g. "US Shoe
-   * Size") with every value eBay accepts. eBay rejects custom size values there.
+   * The category's standardized size aspect ("US Shoe Size", "Size", …) with
+   * every value eBay accepts, or null when it has none. eBay rejects custom
+   * size values in these categories.
    */
-  shoeSize: ShoeSizeAspect | null;
+  sizeAspect: SizeAspect | null;
 };
 
-export type ShoeSizeAspect = {
+export type SizeAspect = {
   name: string;
+  /** "shoe": EU/UK sizes convert to US; "apparel": sizes match by name (S, M, XL…). */
+  kind: SizeAspectKind;
   required: boolean;
   enabledForVariations: boolean;
   /** All allowed values; empty when the aspect is free text with no list. */
@@ -84,20 +87,20 @@ function toAspect(aspect: NonNullable<AspectsResponse["aspects"]>[number]): Cate
 }
 
 /**
- * The category's shoe-size aspect, when it is a footwear category: "US Shoe
- * Size" first, else any "… Shoe Size", else a plain "Size" in a category whose
- * path is about shoes.
+ * The category's size aspect: "US Shoe Size" first, else any "… Shoe Size"
+ * (both shoe kind), else a plain "Size" (shoe kind when the category path is
+ * about footwear, apparel otherwise).
  */
-function shoeSizeAspect(response: AspectsResponse, path: string): ShoeSizeAspect | null {
+function sizeAspectOf(response: AspectsResponse, path: string): SizeAspect | null {
   const aspects = response.aspects ?? [];
   const named = (test: (name: string) => boolean) => aspects.find((a) => test((a.localizedAspectName ?? "").trim()));
-  const aspect =
-    named((n) => /^us shoe size/i.test(n)) ??
-    named((n) => /shoe size/i.test(n)) ??
-    (isFootwearPath(path) ? named((n) => /^size$/i.test(n)) : undefined);
+  const shoe = named((n) => /^us shoe size/i.test(n)) ?? named((n) => /shoe size/i.test(n));
+  const plain = shoe ? undefined : named((n) => n === "Size");
+  const aspect = shoe ?? plain;
   if (!aspect?.localizedAspectName) return null;
   return {
     name: aspect.localizedAspectName,
+    kind: shoe || isFootwearPath(path) ? "shoe" : "apparel",
     required: Boolean(aspect.aspectConstraint?.aspectRequired),
     enabledForVariations: Boolean(aspect.aspectConstraint?.aspectEnabledForVariations),
     values: (aspect.aspectValues ?? []).map((v) => v.localizedValue?.trim() ?? "").filter(Boolean),
@@ -140,7 +143,7 @@ export async function resolveCategory(userId: number, productTitle: string): Pro
       return { ok: false, error: ebayErrorMessage(aspectsResponse, "eBay did not return this category's item specifics.") };
     }
     const aspects = (aspectsResponse.aspects ?? []).map(toAspect).filter((a) => a.name);
-    const shoeSize = shoeSizeAspect(aspectsResponse, categoryPath(top));
+    const sizeAspect = sizeAspectOf(aspectsResponse, categoryPath(top));
     const variationAspects = (aspectsResponse.aspects ?? [])
       .filter((a) => a.aspectConstraint?.aspectEnabledForVariations && a.localizedAspectName)
       .map((a) => a.localizedAspectName as string);
@@ -154,7 +157,7 @@ export async function resolveCategory(userId: number, productTitle: string): Pro
         requiredAspects: aspects.filter((a) => a.required),
         optionalAspects: aspects.filter((a) => !a.required),
         variationAspects,
-        shoeSize,
+        sizeAspect,
       },
       alternatives: rest.slice(0, MAX_ALTERNATIVES).map((s) => ({
         categoryId: s.category?.categoryId ?? "",

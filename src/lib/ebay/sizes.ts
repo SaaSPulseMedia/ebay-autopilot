@@ -1,7 +1,8 @@
 /**
- * Maps supplier shoe sizes ("EU 42", "42", "US 9", "9.5") to the standardized
- * size values an eBay footwear category accepts (e.g. its "US Shoe Size"
- * list). eBay rejects custom size values in these categories. Pure: no I/O.
+ * Maps supplier sizes to the standardized size values an eBay category
+ * accepts: shoe sizes ("EU 42", "42", "US 9") to footwear lists such as "US
+ * Shoe Size", and apparel sizes ("M", "XXL", "Free Size") to apparel "Size"
+ * lists. eBay rejects custom size values in these categories. Pure: no I/O.
  */
 
 export type ShoeGender = "men" | "women" | "kids";
@@ -66,6 +67,19 @@ export function toUsSize(raw: string, gender: ShoeGender): number | null {
   return null;
 }
 
+/**
+ * Slippers and sandals are often sized as a range of two adjacent sizes
+ * ("36-37", "EU 38/39"): such a range is listed at its lower size. Wider or
+ * odd ranges return null.
+ */
+function lowerOfRange(raw: string): string | null {
+  const match = raw.trim().match(/^(\D*?)\s*(\d+(?:\.\d+)?)\s*[-/~]\s*(\d+(?:\.\d+)?)\s*(\D*)$/);
+  if (!match) return null;
+  const [, prefix, lo, hi, suffix] = match;
+  const gap = Number(hi) - Number(lo);
+  return gap > 0 && gap <= 1 ? `${prefix}${lo}${suffix}`.trim() : null;
+}
+
 /** "9" for 9, "9.5" for 9.5 — how eBay writes US shoe sizes. */
 function formatUs(n: number) {
   return Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10);
@@ -77,7 +91,7 @@ function formatUs(n: number) {
  * With no allowed list (a free-text aspect) the US size itself is used.
  */
 export function mapToEbayShoeSize(raw: string, allowed: string[], gender: ShoeGender): string | null {
-  const us = toUsSize(raw, gender);
+  const us = toUsSize(lowerOfRange(raw) ?? raw, gender);
   if (us == null) return null;
   if (!allowed.length) return formatUs(us);
 
@@ -92,11 +106,60 @@ export function mapToEbayShoeSize(raw: string, allowed: string[], gender: ShoeGe
   return best?.value ?? null;
 }
 
+/** A category's standardized size aspect. "shoe" sizes convert EU/UK → US; "apparel" sizes match by name. */
+export type SizeAspectKind = "shoe" | "apparel";
+
+const ONE_SIZE = /^(ONESIZE|ONESIZEFITSALL|ONESIZEFITSMOST|OSFA|OSFM|OS|FREESIZE|FREE|UNIVERSAL|ADJUSTABLE)$/;
+
+/**
+ * One spelling per apparel size, so supplier and eBay values compare equal:
+ * "Small"/"s" → "S", "XXL"/"2X-Large" → "2XL", "Free Size"/"One Size" → "ONESIZE".
+ */
+export function canonicalApparelSize(raw: string) {
+  let v = raw.trim().toUpperCase().replace(/[\s_.-]+/g, "");
+  v = v.replace(/^EXTRA/, "X").replace(/XLARGE$/, "XL").replace(/XSMALL$/, "XS");
+  const words: Record<string, string> = { SMALL: "S", MEDIUM: "M", LARGE: "L", XLARGE: "XL" };
+  if (words[v]) v = words[v];
+  // XXL / XXXL / XXS → 2XL / 3XL / 2XS (eBay uses both spellings across categories).
+  const xs = v.match(/^(X{2,6})(L|S)$/);
+  if (xs) v = `${xs[1].length}X${xs[2]}`;
+  return ONE_SIZE.test(v) ? "ONESIZE" : v;
+}
+
+/**
+ * The eBay value for one supplier size, or null when the category's list has
+ * no match: exact (case-insensitive) first, then the same size spelled
+ * differently, then — for shoe sizes — the EU/UK → US conversion.
+ * An empty allowed list (free-text aspect) only happens for shoes here, where
+ * the converted US size is used.
+ */
+export function mapSizeValue(
+  raw: string,
+  aspect: { kind: SizeAspectKind; values: string[] },
+  gender: ShoeGender,
+): string | null {
+  const value = raw.trim();
+  if (!value) return null;
+  const exact = aspect.values.find((v) => v.trim().toLowerCase() === value.toLowerCase());
+  if (exact) return exact;
+  const canonical = canonicalApparelSize(value);
+  const alias = aspect.values.find((v) => canonicalApparelSize(v) === canonical);
+  if (alias) return alias;
+  return aspect.kind === "shoe" ? mapToEbayShoeSize(value, aspect.values, gender) : null;
+}
+
+/** The value a single listing uses when the supplier gives no usable size: eBay's "One Size" if offered, else its first value. */
+export function defaultSizeValue(values: string[]) {
+  return values.find((v) => canonicalApparelSize(v) === "ONESIZE") ?? values[0] ?? null;
+}
+
 type SizedVariant = { options: Record<string, string> };
 
-export type ShoeSizePlan<T extends SizedVariant> = {
+export type SizePlan<T extends SizedVariant> = {
   /** Variants whose size mapped, with the size moved to the eBay aspect (e.g. "US Shoe Size": "8.5"). */
   variants: T[];
+  /** eBay size values the kept variants use, in order, no repeats. */
+  mapped: string[];
   /** Supplier sizes with no matching eBay value; those variants are left out. */
   skipped: string[];
 };
@@ -106,12 +169,13 @@ export type ShoeSizePlan<T extends SizedVariant> = {
  * aspect. Variants without a size option pass through unchanged; variants
  * whose size has no valid eBay value are dropped and reported in `skipped`.
  */
-export function standardizeShoeSizes<T extends SizedVariant>(
+export function standardizeSizes<T extends SizedVariant>(
   variants: T[],
-  aspect: { name: string; values: string[] },
+  aspect: { name: string; kind: SizeAspectKind; values: string[] },
   gender: ShoeGender,
-): ShoeSizePlan<T> {
+): SizePlan<T> {
   const kept: T[] = [];
+  const mapped = new Set<string>();
   const skipped = new Set<string>();
   for (const variant of variants) {
     const sizeKey = Object.keys(variant.options).find((key) => /size/i.test(key));
@@ -120,15 +184,16 @@ export function standardizeShoeSizes<T extends SizedVariant>(
       continue;
     }
     const raw = variant.options[sizeKey];
-    const mapped = mapToEbayShoeSize(raw, aspect.values, gender);
-    if (!mapped) {
+    const value = mapSizeValue(raw, aspect, gender);
+    if (!value) {
       skipped.add(raw);
       continue;
     }
+    mapped.add(value);
     const options = { ...variant.options };
     delete options[sizeKey];
-    options[aspect.name] = mapped;
+    options[aspect.name] = value;
     kept.push({ ...variant, options });
   }
-  return { variants: kept, skipped: [...skipped] };
+  return { variants: kept, mapped: [...mapped], skipped: [...skipped] };
 }

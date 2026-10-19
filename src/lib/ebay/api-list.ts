@@ -93,20 +93,29 @@ export async function publishViaApi(
   const where = result.usedFallbackCategory
     ? `Published to eBay under ${result.categoryPath} (category could not be matched)`
     : `Published to eBay in ${result.categoryPath}`;
-  const variants =
+  const report = result.sizes;
+  const sizeCount = report && result.variations > 1 ? report.published.length : 0;
+  // Size-constrained listings say how many sizes went out, and which were dropped.
+  let variants =
     result.variations > 1
-      ? ` with ${result.variations} variations.`
+      ? sizeCount > 1
+        ? sizeCount === result.variations
+          ? ` with ${sizeCount} sizes.`
+          : ` with ${result.variations} variations (${sizeCount} sizes).`
+        : ` with ${result.variations} variations.`
       : result.variationFallback
         ? `. Note: published as a single listing without variations because ${result.variationFallback}.`
         : ".";
-  // Only worth saying when some sizes did go out as variations; a fallback note already names them.
-  const sizes = result.skippedSizes?.length && result.variations > 1
-    ? ` Sizes left out because eBay has no matching standard size: ${result.skippedSizes.join(", ")}.`
-    : "";
+  if (report?.dropped.length) {
+    variants += ` ${report.dropped.length} size${report.dropped.length === 1 ? " was" : "s were"} unmapped and dropped (${report.dropped.join(", ")}).`;
+  }
+  if (report?.defaulted) {
+    variants += ` eBay requires a ${report.aspect} here and no supplier size fits, so the listing shows "${report.defaulted}": correct it in Seller Hub if that's wrong.`;
+  }
   return {
     engine: "api",
     status: "published",
-    message: `${where}${variants}${sizes}`,
+    message: `${where}${variants}`,
     variations: result.variations,
     itemId: result.listingId,
     title: draft.title,
