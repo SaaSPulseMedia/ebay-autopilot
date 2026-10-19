@@ -96,6 +96,7 @@ export function BulkLister({
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editingImages, setEditingImages] = useState<BulkProduct | null>(null);
+  const [deleting, setDeleting] = useState<BulkProduct | null>(null);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [summary, setSummary] = useState<BatchResponse | null>(null);
@@ -332,6 +333,20 @@ export function BulkLister({
                         {product.customImages ? " · custom" : ""}
                       </span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleting(product);
+                      }}
+                      title="Delete from catalog"
+                      aria-label={`Delete ${product.title} from catalog`}
+                      className="my-1 ml-1.5 inline-flex items-center rounded-full border border-white/15 p-1.5 text-slate-400 hover:border-red-400/50 hover:text-red-300"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-3.5 w-3.5" aria-hidden="true">
+                        <path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
                     <span className="block text-[11px] text-slate-500">
                       {product.category}
                       {product.veroRisk === "high" ? (
@@ -393,6 +408,90 @@ export function BulkLister({
           onChanged={() => router.refresh()}
         />
       ) : null}
+      {deleting ? (
+        <DeleteFromCatalog
+          product={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            setSelected((prev) => {
+              const next = new Set(prev);
+              next.delete(deleting.externalId);
+              return next;
+            });
+            setDeleting(null);
+            router.refresh();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function DeleteFromCatalog({
+  product,
+  onClose,
+  onDeleted,
+}: {
+  product: BulkProduct;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function confirmDelete() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/catalog/${encodeURIComponent(product.externalId)}`, { method: "DELETE" });
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (res.ok && data?.ok) return onDeleted();
+      setError(data?.error ?? "Could not delete this product. Try again.");
+    } catch {
+      setError("Could not reach the server. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={busy ? undefined : onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-catalog-title"
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-2xl border border-white/10 bg-navy-950 p-6 shadow-2xl"
+      >
+        <h2 id="delete-catalog-title" className="text-base font-semibold text-white">
+          Delete from catalog
+        </h2>
+        <p className="mt-1 truncate text-xs text-slate-500">{product.title}</p>
+        <p className="mt-4 text-sm text-slate-300">Delete this product from your catalog? This does not affect eBay listings.</p>
+        {error ? (
+          <p role="alert" className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+            {error}
+          </p>
+        ) : null}
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="rounded-full border border-white/15 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-white/5 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={confirmDelete}
+            disabled={busy}
+            className="rounded-full bg-red-500 px-4 py-2 text-sm font-semibold text-white hover:bg-red-400 disabled:opacity-50"
+          >
+            {busy ? "Deleting…" : "Delete"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
