@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { type AddState, SourceProductModal } from "@/components/dashboard/SourceProductModal";
 import { GRID, OriginDot, ProductImage } from "@/components/dashboard/SourceSearch";
@@ -278,18 +278,25 @@ export function WinningProducts() {
     };
   }, []);
 
+  // Only the latest request may update the feed (a category takes ~10 s, so
+  // an earlier Apply can finish after a later one).
+  const requestId = useRef(0);
   const load = useCallback(async (current: Filters) => {
+    const id = ++requestId.current;
     setFeed({ status: "loading" });
     try {
       const res = await fetch(`/api/source/winning-products?${queryFor(current)}`);
       const body = await res.json().catch(() => null);
+      if (id !== requestId.current) return;
       if (!res.ok || !body?.ok) {
         setFeed({ status: "error", message: body?.error ?? `Couldn't load products (HTTP ${res.status}).` });
         return;
       }
       setFeed({ status: "done", products: body.products });
     } catch {
-      setFeed({ status: "error", message: "Couldn't reach AutoPilot. Check your connection and try again." });
+      if (id === requestId.current) {
+        setFeed({ status: "error", message: "Couldn't reach AutoPilot. Check your connection and try again." });
+      }
     }
   }, []);
 
@@ -425,7 +432,9 @@ export function WinningProducts() {
           </div>
         ) : products.length === 0 ? (
           <p className="ap-card rounded-2xl p-10 text-center text-sm text-slate-400">
-            No CJ products match these filters. Try a higher maximum sellers, a lower minimum profit, or another category.
+            {filters?.category
+              ? "No products found for this category. Try a different category or turn off the US warehouse filter."
+              : "No CJ products match these filters. Try a higher maximum sellers, a lower minimum profit, or another category."}
           </p>
         ) : (
           <div className={GRID}>

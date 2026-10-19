@@ -179,7 +179,16 @@ export async function searchCjProducts(
 }
 
 /** A top-level CJ category and the lower-level category names under it. */
-export type CjCategory = { name: string; subcategoryNames: string[] };
+export type CjCategory = {
+  name: string;
+  subcategoryNames: string[];
+  /**
+   * Third-level category IDs (the only level CJ's product list filters by),
+   * interleaved across the second-level groups so the first few span the
+   * whole category.
+   */
+  subcategoryIds: string[];
+};
 
 const CATEGORY_TTL_MS = 24 * 60 * 60 * 1000;
 let categoryCache: { at: number; categories: CjCategory[] } | null = null;
@@ -205,11 +214,21 @@ export async function getCjCategories(): Promise<CjResult<CjCategory[]>> {
   const categories = tree
     .map((first): CjCategory => {
       const names = new Set<string>();
+      const groups: string[][] = [];
       for (const second of first.categoryFirstList ?? []) {
         if (str(second.categorySecondName)) names.add(str(second.categorySecondName));
-        for (const third of second.categorySecondList ?? []) if (str(third.categoryName)) names.add(str(third.categoryName));
+        const ids: string[] = [];
+        for (const third of second.categorySecondList ?? []) {
+          if (str(third.categoryName)) names.add(str(third.categoryName));
+          if (str(third.categoryId)) ids.push(str(third.categoryId));
+        }
+        if (ids.length) groups.push(ids);
       }
-      return { name: str(first.categoryFirstName), subcategoryNames: [...names] };
+      const subcategoryIds: string[] = [];
+      for (let i = 0; groups.some((g) => i < g.length); i += 1) {
+        for (const group of groups) if (i < group.length) subcategoryIds.push(group[i]);
+      }
+      return { name: str(first.categoryFirstName), subcategoryNames: [...names], subcategoryIds };
     })
     .filter((c) => c.name)
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -417,39 +436,67 @@ export type WinningProduct = CjSearchItem & Omit<WinningBreakdown, "parts"> & {
 
 /** CJ rows examined per feed request (one page; CJ's max page size). */
 const FEED_POOL = 200;
+/**
+ * With a category, CJ is asked for this many of its third-level categories
+ * (1–2 calls each, ~1.1 s apart), CATEGORY_POOL rows apiece.
+ */
+const CATEGORY_QUERIES = 5;
+const CATEGORY_POOL = 60;
 
 /**
  * The Winning Products feed: CJ products (no keyword) narrowed by price and
- * seller count at CJ, then scored with winningScore() and filtered by
- * category, profit and warehouse here. Two CJ calls (all + US warehouse), or
- * one with usOnly.
+ * seller count at CJ, then scored with winningScore() and filtered by profit
+ * and warehouse here. Without a category: two CJ calls (all + US warehouse),
+ * or one with usOnly. With a category, CJ is queried by up to CATEGORY_QUERIES
+ * of its third-level category IDs (the same one or two calls each), so the
+ * batch is fresh products from that category, not a filtered general feed.
  */
 export async function getWinningProducts(userId: number, filters: WinningFilters): Promise<CjResult<WinningProduct[]>> {
-  const narrow = new URLSearchParams({ pageNum: "1", pageSize: String(FEED_POOL) });
+  const narrow = new URLSearchParams({ pageNum: "1" });
   if (filters.minPrice != null) narrow.set("minPrice", String(filters.minPrice));
   if (filters.maxPrice != null) narrow.set("maxPrice", String(filters.maxPrice));
   if (filters.maxSellers != null) narrow.set("maxListedNum", String(filters.maxSellers));
 
-  const us = await cjGet(`/product/list?${narrow}&countryCode=US`);
-  const usRows = us.ok && Array.isArray((us.data as CjListData)?.list) ? ((us.data as CjListData)?.list ?? []) : [];
-  const usPids = us.ok ? new Set(usRows.map((r) => str(r.pid)).filter(Boolean)) : null;
-
-  let rows = usRows;
-  if (!filters.usOnly) {
-    const all = await cjGet(`/product/list?${narrow}`);
-    if (!all.ok) return all;
-    const allRows = (all.data as CjListData)?.list;
-    rows = Array.isArray(allRows) ? allRows : [];
-  } else if (!us.ok) {
-    return us;
-  }
-
-  let categoryNames: Set<string> | null = null;
+  // Each entry is one CJ query: no category (the general feed), or one of the
+  // chosen category's third-level IDs, so CJ returns products from that category.
+  let scopes: Array<{ categoryId?: string; pageSize: number }> = [{ pageSize: FEED_POOL }];
   if (filters.category) {
     const categories = await getCjCategories();
-    const selected = categories.ok ? categories.data.find((c) => c.name === filters.category) : undefined;
-    categoryNames = new Set([filters.category, ...(selected?.subcategoryNames ?? [])].map((n) => n.toLowerCase()));
+    if (!categories.ok) return categories;
+    const selected = categories.data.find((c) => c.name === filters.category);
+    if (!selected?.subcategoryIds.length) {
+      return { ok: false, error: `CJ has no category called "${filters.category}". Pick another category.`, status: 400 };
+    }
+    scopes = selected.subcategoryIds.slice(0, CATEGORY_QUERIES).map((categoryId) => ({ categoryId, pageSize: CATEGORY_POOL }));
   }
+
+  const rows: Array<Record<string, unknown>> = [];
+  const usPidSet = new Set<string>();
+  let usKnown = true;
+  for (const scope of scopes) {
+    const params = new URLSearchParams(narrow);
+    params.set("pageSize", String(scope.pageSize));
+    if (scope.categoryId) params.set("categoryId", scope.categoryId);
+
+    const us = await cjGet(`/product/list?${params}&countryCode=US`);
+    const usRows = us.ok && Array.isArray((us.data as CjListData)?.list) ? ((us.data as CjListData)?.list ?? []) : [];
+    if (us.ok) {
+      for (const r of usRows) if (str(r.pid)) usPidSet.add(str(r.pid));
+    } else {
+      usKnown = false;
+    }
+
+    if (filters.usOnly) {
+      if (!us.ok) return us;
+      rows.push(...usRows);
+      continue;
+    }
+    const all = await cjGet(`/product/list?${params}`);
+    if (!all.ok) return all;
+    const allRows = (all.data as CjListData)?.list;
+    rows.push(...(Array.isArray(allRows) ? allRows : []));
+  }
+  const usPids = usKnown ? usPidSet : null;
 
   const pids = rows.map((r) => str(r.pid)).filter(Boolean);
   const existing = pids.length
@@ -469,7 +516,6 @@ export async function getWinningProducts(userId: number, filters: WinningFilters
     if (!pid || seen.has(pid) || cost <= 0) continue;
     seen.add(pid);
     const category = str(row.categoryName);
-    if (categoryNames && !categoryNames.has(category.toLowerCase())) continue;
     const origin: CjSearchItem["origin"] = usPids ? (usPids.has(pid) ? "US" : "CN") : null;
     if (filters.usOnly && origin !== "US") continue;
     const listedNum = Math.round(num(row.listedNum));
@@ -495,7 +541,7 @@ export async function getWinningProducts(userId: number, filters: WinningFilters
 
   products.sort((a, b) => b.winningScore - a.winningScore || b.profit - a.profit);
   console.log(
-    `[cj-winning] pool=${rows.length} scored=${products.length} us=${usPids ? usPids.size : "n/a"} filters=${JSON.stringify(filters)}`,
+    `[cj-winning] queries=${scopes.length} pool=${rows.length} scored=${products.length} us=${usPids ? usPids.size : "n/a"} filters=${JSON.stringify(filters)}`,
   );
   return { ok: true, data: products.slice(0, filters.limit) };
 }

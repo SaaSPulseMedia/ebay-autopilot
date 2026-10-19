@@ -11,6 +11,8 @@ import { getWinningProducts } from "@/lib/cj/catalog";
  * Signed-in users only.
  */
 export const dynamic = "force-dynamic";
+// A category runs up to ~10 CJ calls spaced 1.1 s apart.
+export const maxDuration = 60;
 
 const DEFAULT_MAX_SELLERS = 20;
 
