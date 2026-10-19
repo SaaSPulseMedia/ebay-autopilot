@@ -3,6 +3,7 @@ import "server-only";
 import { suggestNicheKeywords } from "@/lib/ai";
 import { getCurrentUser } from "@/lib/auth";
 import { getKeywordWinners } from "@/lib/cj/catalog";
+import { applyMarketCheck } from "@/lib/market-check";
 import { findNiche } from "@/lib/niches";
 
 /**
@@ -10,18 +11,22 @@ import { findNiche } from "@/lib/niches";
  * picks 5 product keywords for the niche (5 fixed keywords per niche if it
  * can't), CJ is searched for each (up to 100 results apiece, see
  * searchCjKeywords), and the pooled, de-duplicated results come back ranked by
- * Winning Score (top 200).
+ * Winning Score (top 200). The top 30 are checked against eBay's market price
+ * like the feed (applyMarketCheck).
  * Takes the feed's filters too: minPrice, maxPrice, minMargin, maxSellers
  * (default 20), usOnly=1. Signed-in users only.
  */
 export const dynamic = "force-dynamic";
-// Claude, then 5 keywords × 2–4 CJ calls spaced 1.1 s apart.
+// Claude, then 5 keywords × 2–4 CJ calls spaced 1.1 s apart, then up to ~60 eBay lookups.
 export const maxDuration = 60;
 
 const DEFAULT_MAX_SELLERS = 20;
 const LIMIT = 200;
+/** Stop starting eBay market lookups after this long, so the request answers in time. */
+const MARKET_DEADLINE_MS = 52_000;
 
 export async function GET(request: Request) {
+  const started = Date.now();
   const user = await getCurrentUser();
   if (!user) return Response.json({ ok: false, error: "Sign in first." }, { status: 401 });
 
@@ -50,6 +55,7 @@ export async function GET(request: Request) {
       limit: LIMIT,
     });
     if (!result.ok) return Response.json({ ok: false, error: result.error }, { status: result.status });
+    const checked = await applyMarketCheck(result.data.products, { deadline: started + MARKET_DEADLINE_MS });
     return Response.json({
       ok: true,
       niche: niche.name,
@@ -58,7 +64,8 @@ export async function GET(request: Request) {
       searches: result.data.searches,
       pooled: result.data.pooled,
       hiddenByFilters: result.data.hiddenByFilters,
-      products: result.data.products,
+      market: checked.summary,
+      products: checked.products,
     });
   } catch (error) {
     console.error("[source] auto-suggest failed:", error instanceof Error ? error.message : error);

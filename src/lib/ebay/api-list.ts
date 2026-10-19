@@ -88,7 +88,9 @@ export async function publishViaApi(
 
   const result = await publishWithResolver(product);
   if (!result.ok) {
-    return { engine: "api", status: "error", message: `eBay ${result.step} step failed: ${result.error}`, itemId: null, title: draft.title };
+    // The market check is AutoPilot's own, so its warning is shown as written.
+    const message = result.step === "market" ? result.error : `eBay ${result.step} step failed: ${result.error}`;
+    return { engine: "api", status: "error", message, itemId: null, title: draft.title };
   }
   const where = result.usedFallbackCategory
     ? `Published to eBay under ${result.categoryPath} (category could not be matched)`

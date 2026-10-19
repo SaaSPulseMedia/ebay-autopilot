@@ -2,6 +2,7 @@ import "server-only";
 
 import { ensureMerchantLocation, fetchBusinessPolicies } from "@/lib/ebay/account";
 import { type EbayError, ebayErrorMessage, ebayFetch, getAccessTokenForUser } from "@/lib/ebay/client";
+import { marketPriceWarning } from "@/lib/ebay/market-price";
 
 export type PublishInput = {
   userId: number;
@@ -33,7 +34,12 @@ export type PublishVariation = {
   imageUrl?: string | null;
 };
 
-type PublishFailure = { ok: false; step: "setup" | "item" | "offer" | "publish"; error: string; details?: unknown };
+type PublishFailure = {
+  ok: false;
+  step: "market" | "setup" | "item" | "offer" | "publish";
+  error: string;
+  details?: unknown;
+};
 
 export type PublishResult =
   | { ok: true; offerId: string; listingId: string; variations?: number }
@@ -150,7 +156,15 @@ async function upsertOffer(token: string, sku: string, body: string): Promise<{ 
  * With two or more `variations` it publishes a multi-variation listing instead.
  */
 export async function publishListing(input: PublishInput): Promise<PublishResult> {
-  if (input.variations && input.variations.length > 1) return publishVariationListing(input, input.variations);
+  // 0. Market price: nothing is sent to eBay when the price is far above what
+  // the same item sells for there (it would never sell). For variations, the
+  // cheapest variant is the one a buyer compares.
+  const variations = input.variations && input.variations.length > 1 ? input.variations : null;
+  const askPrice = variations ? Math.min(...variations.map((v) => v.price)) : input.price;
+  const warning = await marketPriceWarning(input.title, askPrice);
+  if (warning) return { ok: false, step: "market", error: warning };
+
+  if (variations) return publishVariationListing(input, variations);
 
   const prepared = await prepareSeller(input.userId);
   if (!prepared.ok) return prepared;

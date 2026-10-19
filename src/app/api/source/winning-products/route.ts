@@ -2,21 +2,27 @@ import "server-only";
 
 import { getCurrentUser } from "@/lib/auth";
 import { getWinningProducts } from "@/lib/cj/catalog";
+import { applyMarketCheck } from "@/lib/market-check";
 
 /**
  * GET /api/source/winning-products — CJ products ranked by Winning Score
  * (margin, competition, US warehouse, recency; see src/lib/winning-score.ts).
  * Optional: category, minPrice, maxPrice, minMargin (minimum net profit in
  * USD), maxSellers (default 20), usOnly=1, limit (default 24, max 60).
+ * The top 30 are then checked against eBay's market price (applyMarketCheck):
+ * below break-even they're dropped, below the suggested price scored down.
  * Signed-in users only.
  */
 export const dynamic = "force-dynamic";
-// A category runs up to ~10 CJ calls spaced 1.1 s apart.
+// A category runs up to ~10 CJ calls spaced 1.1 s apart, then up to ~60 eBay lookups.
 export const maxDuration = 60;
+/** Stop starting eBay market lookups after this long, so the request answers in time. */
+const MARKET_DEADLINE_MS = 50_000;
 
 const DEFAULT_MAX_SELLERS = 20;
 
 export async function GET(request: Request) {
+  const started = Date.now();
   const user = await getCurrentUser();
   if (!user) return Response.json({ ok: false, error: "Sign in first." }, { status: 401 });
 
@@ -43,7 +49,8 @@ export async function GET(request: Request) {
       limit,
     });
     if (!result.ok) return Response.json({ ok: false, error: result.error }, { status: result.status });
-    return Response.json({ ok: true, products: result.data });
+    const checked = await applyMarketCheck(result.data, { deadline: started + MARKET_DEADLINE_MS });
+    return Response.json({ ok: true, products: checked.products, market: checked.summary });
   } catch (error) {
     console.error("[source] winning products failed:", error instanceof Error ? error.message : error);
     return Response.json({ ok: false, error: "Couldn't load winning products. Try again in a moment." }, { status: 500 });

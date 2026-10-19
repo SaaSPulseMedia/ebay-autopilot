@@ -43,7 +43,7 @@ export type PublishWithResolverResult =
       /** Size standardization in a size-constrained category (apparel, footwear). */
       sizes?: SizeReport;
     }
-  | { ok: false; step: "setup" | "item" | "offer" | "publish" | "category"; error: string };
+  | { ok: false; step: "market" | "setup" | "item" | "offer" | "publish" | "category"; error: string };
 
 export type SizeReport = {
   /** The category's size aspect, e.g. "Size" or "US Shoe Size". */

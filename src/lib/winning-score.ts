@@ -1,4 +1,4 @@
-import { netProfitFor, priceForEbay } from "@/lib/pricing";
+import { EBAY_FINAL_VALUE_FEE, EBAY_FIXED_FEE, netProfitFor, priceForEbay } from "@/lib/pricing";
 
 /**
  * Winning Score: how promising a CJ product looks to list on eBay, from CJ
@@ -86,6 +86,62 @@ export function winningScore(input: WinningInput, now = Date.now()): WinningBrea
       recency: Math.round(parts.recency * 100) / 100,
     },
   };
+}
+
+/**
+ * What similar items sell for on eBay right now (average of the top active
+ * fixed-price listings, item + shipping) and what that means for this product:
+ *   good    — the market is at or above AutoPilot's suggested price;
+ *   low     — between break-even and the suggested price: sellable, but only
+ *             cheaper than planned, so the Winning Score is cut;
+ *   too_low — below break-even (cost + shipping + eBay fees): every sale at
+ *             market price loses money, so the product is dropped.
+ */
+export type MarketInfo = {
+  status: "good" | "low" | "too_low";
+  average: number;
+  /** Listings averaged. */
+  count: number;
+  /** The eBay search used. */
+  query: string;
+  /** The lowest price that doesn't lose money after cost, shipping and eBay fees. */
+  breakeven: number;
+  /** Net profit per sale if listed at the market average. */
+  profitAtMarket: number;
+  /** Winning Score before the market adjustment. */
+  scoreBefore: number;
+};
+
+/** Break-even list price: cost + shipping + eBay's fixed and final value fees. */
+export function breakevenPrice(cost: number, shipping: number) {
+  return Math.round(((cost + shipping + EBAY_FIXED_FEE) / (1 - EBAY_FINAL_VALUE_FEE)) * 100) / 100;
+}
+
+/** At break-even a "low" product keeps this share of its score, rising to all of it at the suggested price. */
+const LOW_MARKET_FLOOR = 0.4;
+
+export function marketAdjustment(
+  input: { cost: number; shipping: number; suggestedPrice: number; winningScore: number },
+  market: { average: number; count: number; query: string },
+): { winningScore: number; market: MarketInfo } {
+  const breakeven = breakevenPrice(input.cost, input.shipping);
+  const base = {
+    average: Math.round(market.average * 100) / 100,
+    count: market.count,
+    query: market.query,
+    breakeven,
+    profitAtMarket: netProfitFor(market.average, input.cost, input.shipping),
+    scoreBefore: input.winningScore,
+  };
+  if (market.average < breakeven) {
+    return { winningScore: 0, market: { ...base, status: "too_low" } };
+  }
+  if (market.average < input.suggestedPrice) {
+    const room = (market.average - breakeven) / Math.max(0.01, input.suggestedPrice - breakeven);
+    const factor = LOW_MARKET_FLOOR + (1 - LOW_MARKET_FLOOR) * clamp01(room);
+    return { winningScore: Math.round(input.winningScore * factor), market: { ...base, status: "low" } };
+  }
+  return { winningScore: input.winningScore, market: { ...base, status: "good" } };
 }
 
 /** CJ sends dates as ISO strings, "YYYY-MM-DD HH:mm:ss", or epoch milliseconds. */

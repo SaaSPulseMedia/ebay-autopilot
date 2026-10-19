@@ -45,7 +45,10 @@ type Suggestion = {
 type FeedState =
   | { status: "loading"; suggesting?: string }
   | { status: "error"; message: string; suggesting?: string }
-  | { status: "done"; products: WinningProduct[]; suggestion?: Suggestion };
+  | { status: "done"; products: WinningProduct[]; suggestion?: Suggestion; market?: MarketSummary };
+
+/** What the eBay market check did to this batch (see src/lib/market-check.ts). */
+type MarketSummary = { checked: number; dropped: number; penalized: number; skipped: number };
 
 /** Auto-list progress for one product. */
 type ListState =
@@ -180,6 +183,35 @@ function ScoreBadge({ product }: { product: WinningProduct }) {
       {product.winningScore}
       <span className="sr-only"> out of 100 Winning Score</span>
     </span>
+  );
+}
+
+const MARKET_LABEL = { good: "Good", low: "Low", too_low: "Too Low" } as const;
+const MARKET_TONE = { good: "text-lime-brand", low: "text-amber-300", too_low: "text-red-300" } as const;
+
+/** "eBay Market: $45.00 (Good)": what similar items sell for on eBay now (see src/lib/market-check.ts). */
+function MarketLine({ product }: { product: WinningProduct }) {
+  const market = product.market;
+  if (market === undefined) return null;
+  if (market === null) {
+    return (
+      <p className="mt-0.5 text-[11px] text-slate-500" title="eBay had too few matching listings to compare prices.">
+        eBay Market: not enough listings
+      </p>
+    );
+  }
+  const title = [
+    `Average of ${market.count} active eBay listings (item + shipping) for "${market.query}".`,
+    `Break-even ${money(market.breakeven)}, our price ${money(product.suggestedPrice)}.`,
+    `Profit at market price: ${money(market.profitAtMarket)}.`,
+    market.status === "low" ? `Winning Score lowered from ${market.scoreBefore}.` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <p className={`mt-0.5 text-[11px] font-medium ${MARKET_TONE[market.status]}`} title={title}>
+      eBay Market: {money(market.average)} ({MARKET_LABEL[market.status]})
+    </p>
   );
 }
 
@@ -367,7 +399,7 @@ export function WinningProducts() {
         setFeed({ status: "error", message: body?.error ?? `Couldn't load products (HTTP ${res.status}).` });
         return;
       }
-      setFeed({ status: "done", products: body.products });
+      setFeed({ status: "done", products: body.products, market: body.market });
     } catch {
       if (id === requestId.current) {
         setFeed({ status: "error", message: "Couldn't reach AutoPilot. Check your connection and try again." });
@@ -401,6 +433,7 @@ export function WinningProducts() {
       setFeed({
         status: "done",
         products: body.products,
+        market: body.market,
         suggestion: {
           niche: body.niche,
           keywords: body.keywords,
@@ -583,6 +616,22 @@ export function WinningProducts() {
           </div>
         ) : null}
 
+        {feed.status === "done" && feed.market && (feed.market.dropped > 0 || feed.market.penalized > 0) ? (
+          <p className="text-xs text-slate-400">
+            eBay market check on the top {feed.market.checked}:{" "}
+            {feed.market.dropped > 0 ? (
+              <span className="text-red-300">
+                {feed.market.dropped} removed (eBay sells {feed.market.dropped === 1 ? "it" : "them"} below break-even)
+              </span>
+            ) : null}
+            {feed.market.dropped > 0 && feed.market.penalized > 0 ? ", " : null}
+            {feed.market.penalized > 0 ? (
+              <span className="text-amber-300">{feed.market.penalized} scored down (eBay price below ours)</span>
+            ) : null}
+            .
+          </p>
+        ) : null}
+
         {feed.status === "loading" ? (
           <div className={GRID} aria-busy="true" aria-label="Loading products">
             {Array.from({ length: 10 }, (_, i) => (
@@ -661,6 +710,7 @@ export function WinningProducts() {
                       {product.listedNum.toLocaleString()} {product.listedNum === 1 ? "seller" : "sellers"} · {product.competition}{" "}
                       competition
                     </p>
+                    <MarketLine product={product} />
 
                     <div className="mt-auto pt-2">
                       {list?.status === "done" ? (

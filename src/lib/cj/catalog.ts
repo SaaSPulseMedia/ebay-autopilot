@@ -9,7 +9,7 @@ import { type CjProductFromApi, type CjVariantFromApi, mapCjProductToDraft, pars
 import { rankByRelevance } from "@/lib/cj/relevance";
 import { sanitizeCjDescription } from "@/lib/cj/sanitize";
 import { priceForEbay } from "@/lib/pricing";
-import { type WinningBreakdown, parseCjDate, winningScore } from "@/lib/winning-score";
+import { type MarketInfo, type WinningBreakdown, parseCjDate, winningScore } from "@/lib/winning-score";
 
 /**
  * CJ sourcing for the dashboard: keyword search and one-click import into
@@ -533,6 +533,11 @@ export type WinningProduct = CjSearchItem & Omit<WinningBreakdown, "parts"> & {
   scoreParts: WinningBreakdown["parts"];
   /** When CJ added the product (ISO), if CJ says. */
   addedAt: string | null;
+  /**
+   * eBay market check (see src/lib/market-check.ts): undefined when it wasn't
+   * checked, null when eBay had too few matching listings to judge.
+   */
+  market?: MarketInfo | null;
 };
 
 /** CJ rows examined per feed request (one page; CJ's max page size). */

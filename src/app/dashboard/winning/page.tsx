@@ -21,8 +21,9 @@ export default async function WinningPage() {
         <p className="mt-1 max-w-3xl text-sm text-slate-400">
           CJ products ranked by <span className="text-white">Winning Score</span>{" "}
           (0–100): 40% profit per sale at the suggested eBay
-          price after fees, 30% low competition, 20% ships from CJ&apos;s US warehouse, 10% recently added. Scores use CJ
-          data only; eBay sold-item data isn&apos;t available to AutoPilot yet. Want to search by keyword instead?{" "}
+          price after fees, 30% low competition, 20% ships from CJ&apos;s US warehouse, 10% recently added. The top 30
+          are then checked against what similar items sell for on eBay right now: products eBay sells below break-even
+          are removed, and ones priced under ours are scored down. Want to search by keyword instead?{" "}
           <Link href="/dashboard/source" className="font-semibold text-brand-400 hover:text-brand-500">
             Source →
           </Link>
