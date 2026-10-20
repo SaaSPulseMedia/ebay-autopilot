@@ -41,6 +41,7 @@ export async function resolveListingPrice(
     shipping: product.shippingCost,
     suggested: product.suggestedPrice,
     market,
+    adRatePct: defaults.adRatePct,
   });
   if (match.rule === "market") {
     return { listPrice: match.listPrice, rule: "market", freeShipping: true, market: match.market };

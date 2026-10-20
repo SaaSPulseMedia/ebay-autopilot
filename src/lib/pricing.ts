@@ -86,13 +86,20 @@ export type MarketMatch =
 
 /**
  * The market-match pricing rule. With free shipping the seller pays shipping,
- * so profit at market = market − eBay fees (13.55% + $0.40) − CJ cost −
- * shipping. At least $3 → list at market + $3 (capped at the Market Guard's
+ * so profit at market = market − eBay fees (13.55% + $0.40 + the Promoted
+ * Listings ad rate) − CJ cost − shipping. At least $3 → list at market + $3 (capped at the Market Guard's
  * 20% above market, so the guard never blocks its own price) with free
  * shipping. Otherwise, or without a market price, fall back to AutoPilot's
  * suggested price (cost + ~23% margin) and the seller's normal shipping.
  */
-export function marketMatchPrice(input: { cost: number; shipping: number; suggested: number; market: number | null }): MarketMatch {
+export function marketMatchPrice(input: {
+  cost: number;
+  shipping: number;
+  suggested: number;
+  market: number | null;
+  /** Promoted Listings ad rate (%), charged on each sale like the final value fee. */
+  adRatePct?: number;
+}): MarketMatch {
   const fallback = (reason: string, profitAtMarket: number | null): MarketMatch => ({
     rule: "default",
     listPrice: input.suggested,
@@ -102,7 +109,7 @@ export function marketMatchPrice(input: { cost: number; shipping: number; sugges
   });
   if (input.market == null || !(input.market > 0)) return fallback("no eBay market price found", null);
 
-  const profitAtMarket = cents(input.market - ebayFees(input.market) - input.cost - input.shipping);
+  const profitAtMarket = cents(input.market - ebayFees(input.market, input.adRatePct ?? 0) - input.cost - input.shipping);
   if (profitAtMarket < MARKET_MATCH_MIN_PROFIT) {
     const atMarket =
       profitAtMarket < 0 ? `a $${Math.abs(profitAtMarket).toFixed(2)} loss` : `only $${profitAtMarket.toFixed(2)} profit`;

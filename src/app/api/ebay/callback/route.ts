@@ -10,6 +10,7 @@ import { verifyPurposeToken } from "@/lib/auth";
 import { encryptSecret } from "@/lib/crypto";
 import { ensureMerchantLocation } from "@/lib/ebay/account";
 import {
+  EBAY_SCOPES,
   EBAY_STATE_COOKIE,
   EBAY_STATE_PURPOSE,
   exchangeCodeForTokens,
@@ -68,6 +69,10 @@ export async function GET(request: Request) {
     accessToken: encryptSecret(result.tokens.accessToken),
     refreshToken: result.tokens.refreshToken ? encryptSecret(result.tokens.refreshToken) : null,
     tokenExpiresAt: result.tokens.accessTokenExpiresAt,
+    // What this connection was granted, so token refreshes ask for no more.
+    scopes: EBAY_SCOPES.join(" "),
+    // A new connection may be a different eBay account: find or create its own campaign.
+    promoCampaignId: null,
     connectedAt: new Date(),
   };
 

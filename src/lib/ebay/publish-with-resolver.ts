@@ -1,6 +1,7 @@
 import "server-only";
 
 import { publishListing } from "@/lib/ebay/inventory";
+import type { PromotionResult } from "@/lib/ebay/promoted";
 import { defaultSizeValue, genderFromCategoryPath, standardizeSizes } from "@/lib/ebay/sizes";
 import { type CategoryAspect, resolveCategory } from "@/lib/ebay/taxonomy";
 import { type Variant, variationProblem } from "@/lib/variants";
@@ -44,6 +45,8 @@ export type PublishWithResolverResult =
       variationFallback?: string;
       /** Size standardization in a size-constrained category (apparel, footwear). */
       sizes?: SizeReport;
+      /** Promoted Listings (General) outcome. */
+      promotion?: PromotionResult;
     }
   | { ok: false; step: "market" | "setup" | "item" | "offer" | "publish" | "category"; error: string };
 
@@ -203,5 +206,6 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     variations: result.variations ?? 1,
     variationFallback,
     sizes,
+    promotion: result.promotion,
   };
 }

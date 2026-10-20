@@ -3,6 +3,7 @@ import "server-only";
 import { ensureFreeShippingPolicy, ensureMerchantLocation, fetchBusinessPolicies } from "@/lib/ebay/account";
 import { type EbayError, ebayErrorMessage, ebayFetch, getAccessTokenForUser } from "@/lib/ebay/client";
 import { marketPriceWarning } from "@/lib/ebay/market-price";
+import { type PromotionResult, promoteListing } from "@/lib/ebay/promoted";
 import { getListingDefaults } from "@/lib/seller-settings";
 
 export type PublishInput = {
@@ -48,7 +49,14 @@ type PublishFailure = {
 };
 
 export type PublishResult =
-  | { ok: true; offerId: string; listingId: string; variations?: number }
+  | {
+      ok: true;
+      offerId: string;
+      listingId: string;
+      variations?: number;
+      /** Promoted Listings (General) outcome; the listing is live either way. */
+      promotion?: PromotionResult;
+    }
   | PublishFailure;
 
 type Seller = {
@@ -171,10 +179,22 @@ async function upsertOffer(token: string, sku: string, body: string): Promise<{ 
 
 /**
  * Publishes one fixed-price listing through the Inventory API:
- * inventory item → offer → publish. Each step reports where it stopped.
- * With two or more `variations` it publishes a multi-variation listing instead.
+ * market price check → inventory item → offer → publish → Promoted Listings.
+ * Each step reports where it stopped. With two or more `variations` it
+ * publishes a multi-variation listing instead. Once live, the listing is
+ * added to Promoted Listings (General) at the seller's ad rate (4% by
+ * default); offers have no ad-rate field, so this goes through the Marketing
+ * API (see promoted.ts) and its outcome is reported, never fatal.
  */
 export async function publishListing(input: PublishInput): Promise<PublishResult> {
+  const published = await publishOnly(input);
+  if (!published.ok) return published;
+  const { adRatePct } = await getListingDefaults(input.userId);
+  const promotion = await promoteListing(input.userId, published.listingId, adRatePct);
+  return { ...published, promotion };
+}
+
+async function publishOnly(input: PublishInput): Promise<PublishResult> {
   // 0. Market price: nothing is sent to eBay when the price is far above what
   // the same item sells for there (it would never sell). For variations, the
   // cheapest variant is the one a buyer compares.

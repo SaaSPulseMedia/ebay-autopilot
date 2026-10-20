@@ -16,7 +16,8 @@ export type ListingDefaults = {
 export const DEFAULT_LISTING_DEFAULTS: ListingDefaults = {
   pricingMode: "suggested",
   markupPct: 40,
-  adRatePct: 0,
+  /** Promoted Listings (General) ad rate every published listing gets; 0 turns it off. */
+  adRatePct: 4,
   quantityPerVariant: 10,
   handlingDays: 2,
   descriptionFooter: "",

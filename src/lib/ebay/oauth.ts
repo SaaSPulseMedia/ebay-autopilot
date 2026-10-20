@@ -17,12 +17,24 @@ export const EBAY_STATE_COOKIE = "ap_ebay_state";
 /** Purpose claim of the signed token stored in that cookie. */
 export const EBAY_STATE_PURPOSE = "ebay-state";
 
-export const EBAY_SCOPES = [
+/** Lets AutoPilot add listings to Promoted Listings (Marketing API). */
+export const MARKETING_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.marketing";
+
+/** What stores connected before Promoted Listings were granted (their refreshes must ask for no more). */
+export const LEGACY_EBAY_SCOPES = [
   "https://api.ebay.com/oauth/api_scope",
   "https://api.ebay.com/oauth/api_scope/sell.inventory",
   "https://api.ebay.com/oauth/api_scope/sell.account",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
 ];
+
+/** Asked for on every new connection; saved with it (ebay_accounts.scopes). */
+export const EBAY_SCOPES = [...LEGACY_EBAY_SCOPES, MARKETING_SCOPE];
+
+/** The scopes a stored connection was granted (null = connected before scopes were saved). */
+export function grantedScopes(saved: string | null | undefined) {
+  return saved ? saved.split(" ").filter(Boolean) : LEGACY_EBAY_SCOPES;
+}
 
 export function ebayEnv() {
   return {
@@ -155,11 +167,13 @@ export function exchangeCodeForTokens(code: string) {
   );
 }
 
-/** Access tokens last about 2 hours; the refresh token gets a new one without the seller. */
-export function refreshAccessToken(refreshToken: string) {
-  return tokenRequest(
-    new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, scope: EBAY_SCOPES.join(" ") }),
-  );
+/**
+ * Access tokens last about 2 hours; the refresh token gets a new one without
+ * the seller. eBay refuses a refresh asking for scopes the seller never
+ * granted, so this asks for exactly the connection's own (see grantedScopes).
+ */
+export function refreshAccessToken(refreshToken: string, scopes: string[]) {
+  return tokenRequest(new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, scope: scopes.join(" ") }));
 }
 
 let appToken: { token: string; expiresAt: number } | null = null;

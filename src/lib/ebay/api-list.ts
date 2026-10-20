@@ -1,6 +1,7 @@
 import "server-only";
 
 import { isEbayConfigured } from "./oauth";
+import { promotionMessage } from "./promoted";
 import { type CatalogProductForPublish, publishWithResolver } from "./publish-with-resolver";
 import type { ListingDraft, ListingResult } from "./types";
 
@@ -115,10 +116,11 @@ export async function publishViaApi(
   if (report?.defaulted) {
     variants += ` eBay requires a ${report.aspect} here and no supplier size fits, so the listing shows "${report.defaulted}": correct it in Seller Hub if that's wrong.`;
   }
+  const promotion = promotionMessage(result.promotion);
   return {
     engine: "api",
     status: "published",
-    message: `${where}${variants}`,
+    message: promotion ? `${where}${variants} ${promotion}` : `${where}${variants}`,
     variations: result.variations,
     itemId: result.listingId,
     title: draft.title,

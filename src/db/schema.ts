@@ -58,6 +58,10 @@ export const ebayAccounts = pgTable("ebay_accounts", {
   returnPolicyId: text("return_policy_id"),
   /** Free-shipping fulfillment policy used by "Match eBay Market Price (Free Shipping)" (found or created by AutoPilot). */
   freeShippingPolicyId: text("free_shipping_policy_id"),
+  /** OAuth scopes granted at connection (space-separated); null = connected before these were saved. */
+  scopes: text("scopes"),
+  /** AutoPilot's Promoted Listings (General) campaign on this store, once created. */
+  promoCampaignId: text("promo_campaign_id"),
   connectedAt: timestamp("connected_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -188,7 +192,7 @@ export const sellerSettings = pgTable("seller_settings", {
     .references(() => users.id, { onDelete: "cascade" }),
   pricingMode: text("pricing_mode").notNull().default("suggested"), // 'suggested' | 'markup'
   markupPct: integer("markup_pct").notNull().default(40),
-  adRatePct: real("ad_rate_pct").notNull().default(0),
+  adRatePct: real("ad_rate_pct").notNull().default(4),
   quantityPerVariant: integer("quantity_per_variant").notNull().default(10),
   handlingDays: integer("handling_days").notNull().default(2),
   descriptionFooter: text("description_footer").notNull().default(""),

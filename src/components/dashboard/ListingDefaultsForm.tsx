@@ -137,7 +137,7 @@ export function ListingDefaultsForm({ initial }: { initial: ListingDefaults }) {
 
       <div className="grid gap-4 sm:grid-cols-3">
         <label className="block">
-          <span className={label}>Promoted listing ad rate (%)</span>
+          <span className={label}>Promoted Listings ad rate (%)</span>
           <input
             type="number"
             min={0}
@@ -147,7 +147,9 @@ export function ListingDefaultsForm({ initial }: { initial: ListingDefaults }) {
             onChange={(e) => set("adRatePct", Number(e.target.value))}
             className={field}
           />
-          <span className="mt-1 block text-[11px] text-slate-500">0 if you don&apos;t promote.</span>
+          <span className="mt-1 block text-[11px] text-slate-500">
+            Every listing is added to Promoted Listings (General) at this rate. 4% by default; 0 turns it off.
+          </span>
         </label>
         <label className="block">
           <span className={label}>Quantity per variant</span>

@@ -5,7 +5,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { ebayAccounts } from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
-import { isEbayConfigured, refreshAccessToken } from "@/lib/ebay/oauth";
+import { grantedScopes, isEbayConfigured, refreshAccessToken } from "@/lib/ebay/oauth";
 
 /** Refresh a little before eBay's expiry so a call never starts with a dying token. */
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
@@ -34,7 +34,7 @@ export async function getValidAccessToken(userId: number): Promise<string | null
   const refresh = decryptSecret(account.refreshToken);
   if (!refresh) return null;
 
-  const result = await refreshAccessToken(refresh);
+  const result = await refreshAccessToken(refresh, grantedScopes(account.scopes));
   if (!result.ok) {
     console.warn(`[ebay] token refresh failed for account ${account.id}: ${result.error}`);
     return null;
