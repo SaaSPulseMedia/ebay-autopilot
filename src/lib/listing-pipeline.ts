@@ -161,6 +161,8 @@ export type ListingSource = {
   details?: ProductFacts | null;
   /** Catalog product this listing came from (e.g. "cj-<pid>"), so orders can be traced back to the supplier. */
   externalId?: string;
+  /** Priced by Market Match: list with the seller's free-shipping policy. */
+  freeShipping?: boolean;
 };
 
 /** Distinct Color and Size values across the supplier's variants. */
@@ -229,6 +231,7 @@ export async function createListing(args: {
     imageUrls: source.images?.length ? source.images : undefined,
     quantity: variants.reduce((sum, variant) => sum + variant.quantity, 0),
     variations: variants.length > 1 ? variants : undefined,
+    ...(source.freeShipping ? { freeShipping: true } : {}),
   };
 
   const outcome = args.drip

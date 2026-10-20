@@ -47,9 +47,13 @@ export function netProfitFor(listPrice: number, cost: number, shipping = 0, adRa
   return priceBreakdown(listPrice, cost, shipping, adRatePct).profit;
 }
 
-/** Seller's pricing rule: AutoPilot's suggested price, or their own markup on cost + shipping. */
+/**
+ * Seller's pricing rule: AutoPilot's suggested price, or their own markup on
+ * cost + shipping. "market" needs an eBay lookup (see resolveListingPrice in
+ * src/lib/market-pricing.ts); here it gives its fallback, the suggested price.
+ */
 export function listPriceFor(
-  rule: { pricingMode: "suggested" | "markup"; markupPct: number },
+  rule: { pricingMode: "suggested" | "markup" | "market"; markupPct: number },
   cost: number,
   shipping: number,
   suggested: number,
@@ -68,6 +72,45 @@ export function priceForEbay(cost: number) {
   const target = (cost + shipping + EBAY_FIXED_FEE) / (1 - EBAY_FINAL_VALUE_FEE - 0.23);
   const suggested = Math.max(cost + 6, Math.round(target * 100) / 100);
   return { shipping, suggested: Math.round(suggested * 100) / 100 };
+}
+
+/** "Match eBay Market Price (Free Shipping)": profit per sale needed at market price, and the buffer added on top. */
+export const MARKET_MATCH_MIN_PROFIT = 3;
+export const MARKET_MATCH_BUFFER = 3;
+/** Must match the Market Guard's limit (src/lib/ebay/market-price.ts), or every match would be blocked. */
+export const MARKET_MATCH_MAX_ABOVE = 0.2;
+
+export type MarketMatch =
+  | { rule: "market"; listPrice: number; market: number; profitAtMarket: number }
+  | { rule: "default"; listPrice: number; market: number | null; profitAtMarket: number | null; reason: string };
+
+/**
+ * The market-match pricing rule. With free shipping the seller pays shipping,
+ * so profit at market = market − eBay fees (13.55% + $0.40) − CJ cost −
+ * shipping. At least $3 → list at market + $3 (capped at the Market Guard's
+ * 20% above market, so the guard never blocks its own price) with free
+ * shipping. Otherwise, or without a market price, fall back to AutoPilot's
+ * suggested price (cost + ~23% margin) and the seller's normal shipping.
+ */
+export function marketMatchPrice(input: { cost: number; shipping: number; suggested: number; market: number | null }): MarketMatch {
+  const fallback = (reason: string, profitAtMarket: number | null): MarketMatch => ({
+    rule: "default",
+    listPrice: input.suggested,
+    market: input.market,
+    profitAtMarket,
+    reason,
+  });
+  if (input.market == null || !(input.market > 0)) return fallback("no eBay market price found", null);
+
+  const profitAtMarket = cents(input.market - ebayFees(input.market) - input.cost - input.shipping);
+  if (profitAtMarket < MARKET_MATCH_MIN_PROFIT) {
+    const atMarket =
+      profitAtMarket < 0 ? `a $${Math.abs(profitAtMarket).toFixed(2)} loss` : `only $${profitAtMarket.toFixed(2)} profit`;
+    return fallback(`${atMarket} at the eBay market price`, profitAtMarket);
+  }
+  const ceiling = Math.floor(input.market * (1 + MARKET_MATCH_MAX_ABOVE) * 100) / 100;
+  const listPrice = cents(Math.min(input.market + MARKET_MATCH_BUFFER, ceiling));
+  return { rule: "market", listPrice, market: input.market, profitAtMarket };
 }
 
 export function competitionFor(sales: number): "low" | "medium" | "high" {

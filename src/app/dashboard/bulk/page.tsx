@@ -79,7 +79,11 @@ export default async function BulkPage() {
         <p className="mt-3 text-xs text-slate-400">
           Prices use{" "}
           <span className="text-white">
-            {defaults.pricingMode === "markup" ? `your ${defaults.markupPct}% markup` : "AutoPilot's suggested price"}
+            {defaults.pricingMode === "market"
+              ? "Match eBay Market Price (Free Shipping) where it leaves $3+ profit, otherwise AutoPilot's suggested price"
+              : defaults.pricingMode === "markup"
+                ? `your ${defaults.markupPct}% markup`
+                : "AutoPilot's suggested price"}
           </span>
           {defaults.adRatePct ? <> with a {defaults.adRatePct}% ad rate</> : null}.{" "}
           <Link href="/dashboard/settings" className="font-semibold text-brand-400 hover:text-brand-500">
@@ -102,6 +106,7 @@ export default async function BulkPage() {
 
       <BulkLister
         products={products}
+        marketMode={defaults.pricingMode === "market"}
         batchSize={limits.batchSize}
         activeListings={limits.activeListings}
         activeUsed={activeUsed}

@@ -7,7 +7,8 @@ import { cjExternalId, importCjProduct } from "@/lib/cj/catalog";
 import { isEbaySandbox } from "@/lib/ebay/oauth";
 import { planLimits } from "@/lib/limits";
 import { checkPlanCapacity, connectedAccessToken, createListing } from "@/lib/listing-pipeline";
-import { listPriceFor, netProfitFor } from "@/lib/pricing";
+import { resolveListingPrice } from "@/lib/market-pricing";
+import { netProfitFor } from "@/lib/pricing";
 import { withUserImages } from "@/lib/product-images";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { getCatalogProduct } from "@/lib/suppliers";
@@ -56,7 +57,7 @@ export async function POST(request: Request) {
   }
 
   const defaults = await getListingDefaults(user.id);
-  const listPrice = listPriceFor(defaults, product.supplierPrice, product.shippingCost, product.suggestedPrice);
+  const { listPrice, freeShipping } = await resolveListingPrice(defaults, product);
   const profit = netProfitFor(listPrice, product.supplierPrice, product.shippingCost, defaults.adRatePct);
   if (profit <= 0) {
     return Response.json(
@@ -84,6 +85,7 @@ export async function POST(request: Request) {
       variants: product.variants,
       details: product.details,
       externalId: product.externalId,
+      freeShipping,
     },
     requested: "api",
     accessToken,

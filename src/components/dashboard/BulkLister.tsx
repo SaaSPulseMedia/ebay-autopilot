@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 
 import { BatchSummary, DripToggle, type BatchResponse } from "@/components/dashboard/BatchControls";
 import { ImageManager } from "@/components/dashboard/ImageManager";
@@ -28,7 +28,17 @@ export type BulkProduct = {
   customImages: boolean;
   /** False for the shared sample products, which no seller can delete. */
   deletable: boolean;
+  /** Market Match result (only with that pricing rule; filled in after the page loads). */
+  pricing?: PricingNote;
 };
+
+/** Which pricing rule a product gets under "Match eBay Market Price (Free Shipping)". */
+type PricingNote = { rule: "market" | "default"; market: number | null; reason?: string };
+
+type PricePreview = PricingNote & { externalId: string; listPrice: number; breakdown: Breakdown };
+
+/** Products asked for per /api/pricing/preview call (each needs an eBay lookup). */
+const PREVIEW_BATCH = 15;
 
 function BoxIcon({ className }: { className?: string }) {
   return (
@@ -73,8 +83,28 @@ function ProductThumb({ src }: { src: string | null }) {
   );
 }
 
+/** "Market Match" or "Default Margin" under a product, for the Market Match pricing rule. */
+function PricingRuleNote({ note }: { note?: PricingNote }) {
+  if (!note) return <span className="mt-0.5 block text-[11px] text-slate-500">Checking eBay market price…</span>;
+  if (note.rule === "market") {
+    return (
+      <span className="mt-0.5 block text-[11px] text-lime-brand" title="Priced at the eBay market + $3, with free shipping.">
+        Market Match · eBay ${note.market?.toFixed(2)} · free shipping
+      </span>
+    );
+  }
+  return (
+    <span className="mt-0.5 block text-[11px] text-slate-400" title="Suggested price (about 23% margin) with your normal shipping.">
+      Default Margin · {note.reason ?? "market price too low"}
+      {note.market != null ? ` (eBay $${note.market.toFixed(2)})` : ""}
+    </span>
+  );
+}
+
 type Props = {
   products: BulkProduct[];
+  /** Seller uses "Match eBay Market Price (Free Shipping)": prices are looked up after load. */
+  marketMode?: boolean;
   batchSize: number;
   activeListings: number;
   activeUsed: number;
@@ -86,7 +116,8 @@ type Props = {
 
 
 export function BulkLister({
-  products,
+  products: initialProducts,
+  marketMode = false,
   batchSize,
   activeListings,
   activeUsed,
@@ -104,6 +135,51 @@ export function BulkLister({
   const [summary, setSummary] = useState<BatchResponse | null>(null);
   const [drip, setDrip] = useState(false);
   const [openWhy, setOpenWhy] = useState<string | null>(null);
+  const [previews, setPreviews] = useState<Record<string, PricePreview>>({});
+
+  // Market Match needs each product's eBay market price: fetch it in batches
+  // after the page renders, so the list never waits on eBay.
+  useEffect(() => {
+    if (!marketMode) return;
+    let cancelled = false;
+    (async () => {
+      const ids = initialProducts.map((p) => p.externalId);
+      for (let i = 0; i < ids.length && !cancelled; i += PREVIEW_BATCH) {
+        try {
+          const res = await fetch("/api/pricing/preview", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ externalIds: ids.slice(i, i + PREVIEW_BATCH) }),
+          });
+          const body = (await res.json().catch(() => null)) as { ok?: boolean; prices?: PricePreview[] } | null;
+          if (cancelled || !body?.ok || !body.prices) continue;
+          const batch = body.prices;
+          setPreviews((prev) => ({ ...prev, ...Object.fromEntries(batch.map((p) => [p.externalId, p])) }));
+        } catch {
+          // Leave these rows on the fallback price; publishing prices them again anyway.
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [marketMode, initialProducts]);
+
+  const products = useMemo(
+    () =>
+      initialProducts.map((p) => {
+        const preview = previews[p.externalId];
+        return preview
+          ? {
+              ...p,
+              listPrice: preview.listPrice,
+              breakdown: preview.breakdown,
+              pricing: { rule: preview.rule, market: preview.market, reason: preview.reason },
+            }
+          : p;
+      }),
+    [initialProducts, previews],
+  );
 
   const visible = useMemo(
     () => (query ? products.filter((p) => p.title.toLowerCase().includes(query.toLowerCase())) : products),
@@ -367,6 +443,7 @@ export function BulkLister({
                         </span>
                       ) : null}
                     </span>
+                    {marketMode ? <PricingRuleNote note={product.pricing} /> : null}
                   </td>
                   <td className="px-4 py-3 text-right text-slate-300">${product.supplierPrice.toFixed(2)}</td>
                   <td className="px-4 py-3 text-right font-semibold text-white">${product.listPrice.toFixed(2)}</td>

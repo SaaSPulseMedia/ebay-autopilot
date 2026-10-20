@@ -14,6 +14,8 @@ export type ListingDraft = {
   quantity?: number;
   /** Real supplier variants; two or more are published as one multi-variation eBay listing. */
   variations?: Variant[];
+  /** Priced by "Match eBay Market Price (Free Shipping)": publish with the seller's free-shipping policy. */
+  freeShipping?: boolean;
 };
 
 export type ListingResult = {

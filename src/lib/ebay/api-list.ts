@@ -67,6 +67,7 @@ function toCatalogProduct(draft: ListingDraft, context?: ApiPublishContext): Cat
     price: draft.listPrice,
     quantity: draft.quantity && draft.quantity > 0 ? draft.quantity : 1,
     variations: draft.variations && draft.variations.length > 1 ? draft.variations : undefined,
+    freeShipping: draft.freeShipping === true,
   };
 }
 

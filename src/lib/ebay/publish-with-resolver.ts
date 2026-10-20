@@ -26,6 +26,8 @@ export type CatalogProductForPublish = {
   condition?: string;
   /** Real supplier variants; two or more publish as one multi-variation listing when the category allows. */
   variations?: Variant[];
+  /** Use the seller's free-shipping policy (market-match pricing). */
+  freeShipping?: boolean;
 };
 
 export type PublishWithResolverResult =
@@ -187,6 +189,7 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     aspects,
     condition: input.condition,
     variations,
+    freeShipping: input.freeShipping,
   });
   if (!result.ok) return { ok: false, step: result.step, error: result.error };
 

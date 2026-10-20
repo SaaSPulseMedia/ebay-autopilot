@@ -11,7 +11,13 @@ import {
   normalizeDefaults,
   type ListingDefaults,
 } from "@/lib/listing-defaults";
-import { listPriceFor, priceBreakdown, priceForEbay } from "@/lib/pricing";
+import {
+  MARKET_MATCH_BUFFER,
+  MARKET_MATCH_MIN_PROFIT,
+  listPriceFor,
+  priceBreakdown,
+  priceForEbay,
+} from "@/lib/pricing";
 
 const FOOTER_EXAMPLE = `Shipping: dispatched within 2 business days with tracking.
 Returns: 30-day returns accepted.
@@ -109,6 +115,24 @@ export function ListingDefaultsForm({ initial }: { initial: ListingDefaults }) {
             ) : null}
           </span>
         </label>
+        <label className="flex items-start gap-3 rounded-xl border border-white/10 p-3 text-sm">
+          <input
+            type="radio"
+            className="mt-1"
+            checked={values.pricingMode === "market"}
+            onChange={() => set("pricingMode", "market")}
+          />
+          <span>
+            <span className="block font-medium text-white">Match eBay Market Price (Free Shipping)</span>
+            <span className="block text-xs text-slate-400">
+              Looks up what the item sells for on eBay now. If you&apos;d still make at least $
+              {MARKET_MATCH_MIN_PROFIT.toFixed(2)} at that price after eBay fees, supplier cost and shipping, it lists at
+              the market price + ${MARKET_MATCH_BUFFER.toFixed(2)} (never more than 20% above it) with free shipping,
+              using a free-shipping policy AutoPilot sets up on your eBay account. Otherwise it uses the suggested price
+              (about 23% margin) and your normal shipping.
+            </span>
+          </span>
+        </label>
       </fieldset>
 
       <div className="grid gap-4 sm:grid-cols-3">
@@ -174,6 +198,12 @@ export function ListingDefaultsForm({ initial }: { initial: ListingDefaults }) {
 
       <div>
         <p className={label}>Example: a $20.00 supplier item with these settings</p>
+        {values.pricingMode === "market" ? (
+          <p className="text-[11px] text-slate-500">
+            With Market Match each price depends on that item&apos;s eBay market; this shows the fallback (suggested)
+            price. The Bulk list shows which rule each product gets.
+          </p>
+        ) : null}
         <div className="mt-1 max-w-md">
           <PriceBreakdown breakdown={exampleBreakdown} compact />
         </div>

@@ -1,8 +1,9 @@
 import "server-only";
 
-import { ensureMerchantLocation, fetchBusinessPolicies } from "@/lib/ebay/account";
+import { ensureFreeShippingPolicy, ensureMerchantLocation, fetchBusinessPolicies } from "@/lib/ebay/account";
 import { type EbayError, ebayErrorMessage, ebayFetch, getAccessTokenForUser } from "@/lib/ebay/client";
 import { marketPriceWarning } from "@/lib/ebay/market-price";
+import { getListingDefaults } from "@/lib/seller-settings";
 
 export type PublishInput = {
   userId: number;
@@ -18,6 +19,11 @@ export type PublishInput = {
   aspects?: Record<string, string[]>;
   /** eBay ConditionEnum, e.g. "NEW" (default) or "USED_EXCELLENT". */
   condition?: string;
+  /**
+   * List with the seller's free-shipping policy instead of their default one
+   * (the "Match eBay Market Price (Free Shipping)" rule priced it for that).
+   */
+  freeShipping?: boolean;
   /**
    * Two or more variants publish as one multi-variation listing (an inventory
    * item group keyed by `sku`). The caller checks the category allows them.
@@ -51,9 +57,22 @@ type Seller = {
   listingPolicies: { fulfillmentPolicyId: string; paymentPolicyId: string; returnPolicyId: string };
 };
 
-/** Business policies, merchant location and access token: everything a publish needs first. */
-async function prepareSeller(userId: number): Promise<{ ok: true; seller: Seller } | PublishFailure> {
+/**
+ * Business policies, merchant location and access token: everything a publish
+ * needs first. With `freeShipping`, the shipping policy is the seller's
+ * free-shipping one (found or created, see ensureFreeShippingPolicy).
+ */
+async function prepareSeller(userId: number, options: { freeShipping?: boolean } = {}): Promise<{ ok: true; seller: Seller } | PublishFailure> {
   const policies = await fetchBusinessPolicies(userId);
+  if (options.freeShipping && policies.paymentPolicyId && policies.returnPolicyId) {
+    const { handlingDays } = await getListingDefaults(userId);
+    const free = await ensureFreeShippingPolicy(userId, handlingDays);
+    if (!free.ok) {
+      // Priced for free shipping: listing it with paid shipping would overcharge, so stop instead.
+      return { ok: false, step: "setup", error: `Couldn't set up a free shipping policy on eBay: ${free.error}` };
+    }
+    policies.fulfillmentPolicyId = free.policyId;
+  }
   if (!policies.fulfillmentPolicyId || !policies.paymentPolicyId || !policies.returnPolicyId) {
     return {
       ok: false,
@@ -166,7 +185,7 @@ export async function publishListing(input: PublishInput): Promise<PublishResult
 
   if (variations) return publishVariationListing(input, variations);
 
-  const prepared = await prepareSeller(input.userId);
+  const prepared = await prepareSeller(input.userId, { freeShipping: input.freeShipping });
   if (!prepared.ok) return prepared;
   const { seller } = prepared;
   const { token } = seller;
@@ -256,7 +275,7 @@ async function eachInChunks<T, R extends { ok: boolean }>(items: T[], work: (ite
  * 4. publish_by_inventory_item_group, which creates the single eBay listing.
  */
 async function publishVariationListing(input: PublishInput, variations: PublishVariation[]): Promise<PublishResult> {
-  const prepared = await prepareSeller(input.userId);
+  const prepared = await prepareSeller(input.userId, { freeShipping: input.freeShipping });
   if (!prepared.ok) return prepared;
   const { seller } = prepared;
   const { token } = seller;

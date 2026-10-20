@@ -11,7 +11,8 @@ import {
   summarizeBatch,
   type ItemResult,
 } from "@/lib/listing-pipeline";
-import { listPriceFor, netProfitFor } from "@/lib/pricing";
+import { resolveListingPrice } from "@/lib/market-pricing";
+import { netProfitFor } from "@/lib/pricing";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { withUserImages } from "@/lib/product-images";
 import { getCatalog } from "@/lib/suppliers";
@@ -47,12 +48,13 @@ export async function POST(request: Request) {
 
   // Per-item VeRO gate: brand-name products are skipped, the rest of the batch still goes out.
   const blocked = found.filter((product) => product.veroRisk === "high");
-  const priced = found
-    .filter((product) => product.veroRisk !== "high")
-    .map((product) => {
-      const listPrice = listPriceFor(defaults, product.supplierPrice, product.shippingCost, product.suggestedPrice);
-      return { product, listPrice, profit: netProfitFor(listPrice, product.supplierPrice, product.shippingCost, defaults.adRatePct) };
-    });
+  // One at a time: Market Match pricing looks each product up on eBay (rate-limited, cached).
+  const priced = [];
+  for (const product of found.filter((p) => p.veroRisk !== "high")) {
+    const price = await resolveListingPrice(defaults, product);
+    const profit = netProfitFor(price.listPrice, product.supplierPrice, product.shippingCost, defaults.adRatePct);
+    priced.push({ product, listPrice: price.listPrice, freeShipping: price.freeShipping, profit });
+  }
   // Never publish something that loses money under the seller's own pricing rule.
   const losing = priced.filter((row) => row.profit <= 0);
   const selected = priced.filter((row) => row.profit > 0);
@@ -77,7 +79,7 @@ export async function POST(request: Request) {
   );
 
   results.push(
-    ...(await inChunks(selected, 5, ({ product, listPrice }) =>
+    ...(await inChunks(selected, 5, ({ product, listPrice, freeShipping }) =>
       createListing({
         userId: user.id,
         limits,
@@ -93,6 +95,7 @@ export async function POST(request: Request) {
           variants: product.variants,
           details: product.details,
           externalId: product.externalId,
+          freeShipping,
         },
         requested,
         accessToken,

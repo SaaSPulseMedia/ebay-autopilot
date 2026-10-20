@@ -2,6 +2,7 @@ import "server-only";
 
 import { ebayErrorMessage, ebayRequest } from "@/lib/ebay/client";
 import { getApplicationToken } from "@/lib/ebay/oauth";
+import { MARKET_MATCH_MAX_ABOVE } from "@/lib/pricing";
 
 /**
  * What a product sells for on eBay right now, from the Browse API's item
@@ -124,8 +125,8 @@ export async function getMarketPrice(title: string): Promise<MarketLookup> {
   return result;
 }
 
-/** Listings priced more than this far above the market average are blocked at publish. */
-export const MAX_ABOVE_MARKET = 0.2;
+/** Listings priced more than this far above the market average are blocked at publish (shared with market-match pricing). */
+export const MAX_ABOVE_MARKET = MARKET_MATCH_MAX_ABOVE;
 
 /**
  * Publish-time guard: an error message when `price` is more than 20% above

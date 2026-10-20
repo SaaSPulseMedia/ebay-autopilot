@@ -144,3 +144,94 @@ export async function ensureMerchantLocation(userId: number): Promise<MerchantLo
   }
   return { ok: true, locationKey: key };
 }
+
+type FullFulfillmentPolicies = {
+  fulfillmentPolicies?: Array<{
+    fulfillmentPolicyId?: string;
+    name?: string;
+    shippingOptions?: Array<{ optionType?: string; shippingServices?: Array<{ freeShipping?: boolean }> }>;
+  }>;
+};
+
+/** Name of the policy AutoPilot creates when the seller has no free-shipping policy. */
+export const FREE_SHIPPING_POLICY_NAME = "AutoPilot Free Shipping";
+
+/** A policy whose domestic shipping is free on every service it offers. */
+function isFreeShipping(policy: NonNullable<FullFulfillmentPolicies["fulfillmentPolicies"]>[number]) {
+  const domestic = (policy.shippingOptions ?? []).filter((o) => o.optionType === "DOMESTIC");
+  const services = domestic.flatMap((o) => o.shippingServices ?? []);
+  return services.length > 0 && services.every((s) => s.freeShipping === true);
+}
+
+export type FreeShippingPolicyResult = { ok: true; policyId: string; created: boolean } | { ok: false; error: string };
+
+/**
+ * The seller's free-shipping fulfillment policy, for listings priced with
+ * "Match eBay Market Price (Free Shipping)". In order: the one AutoPilot saved
+ * (if it still exists), any existing policy with free domestic shipping, or a
+ * new "AutoPilot Free Shipping" policy (USPS Priority, free to the buyer, the
+ * seller's handling time). The choice is saved on the seller's eBay account.
+ */
+export async function ensureFreeShippingPolicy(userId: number, handlingDays: number): Promise<FreeShippingPolicyResult> {
+  const token = await getAccessTokenForUser(userId);
+  if (!token) return { ok: false, error: "No eBay store connected. Connect your store in Settings." };
+
+  const listed = await ebayFetch<FullFulfillmentPolicies & EbayErrorBody>(`/sell/account/v1/fulfillment_policy?${MARKETPLACE}`, token);
+  if (listed.errors?.length) {
+    return { ok: false, error: ebayErrorMessage(listed, "Could not load your shipping policies from eBay.") };
+  }
+  const policies = listed.fulfillmentPolicies ?? [];
+  const [saved] = await db
+    .select({ id: ebayAccounts.freeShippingPolicyId })
+    .from(ebayAccounts)
+    .where(and(eq(ebayAccounts.userId, userId), eq(ebayAccounts.mode, "oauth")))
+    .limit(1);
+
+  const remember = async (policyId: string, created: boolean): Promise<FreeShippingPolicyResult> => {
+    if (saved?.id !== policyId) {
+      await db
+        .update(ebayAccounts)
+        .set({ freeShippingPolicyId: policyId })
+        .where(and(eq(ebayAccounts.userId, userId), eq(ebayAccounts.mode, "oauth")));
+    }
+    return { ok: true, policyId, created };
+  };
+
+  const savedPolicy = saved?.id ? policies.find((p) => p.fulfillmentPolicyId === saved.id) : undefined;
+  if (savedPolicy?.fulfillmentPolicyId && isFreeShipping(savedPolicy)) return remember(savedPolicy.fulfillmentPolicyId, false);
+  const existing =
+    policies.find((p) => p.name === FREE_SHIPPING_POLICY_NAME && isFreeShipping(p)) ?? policies.find(isFreeShipping);
+  if (existing?.fulfillmentPolicyId) return remember(existing.fulfillmentPolicyId, false);
+
+  const created = await ebayRequest<{ fulfillmentPolicyId?: string }>("/sell/account/v1/fulfillment_policy", token, {
+    method: "POST",
+    body: JSON.stringify({
+      name: FREE_SHIPPING_POLICY_NAME,
+      marketplaceId: "EBAY_US",
+      categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }],
+      handlingTime: { value: Math.max(1, handlingDays), unit: "DAY" },
+      shippingOptions: [
+        {
+          optionType: "DOMESTIC",
+          costType: "FLAT_RATE",
+          shippingServices: [
+            {
+              sortOrder: 1,
+              shippingCarrierCode: "USPS",
+              shippingServiceCode: "USPSPriority",
+              freeShipping: true,
+              buyerResponsibleForShipping: false,
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  const policyId = created.body.fulfillmentPolicyId;
+  if (!policyId) {
+    console.error(`[ebay-policies] user ${userId}: creating free shipping policy failed:`, JSON.stringify(created.body.errors));
+    return { ok: false, error: ebayErrorMessage(created.body, "eBay would not create a free shipping policy.") };
+  }
+  console.log(`[ebay-policies] user ${userId}: created free shipping policy ${policyId}`);
+  return remember(policyId, true);
+}

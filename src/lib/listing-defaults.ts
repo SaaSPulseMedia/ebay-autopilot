@@ -4,7 +4,8 @@
  */
 
 export type ListingDefaults = {
-  pricingMode: "suggested" | "markup";
+  /** "market": Match eBay Market Price (Free Shipping), see marketMatchPrice in src/lib/pricing.ts. */
+  pricingMode: "suggested" | "markup" | "market";
   markupPct: number;
   adRatePct: number;
   quantityPerVariant: number;
@@ -36,7 +37,7 @@ export function normalizeDefaults(input: Partial<Record<keyof ListingDefaults, u
   const d = DEFAULT_LISTING_DEFAULTS;
   const handling = Math.round(clamp(input.handlingDays, 0, 30, d.handlingDays));
   return {
-    pricingMode: input.pricingMode === "markup" ? "markup" : "suggested",
+    pricingMode: input.pricingMode === "markup" || input.pricingMode === "market" ? input.pricingMode : "suggested",
     markupPct: Math.round(clamp(input.markupPct, 0, 500, d.markupPct)),
     adRatePct: Math.round(clamp(input.adRatePct, 0, 30, d.adRatePct) * 10) / 10,
     quantityPerVariant: Math.round(clamp(input.quantityPerVariant, 1, 100, d.quantityPerVariant)),

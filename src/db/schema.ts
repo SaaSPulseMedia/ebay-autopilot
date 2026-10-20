@@ -56,6 +56,8 @@ export const ebayAccounts = pgTable("ebay_accounts", {
   fulfillmentPolicyId: text("fulfillment_policy_id"),
   paymentPolicyId: text("payment_policy_id"),
   returnPolicyId: text("return_policy_id"),
+  /** Free-shipping fulfillment policy used by "Match eBay Market Price (Free Shipping)" (found or created by AutoPilot). */
+  freeShippingPolicyId: text("free_shipping_policy_id"),
   connectedAt: timestamp("connected_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
