@@ -176,24 +176,29 @@ export function refreshAccessToken(refreshToken: string, scopes: string[]) {
   return tokenRequest(new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, scope: scopes.join(" ") }));
 }
 
-let appToken: { token: string; expiresAt: number } | null = null;
+/** Public data (Browse API). */
+export const APP_SCOPE = "https://api.ebay.com/oauth/api_scope";
+/** eBay sold-item data (Marketplace Insights API); only works once eBay approves the app for it. */
+export const INSIGHTS_SCOPE = "https://api.ebay.com/oauth/api_scope/buy.marketplace.insights";
+
+const appTokens = new Map<string, { token: string; expiresAt: number }>();
 
 /**
- * AutoPilot's own application token (client credentials, public api_scope),
- * for read-only public data such as Browse API searches. Needs no seller
- * account. Cached per server instance until 5 minutes before it expires.
+ * AutoPilot's own application token (client credentials) for `scope`, for
+ * read-only data such as Browse API searches. Needs no seller account.
+ * Cached per server instance and scope until 5 minutes before it expires.
+ * Null when eBay refuses the scope (e.g. an app not approved for it).
  */
-export async function getApplicationToken(): Promise<string | null> {
+export async function getApplicationToken(scope: string = APP_SCOPE): Promise<string | null> {
   const env = ebayEnv();
   if (!env.clientId || !env.clientSecret) return null;
-  if (appToken && appToken.expiresAt - Date.now() > 5 * 60_000) return appToken.token;
-  const result = await tokenRequest(
-    new URLSearchParams({ grant_type: "client_credentials", scope: "https://api.ebay.com/oauth/api_scope" }),
-  );
+  const cached = appTokens.get(scope);
+  if (cached && cached.expiresAt - Date.now() > 5 * 60_000) return cached.token;
+  const result = await tokenRequest(new URLSearchParams({ grant_type: "client_credentials", scope }));
   if (!result.ok) {
-    console.error("[ebay-app-token] client credentials grant failed:", result.error);
+    console.error(`[ebay-app-token] client credentials grant for ${scope} failed:`, result.error);
     return null;
   }
-  appToken = { token: result.tokens.accessToken, expiresAt: result.tokens.accessTokenExpiresAt.getTime() };
-  return appToken.token;
+  appTokens.set(scope, { token: result.tokens.accessToken, expiresAt: result.tokens.accessTokenExpiresAt.getTime() });
+  return result.tokens.accessToken;
 }

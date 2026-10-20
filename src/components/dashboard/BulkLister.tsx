@@ -7,7 +7,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { BatchSummary, DripToggle, type BatchResponse } from "@/components/dashboard/BatchControls";
 import { ImageManager } from "@/components/dashboard/ImageManager";
 import { PriceBreakdown } from "@/components/dashboard/PriceBreakdown";
-import type { PriceBreakdown as Breakdown } from "@/lib/pricing";
+import { MARKET_MATCH_BUFFER, type PriceBreakdown as Breakdown } from "@/lib/pricing";
 
 export type BulkProduct = {
   externalId: string;
@@ -33,7 +33,7 @@ export type BulkProduct = {
 };
 
 /** Which pricing rule a product gets under "Match eBay Market Price (Free Shipping)". */
-type PricingNote = { rule: "market" | "default"; market: number | null; reason?: string };
+type PricingNote = { rule: "market" | "default"; market: number | null; marketSource?: "sold" | "active" | null; reason?: string };
 
 type PricePreview = PricingNote & { externalId: string; listPrice: number; breakdown: Breakdown };
 
@@ -83,20 +83,29 @@ function ProductThumb({ src }: { src: string | null }) {
   );
 }
 
+/** "eBay sold $42.00" (last 90 days' sales) or "eBay active $42.00" (lower quartile of listings up now). */
+function marketLabel(note: PricingNote) {
+  if (note.market == null) return "";
+  return `eBay ${note.marketSource === "sold" ? "sold" : "active"} $${note.market.toFixed(2)}`;
+}
+
 /** "Market Match" or "Default Margin" under a product, for the Market Match pricing rule. */
 function PricingRuleNote({ note }: { note?: PricingNote }) {
   if (!note) return <span className="mt-0.5 block text-[11px] text-slate-500">Checking eBay market price…</span>;
   if (note.rule === "market") {
     return (
-      <span className="mt-0.5 block text-[11px] text-lime-brand" title="Priced at the eBay market + $3, with free shipping.">
-        Market Match · eBay ${note.market?.toFixed(2)} · free shipping
+      <span
+        className="mt-0.5 block text-[11px] text-lime-brand"
+        title={`Priced at the ${note.marketSource === "sold" ? "eBay sold price (last 90 days)" : "competitive end of active eBay listings"} + $${MARKET_MATCH_BUFFER.toFixed(2)}, with free shipping.`}
+      >
+        Market Match · {marketLabel(note)} · free shipping
       </span>
     );
   }
   return (
     <span className="mt-0.5 block text-[11px] text-slate-400" title="Suggested price (about 23% margin) with your normal shipping.">
       Default Margin · {note.reason ?? "market price too low"}
-      {note.market != null ? ` (eBay $${note.market.toFixed(2)})` : ""}
+      {note.market != null ? ` (${marketLabel(note)})` : ""}
     </span>
   );
 }
@@ -174,7 +183,12 @@ export function BulkLister({
               ...p,
               listPrice: preview.listPrice,
               breakdown: preview.breakdown,
-              pricing: { rule: preview.rule, market: preview.market, reason: preview.reason },
+              pricing: {
+                rule: preview.rule,
+                market: preview.market,
+                marketSource: preview.marketSource,
+                reason: preview.reason,
+              },
             }
           : p;
       }),

@@ -1,8 +1,8 @@
-import { EBAY_FINAL_VALUE_FEE, EBAY_FIXED_FEE, netProfitFor, priceForEbay } from "@/lib/pricing";
+import { EBAY_FINAL_VALUE_FEE, EBAY_FIXED_FEE, type MarketSource, marketMatchPrice, netProfitFor, priceForEbay } from "@/lib/pricing";
 
 /**
  * Winning Score: how promising a CJ product looks to list on eBay, from CJ
- * data alone (eBay sold-item data needs Marketplace Insights API approval).
+ * data alone (the eBay market check, marketAdjustment, comes after).
  *   40% margin       — net profit per sale at AutoPilot's suggested eBay price,
  *                      after cost, shipping and eBay fees (scored in dollars:
  *                      the suggested price targets ~23% net on everything, so
@@ -89,24 +89,36 @@ export function winningScore(input: WinningInput, now = Date.now()): WinningBrea
 }
 
 /**
- * What similar items sell for on eBay right now (average of the top active
- * fixed-price listings, item + shipping) and what that means for this product:
- *   good    — the market is at or above AutoPilot's suggested price;
+ * What similar items sell for on eBay and what that means for this product.
+ * `reference` is the price buyers actually pay: the median sold price over
+ * the last 90 days when eBay provides it, otherwise the lower quartile of
+ * active listings (the active average runs high: overpriced listings sit
+ * unsold). Judged on the reference:
+ *   good    — at or above AutoPilot's suggested price;
  *   low     — between break-even and the suggested price: sellable, but only
  *             cheaper than planned, so the Winning Score is cut;
  *   too_low — below break-even (cost + shipping + eBay fees): every sale at
- *             market price loses money, so the product is dropped.
+ *             that price loses money, so the product is dropped.
  */
 export type MarketInfo = {
   status: "good" | "low" | "too_low";
+  /** Active listings' average (what the Market Guard compares against). */
   average: number;
-  /** Listings averaged. */
+  /** Active listings sampled. */
   count: number;
   /** The eBay search used. */
   query: string;
+  /** Median sold price over the last 90 days, and the units it covers; null without sold data. */
+  sold: number | null;
+  soldCount: number;
+  /** The price judged against: `sold`, else the active lower quartile. */
+  reference: number;
+  referenceSource: MarketSource;
+  /** What "Match eBay Market Price" would list it at (reference + $0.50, free shipping); null when it would fall back. */
+  listAt: number | null;
   /** The lowest price that doesn't lose money after cost, shipping and eBay fees. */
   breakeven: number;
-  /** Net profit per sale if listed at the market average. */
+  /** Net profit per sale at the reference price. */
   profitAtMarket: number;
   /** Winning Score before the market adjustment. */
   scoreBefore: number;
@@ -122,22 +134,45 @@ const LOW_MARKET_FLOOR = 0.4;
 
 export function marketAdjustment(
   input: { cost: number; shipping: number; suggestedPrice: number; winningScore: number },
-  market: { average: number; count: number; query: string },
+  market: {
+    average: number;
+    count: number;
+    query: string;
+    sold: { price: number; count: number } | null;
+    reference: number;
+    referenceSource: MarketSource;
+  },
+  adRatePct = 0,
 ): { winningScore: number; market: MarketInfo } {
   const breakeven = breakevenPrice(input.cost, input.shipping);
+  const reference = Math.round(market.reference * 100) / 100;
+  const match = marketMatchPrice({
+    cost: input.cost,
+    shipping: input.shipping,
+    suggested: input.suggestedPrice,
+    market: reference,
+    source: market.referenceSource,
+    guardAverage: market.average,
+    adRatePct,
+  });
   const base = {
     average: Math.round(market.average * 100) / 100,
     count: market.count,
     query: market.query,
+    sold: market.sold?.price ?? null,
+    soldCount: market.sold?.count ?? 0,
+    reference,
+    referenceSource: market.referenceSource,
+    listAt: match.rule === "market" ? match.listPrice : null,
     breakeven,
-    profitAtMarket: netProfitFor(market.average, input.cost, input.shipping),
+    profitAtMarket: netProfitFor(reference, input.cost, input.shipping, adRatePct),
     scoreBefore: input.winningScore,
   };
-  if (market.average < breakeven) {
+  if (reference < breakeven) {
     return { winningScore: 0, market: { ...base, status: "too_low" } };
   }
-  if (market.average < input.suggestedPrice) {
-    const room = (market.average - breakeven) / Math.max(0.01, input.suggestedPrice - breakeven);
+  if (reference < input.suggestedPrice) {
+    const room = (reference - breakeven) / Math.max(0.01, input.suggestedPrice - breakeven);
     const factor = LOW_MARKET_FLOOR + (1 - LOW_MARKET_FLOOR) * clamp01(room);
     return { winningScore: Math.round(input.winningScore * factor), market: { ...base, status: "low" } };
   }

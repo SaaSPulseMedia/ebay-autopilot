@@ -20,15 +20,17 @@ export type MarketCheckSummary = {
 
 /**
  * Checks the top MARKET_CHECK_TOP products (in the order given, best first)
- * against eBay's market price: below break-even they are dropped, below the
- * suggested price their Winning Score is cut (see marketAdjustment). The rest
+ * against eBay's price (recent sold price, else the competitive end of active
+ * listings): below break-even they are dropped, below the suggested price
+ * their Winning Score is cut (see marketAdjustment). `adRatePct` is the
+ * seller's Promoted Listings rate, used for profit and the Market Match price. The rest
  * pass through unchecked. Lookups are sequential through the Browse API
  * queue; once `deadline` (epoch ms) passes, the remaining ones are skipped so
  * the request still answers in time. Returns the list re-ranked by score.
  */
 export async function applyMarketCheck(
   products: WinningProduct[],
-  options: { deadline?: number; top?: number } = {},
+  options: { deadline?: number; top?: number; adRatePct?: number } = {},
 ): Promise<{ products: WinningProduct[]; summary: MarketCheckSummary; droppedPids: string[] }> {
   const top = options.top ?? MARKET_CHECK_TOP;
   const summary: MarketCheckSummary = { checked: 0, dropped: 0, penalized: 0, skipped: 0 };
@@ -58,6 +60,7 @@ export async function applyMarketCheck(
     const adjusted = marketAdjustment(
       { cost: product.price, shipping: product.shipping, suggestedPrice: product.suggestedPrice, winningScore: product.winningScore },
       lookup.market,
+      options.adRatePct ?? 0,
     );
     if (adjusted.market.status === "too_low") {
       summary.dropped++;

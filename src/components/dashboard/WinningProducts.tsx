@@ -194,7 +194,12 @@ function ScoreBadge({ product }: { product: WinningProduct }) {
 const MARKET_LABEL = { good: "Good", low: "Low", too_low: "Too Low" } as const;
 const MARKET_TONE = { good: "text-lime-brand", low: "text-amber-300", too_low: "text-red-300" } as const;
 
-/** "eBay Market: $45.00 (Good)": what similar items sell for on eBay now (see src/lib/market-check.ts). */
+/**
+ * "eBay Sold Price: $42.00 · lists at $42.50 (Good)": what the item actually
+ * sold for on eBay in the last 90 days and the price "Match eBay Market Price"
+ * would list it at. Without sold data, the competitive end of active listings
+ * (see src/lib/ebay/market-price.ts).
+ */
 function MarketLine({ product }: { product: WinningProduct }) {
   const market = product.market;
   if (market === undefined) return null;
@@ -205,17 +210,25 @@ function MarketLine({ product }: { product: WinningProduct }) {
       </p>
     );
   }
+  const sold = market.referenceSource === "sold";
   const title = [
-    `Average of ${market.count} active eBay listings (item + shipping) for "${market.query}".`,
-    `Break-even ${money(market.breakeven)}, our price ${money(product.suggestedPrice)}.`,
-    `Profit at market price: ${money(market.profitAtMarket)}.`,
+    sold
+      ? `Median price of ${market.soldCount} eBay sales in the last 90 days for "${market.query}".`
+      : `No eBay sold data, so this is the lower quartile of ${market.count} active listings (item + shipping) for "${market.query}".`,
+    `Active listings average ${money(market.average)}.`,
+    `Break-even ${money(market.breakeven)}, our default price ${money(product.suggestedPrice)}.`,
+    `Profit at ${money(market.reference)}: ${money(market.profitAtMarket)}.`,
+    market.listAt != null
+      ? `Match eBay Market Price lists it at ${money(market.listAt)} with free shipping.`
+      : "Match eBay Market Price would use the default price (under $3 profit at the eBay price).",
     market.status === "low" ? `Winning Score lowered from ${market.scoreBefore}.` : "",
   ]
     .filter(Boolean)
     .join(" ");
   return (
     <p className={`mt-0.5 text-[11px] font-medium ${MARKET_TONE[market.status]}`} title={title}>
-      eBay Market: {money(market.average)} ({MARKET_LABEL[market.status]})
+      {sold ? "eBay Sold Price" : "eBay Market (active)"}: {money(market.reference)}
+      {market.listAt != null ? ` · lists at ${money(market.listAt)}` : ""} ({MARKET_LABEL[market.status]})
     </p>
   );
 }

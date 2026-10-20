@@ -10,6 +10,7 @@ import {
 import { type MarketCheckSummary, applyMarketCheck } from "@/lib/market-check";
 import type { NICHES } from "@/lib/niches";
 import { markSeen, seenPids, usedKeywords } from "@/lib/seen-products";
+import { getListingDefaults } from "@/lib/seller-settings";
 
 /**
  * "✨ Auto-Suggest Winners" as a sourcing agent that only shows the seller
@@ -67,7 +68,11 @@ export async function scoutWinners(
   filters: Omit<WinningFilters, "category" | "limit">,
   started = Date.now(),
 ): Promise<{ ok: true; data: ScoutResult } | { ok: false; error: string; status: number }> {
-  const [seen, avoid] = await Promise.all([seenPids(userId), usedKeywords(userId, niche.name)]);
+  const [seen, avoid, defaults] = await Promise.all([
+    seenPids(userId),
+    usedKeywords(userId, niche.name),
+    getListingDefaults(userId),
+  ]);
   const suggestion = await suggestNicheKeywords(niche.name, niche.fallback, avoid);
   const keywords = suggestion.keywords;
   const scoring = { ...filters, limit: 1000 };
@@ -119,7 +124,11 @@ export async function scoutWinners(
   }
 
   // Market Guard check on the best, then the top RETURNED.
-  const checked = await applyMarketCheck(products, { top: MARKET_CHECK_COUNT, deadline: started + MARKET_DEADLINE_MS });
+  const checked = await applyMarketCheck(products, {
+    top: MARKET_CHECK_COUNT,
+    deadline: started + MARKET_DEADLINE_MS,
+    adRatePct: defaults.adRatePct,
+  });
   const shown = checked.products.slice(0, RETURNED);
   await markSeen(userId, niche.name, [
     ...shown.map((p) => ({ pid: p.pid, keyword: p.foundBy ?? "", outcome: "shown" as const })),

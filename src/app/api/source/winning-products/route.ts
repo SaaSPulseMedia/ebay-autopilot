@@ -3,6 +3,7 @@ import "server-only";
 import { getCurrentUser } from "@/lib/auth";
 import { getWinningProducts } from "@/lib/cj/catalog";
 import { applyMarketCheck } from "@/lib/market-check";
+import { getListingDefaults } from "@/lib/seller-settings";
 
 /**
  * GET /api/source/winning-products — CJ products ranked by Winning Score
@@ -49,7 +50,8 @@ export async function GET(request: Request) {
       limit,
     });
     if (!result.ok) return Response.json({ ok: false, error: result.error }, { status: result.status });
-    const checked = await applyMarketCheck(result.data, { deadline: started + MARKET_DEADLINE_MS });
+    const { adRatePct } = await getListingDefaults(user.id);
+    const checked = await applyMarketCheck(result.data, { deadline: started + MARKET_DEADLINE_MS, adRatePct });
     return Response.json({ ok: true, products: checked.products, market: checked.summary });
   } catch (error) {
     console.error("[source] winning products failed:", error instanceof Error ? error.message : error);
