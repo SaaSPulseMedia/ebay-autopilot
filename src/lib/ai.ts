@@ -337,10 +337,17 @@ export async function generateListingCopy(input: ListingCopyInput): Promise<List
 }
 
 export const KEYWORD_COUNT = 5;
+const KEYWORD_TIMEOUT_MS = 20_000;
 
 const KEYWORD_SYSTEM_PROMPT = `You pick product search keywords for a US eBay dropshipping seller who sources from CJ Dropshipping.
 
 Given a product niche, return ${KEYWORD_COUNT} search keywords for specific physical products in that niche that are likely to sell well on eBay right now. Each keyword is what you would type into CJ's product search to find one product type.
+
+Favor niche, trending and seasonal products over the obvious best sellers every dropshipper already lists:
+- niche: a specific sub-type or use case with less competition (for example "magnetic spice rack for fridge" rather than "spice rack");
+- trending: product types gaining popularity now;
+- seasonal: products buyers look for in the coming weeks, given the date you are told (holidays, weather, back to school, gifting).
+You are also given keywords this seller already searched; suggest different product types, not rewordings of those.
 
 Rules:
 - Each keyword is 2 to 5 words, lowercase, plain English, naming one specific product type (for example "led cloud light", "cordless electric spin scrubber"), not a broad category ("home decor", "kitchen items").
@@ -348,6 +355,18 @@ Rules:
 - Products a dropshipper can sell: small, light, inexpensive to ship, typically costing a supplier under about $30. No food, supplements, medicines, cosmetics that touch the eyes, weapons, adult products, hazardous batteries or anything needing certification.
 - Prefer products with visible appeal, a clear problem they solve, or giftability, and with room for a healthy margin.
 - All ${KEYWORD_COUNT} keywords must be different product types.`;
+
+/** The user turn: niche, today's date and season, and keywords not to repeat. */
+function keywordRequest(niche: string, avoid: readonly string[]) {
+  const now = new Date();
+  const month = now.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
+  const lines = [
+    `Product niche: ${niche}`,
+    `Today: ${month} ${now.getUTCFullYear()} (${SEASONS[now.getUTCMonth()]} in the US).`,
+  ];
+  if (avoid.length) lines.push(`Already searched (do not repeat): ${avoid.slice(0, 40).join("; ")}`);
+  return lines.join("\n");
+}
 
 const KEYWORDS_SCHEMA = {
   type: "object",
@@ -369,26 +388,40 @@ function cleanKeyword(value: string) {
 
 export type KeywordSuggestion = { keywords: string[]; source: "claude" | "fallback" };
 
+const SEASONS = ["winter", "winter", "spring", "spring", "spring", "summer", "summer", "summer", "fall", "fall", "fall", "winter"];
+
 /**
- * KEYWORD_COUNT CJ search keywords for a product niche, from Claude. Any
- * Claude keyword that isn't usable is replaced from `fallback`; with no API
- * key, or when the call fails, `fallback` is returned as is.
+ * KEYWORD_COUNT niche, trending and seasonal CJ search keywords for a product
+ * niche, from Claude, avoiding ones in `avoid` (already used for this seller).
+ * Unusable or repeated ones are replaced from `fallback`, unused ones first;
+ * with no API key, or when the call fails, the fallback keywords are used.
  */
-export async function suggestNicheKeywords(niche: string, fallback: readonly string[]): Promise<KeywordSuggestion> {
-  const fromFallback = { keywords: fallback.slice(0, KEYWORD_COUNT), source: "fallback" as const };
+export async function suggestNicheKeywords(
+  niche: string,
+  fallback: readonly string[],
+  avoid: readonly string[] = [],
+): Promise<KeywordSuggestion> {
+  const used = new Set(avoid.map((k) => k.toLowerCase()));
+  // Unused fallback keywords first; used ones still serve (the caller can search deeper pages).
+  const fallbackOrder = [...fallback.filter((k) => !used.has(k)), ...fallback.filter((k) => used.has(k))];
+  const fromFallback = { keywords: fallbackOrder.slice(0, KEYWORD_COUNT), source: "fallback" as const };
   if (!process.env.ANTHROPIC_API_KEY) return fromFallback;
   client ??= new Anthropic({ timeout: 45_000, maxRetries: 1 });
 
   try {
-    const response = await client.beta.messages.create({
-      model: MODEL,
-      max_tokens: 16000,
-      system: KEYWORD_SYSTEM_PROMPT,
-      // A short list from general product knowledge: low effort keeps the button quick.
-      output_config: { effort: "low", format: { type: "json_schema", schema: KEYWORDS_SCHEMA } },
-      ...(FALLBACK_MODELS.has(MODEL) ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
-      messages: [{ role: "user", content: `Product niche: ${niche}` }],
-    });
+    const response = await client.beta.messages.create(
+      {
+        model: MODEL,
+        max_tokens: 16000,
+        system: KEYWORD_SYSTEM_PROMPT,
+        // A short list from general product knowledge: low effort keeps the button quick.
+        output_config: { effort: "low", format: { type: "json_schema", schema: KEYWORDS_SCHEMA } },
+        ...(FALLBACK_MODELS.has(MODEL) ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
+        messages: [{ role: "user", content: keywordRequest(niche, avoid) }],
+      },
+      // A sourcing run must answer within 60 s: past this, the fallback keywords are used instead.
+      { timeout: KEYWORD_TIMEOUT_MS, maxRetries: 0 },
+    );
     if (response.stop_reason !== "end_turn") {
       console.warn(`[niche-keywords] Claude stopped with ${response.stop_reason}; using the fallback keywords.`);
       return fromFallback;
@@ -397,9 +430,9 @@ export async function suggestNicheKeywords(niche: string, fallback: readonly str
     if (!text || text.type !== "text") return fromFallback;
     const parsed = JSON.parse(text.text) as { keywords: string[] };
 
-    const keywords = [...new Set(parsed.keywords.map(cleanKeyword).filter(Boolean))].slice(0, KEYWORD_COUNT);
+    const keywords = [...new Set(parsed.keywords.map(cleanKeyword).filter((k) => k && !used.has(k)))].slice(0, KEYWORD_COUNT);
     if (!keywords.length) return fromFallback;
-    for (const extra of fallback) {
+    for (const extra of fallbackOrder) {
       if (keywords.length >= KEYWORD_COUNT) break;
       if (!keywords.includes(extra)) keywords.push(extra);
     }

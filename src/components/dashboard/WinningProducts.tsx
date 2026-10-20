@@ -36,10 +36,14 @@ type Suggestion = {
   niche: string;
   keywords: string[];
   keywordSource: "claude" | "fallback";
-  searches: Array<{ keyword: string; found: number; broadenedTo?: string; error?: string }>;
+  searches: Array<{ keyword: string; found: number; fresh?: number; page?: number; broadenedTo?: string; error?: string }>;
   /** Unique CJ products found, and how many of them the filters hid. */
   pooled: number;
   hiddenByFilters: number;
+  /** Products the seller had already been shown before this run (all skipped). */
+  seenBefore: number;
+  /** Deeper-page rounds run because page 1 had too few new products. */
+  retries: number;
 };
 
 type FeedState =
@@ -137,8 +141,9 @@ function NichePanel({
         {busy ? "Finding winners…" : "✨ Auto-Suggest Winners"}
       </button>
       <p className="text-[11px] leading-snug text-slate-500">
-        Claude picks 5 product keywords for this niche, AutoPilot searches CJ for each and ranks the results by Winning
-        Score. Uses your price, seller, profit and US warehouse filters.
+        Claude picks 5 niche, trending and seasonal keywords, AutoPilot searches CJ for each, skips products you&apos;ve
+        already been shown, checks eBay prices and returns the best 30 new ones. Uses your price, seller, profit and US
+        warehouse filters.
       </p>
     </div>
   );
@@ -441,6 +446,8 @@ export function WinningProducts() {
           searches: body.searches,
           pooled: body.pooled ?? body.products.length,
           hiddenByFilters: body.hiddenByFilters ?? 0,
+          seenBefore: body.seenBefore ?? 0,
+          retries: body.retries ?? 0,
         },
       });
     } catch {
@@ -451,6 +458,19 @@ export function WinningProducts() {
   }
 
   const suggesting = feed.status === "done" ? feed.suggestion?.niche : feed.suggesting;
+
+  /** Forgets every product Auto-Suggest has shown, so they can come up again. */
+  async function resetSeen() {
+    if (!window.confirm("Reset your seen history? Products you've already been shown can then be suggested again.")) return;
+    const res = await fetch("/api/source/seen", { method: "DELETE" }).catch(() => null);
+    if (res?.ok) {
+      setFeed((prev) =>
+        prev.status === "done" && prev.suggestion ? { ...prev, suggestion: { ...prev.suggestion, seenBefore: 0 } } : prev,
+      );
+    } else {
+      window.alert("Couldn't reset your seen history. Try again in a moment.");
+    }
+  }
 
   function apply(next: Filters) {
     saveFilters(next);
@@ -590,7 +610,8 @@ export function WinningProducts() {
                   }`}
                 >
                   {s.keyword}
-                  {s.broadenedTo ? <span className="text-slate-500"> + {s.broadenedTo}</span> : null}{" "}
+                  {s.broadenedTo ? <span className="text-slate-500"> + {s.broadenedTo}</span> : null}
+                  {s.page && s.page > 1 ? <span className="text-slate-500"> (CJ page {s.page})</span> : null}{" "}
                   <span className="text-slate-500">· {s.error ? "failed" : s.found}</span>
                 </span>
               ))}
@@ -607,6 +628,25 @@ export function WinningProducts() {
                 Claude wasn&apos;t available, so these are AutoPilot&apos;s standard keywords for this niche.
               </p>
             ) : null}
+            <p className="text-xs text-slate-300">
+              {products.length ? (
+                <>
+                  Showing <span className="font-semibold text-white">{products.length} new</span> product
+                  {products.length === 1 ? "" : "s"} you haven&apos;t been shown before.{" "}
+                </>
+              ) : null}
+              {feed.suggestion.seenBefore > 0 ? `Skipping the ${feed.suggestion.seenBefore} you've already seen. ` : ""}
+              {feed.suggestion.retries > 0 ? "Searched deeper CJ pages to find fresh inventory. " : ""}
+              {feed.suggestion.seenBefore > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => void resetSeen()}
+                  className="font-semibold text-brand-400 hover:text-brand-500"
+                >
+                  Reset seen history
+                </button>
+              ) : null}
+            </p>
             {feed.suggestion.hiddenByFilters > 0 ? (
               <p className="text-xs text-slate-400">
                 Found {feed.suggestion.pooled} unique CJ products; your filters (minimum profit, maximum sellers, US
@@ -658,7 +698,7 @@ export function WinningProducts() {
         ) : products.length === 0 ? (
           <p className="ap-card rounded-2xl p-10 text-center text-sm text-slate-400">
             {suggesting
-              ? "No products found for these keywords. Try another niche, or loosen the filters (US warehouse, maximum sellers, minimum profit)."
+              ? "No new products this time: CJ only returned ones you've already seen, or ones your filters hide. Click Auto-Suggest again for different keywords, try another niche, loosen the filters, or reset your seen history."
               : filters?.category
                 ? "No products found for this category. Try a different category or turn off the US warehouse filter."
                 : "No CJ products match these filters. Try a higher maximum sellers, a lower minimum profit, or another category."}

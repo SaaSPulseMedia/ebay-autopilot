@@ -121,6 +121,28 @@ export const catalogProducts = pgTable(
  * photos, their uploads). Kept apart from catalog_products so edits survive
  * a CJ refresh. No row = supplier images.
  */
+/**
+ * Every CJ product "✨ Auto-Suggest Winners" has shown a seller (or dropped
+ * for them at the Market Guard), so later runs skip it and only show fresh
+ * products. `keyword` and `niche` also tell Claude which keywords it already
+ * used. Kept per seller; the Winning page can clear it.
+ */
+export const seenProducts = pgTable(
+  "seen_products",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    pid: text("pid").notNull(),
+    niche: text("niche").notNull().default(""),
+    keyword: text("keyword").notNull().default(""),
+    /** "shown" in the feed, or "rejected" by the Market Guard (eBay sells it below break-even). */
+    outcome: text("outcome").notNull().default("shown"),
+    seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.pid] })],
+);
+
 export const productImages = pgTable(
   "product_images",
   {

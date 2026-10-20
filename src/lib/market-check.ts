@@ -29,10 +29,11 @@ export type MarketCheckSummary = {
 export async function applyMarketCheck(
   products: WinningProduct[],
   options: { deadline?: number; top?: number } = {},
-): Promise<{ products: WinningProduct[]; summary: MarketCheckSummary }> {
+): Promise<{ products: WinningProduct[]; summary: MarketCheckSummary; droppedPids: string[] }> {
   const top = options.top ?? MARKET_CHECK_TOP;
   const summary: MarketCheckSummary = { checked: 0, dropped: 0, penalized: 0, skipped: 0 };
   const kept: WinningProduct[] = [];
+  const droppedPids: string[] = [];
 
   for (const [index, product] of products.entries()) {
     if (index >= top) {
@@ -60,6 +61,7 @@ export async function applyMarketCheck(
     );
     if (adjusted.market.status === "too_low") {
       summary.dropped++;
+      droppedPids.push(product.pid);
       continue;
     }
     if (adjusted.market.status === "low") summary.penalized++;
@@ -68,5 +70,5 @@ export async function applyMarketCheck(
 
   kept.sort((a, b) => b.winningScore - a.winningScore || b.profit - a.profit);
   console.log(`[market-check] ${JSON.stringify(summary)} kept=${kept.length}`);
-  return { products: kept, summary };
+  return { products: kept, summary, droppedPids };
 }

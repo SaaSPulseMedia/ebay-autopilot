@@ -87,6 +87,8 @@ export type CjSearchItem = {
   imported: boolean;
   /** When CJ added the product (ISO), if CJ says. */
   addedAt: string | null;
+  /** Multi-keyword searches: the keyword that found it. */
+  foundBy?: string;
 };
 
 export type CjSearchResult = {
@@ -216,6 +218,14 @@ export type KeywordSearchStat = {
   keyword: string;
   /** Relevant CJ results for this keyword (both queries, before de-duplication). */
   found: number;
+  /** Of those, how many the seller hasn't been shown before (see `exclude`). */
+  fresh?: number;
+  /** CJ page searched (1 unless a retry went deeper). */
+  page?: number;
+  /** CJ's total results for the keyword, so a retry knows how deep it can go. */
+  total?: number;
+  /** The same for `broadenedTo`, which usually finds far more than a long keyword. */
+  broadTotal?: number;
   /** The broader phrase also searched when the keyword alone found too little. */
   broadenedTo?: string;
   error?: string;
@@ -241,7 +251,16 @@ export function broaderPhrase(keyword: string) {
 export async function searchCjKeywords(
   userId: number,
   keywords: string[],
-  options: { filters?: CjSearchFilters & { usOnly?: boolean }; maxTotal?: number } = {},
+  options: {
+    filters?: CjSearchFilters & { usOnly?: boolean };
+    maxTotal?: number;
+    /** Product IDs to leave out (already shown to the seller); they don't count toward maxTotal. */
+    exclude?: Set<string>;
+    /** CJ page to search for each keyword (default 1). */
+    pageFor?: (keyword: string) => number;
+    /** Retry thin keywords with a broader phrase (default true). */
+    broaden?: boolean;
+  } = {},
 ): Promise<CjResult<{ items: CjSearchItem[]; searches: KeywordSearchStat[] }>> {
   const started = Date.now();
   const maxTotal = options.maxTotal ?? 200;
@@ -250,25 +269,35 @@ export async function searchCjKeywords(
   let lastError: { ok: false; error: string; status: number } | null = null;
 
   for (const keyword of keywords.slice(0, 5)) {
-    const stat: KeywordSearchStat = { keyword, found: 0 };
+    const page = Math.max(1, Math.floor(options.pageFor?.(keyword) ?? 1));
+    const stat: KeywordSearchStat = { keyword, found: 0, page };
     searches.push(stat);
-    const first = await searchCjPage(keyword, 1, MULTI_PAGE_SIZE, options.filters);
+    const first = await searchCjPage(keyword, page, MULTI_PAGE_SIZE, options.filters);
     if (!first.ok) {
       lastError = first;
       stat.error = first.error;
       continue;
     }
+    stat.total = first.data.total;
     const found = [...first.data.items];
     const broader = broaderPhrase(keyword);
-    if (found.length < BROADEN_BELOW && broader && Date.now() - started < BROADEN_BUDGET_MS) {
-      const second = await searchCjPage(broader, 1, MULTI_PAGE_SIZE, options.filters);
+    if (
+      options.broaden !== false &&
+      found.length < BROADEN_BELOW &&
+      broader &&
+      Date.now() - started < BROADEN_BUDGET_MS
+    ) {
+      const second = await searchCjPage(broader, page, MULTI_PAGE_SIZE, options.filters);
       if (second.ok) {
         stat.broadenedTo = broader;
+        stat.broadTotal = second.data.total;
         found.push(...second.data.items);
       }
     }
     stat.found = found.length;
-    for (const item of found) if (!pool.has(item.pid)) pool.set(item.pid, item);
+    const fresh = options.exclude ? found.filter((item) => !options.exclude?.has(item.pid)) : found;
+    stat.fresh = fresh.length;
+    for (const item of fresh) if (!pool.has(item.pid)) pool.set(item.pid, { ...item, foundBy: keyword });
   }
   if (lastError && searches.every((s) => s.error)) return lastError;
 
@@ -675,10 +704,12 @@ export async function getKeywordWinners(
   userId: number,
   keywords: string[],
   filters: Omit<WinningFilters, "category">,
+  search: Pick<NonNullable<Parameters<typeof searchCjKeywords>[2]>, "exclude" | "pageFor" | "broaden"> = {},
 ): Promise<CjResult<KeywordWinners>> {
   const found = await searchCjKeywords(userId, keywords, {
     filters: { minPrice: filters.minPrice, maxPrice: filters.maxPrice, maxSellers: filters.maxSellers, usOnly: filters.usOnly },
     maxTotal: KEYWORD_POOL_MAX,
+    ...search,
   });
   if (!found.ok) return found;
   const pool = found.data.items;

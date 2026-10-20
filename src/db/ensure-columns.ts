@@ -58,6 +58,18 @@ const ADDED_TABLES: Array<{ table: string; ddl: string }> = [
     )`,
   },
   {
+    table: "seen_products",
+    ddl: `CREATE TABLE IF NOT EXISTS seen_products (
+      user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      pid text NOT NULL,
+      niche text NOT NULL DEFAULT '',
+      keyword text NOT NULL DEFAULT '',
+      outcome text NOT NULL DEFAULT 'shown',
+      seen_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, pid)
+    )`,
+  },
+  {
     table: "uploaded_images",
     ddl: `CREATE TABLE IF NOT EXISTS uploaded_images (
       id text PRIMARY KEY,
