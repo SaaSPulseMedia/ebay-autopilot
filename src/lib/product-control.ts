@@ -28,8 +28,10 @@ export type ProductControl = {
     url: string | null;
     /** Supplier price (cheapest variant). */
     baseCost: number;
-    /** AutoPilot's shipping estimate for the product; null when unknown. */
+    /** AutoPilot's shipping estimate (CJ's real quote is fetched separately: /api/source/shipping). */
     shipping: number | null;
+    /** The variant to quote CJ shipping on: the cheapest, which the base cost is. */
+    quoteSku: string | null;
     landed: number;
   } | null;
   ebay: {
@@ -134,7 +136,14 @@ export async function getProductControl(
     images,
     cj:
       product || pid
-        ? { pid, url: cjUrl, baseCost, shipping, landed: Math.round((baseCost + (shipping ?? 0)) * 100) / 100 }
+        ? {
+            pid,
+            url: cjUrl,
+            baseCost,
+            shipping,
+            quoteSku: [...(product?.variants ?? [])].sort((a, b) => (a.price || Infinity) - (b.price || Infinity))[0]?.sku ?? null,
+            landed: Math.round((baseCost + (shipping ?? 0)) * 100) / 100,
+          }
         : null,
     ebay,
     variants: [...new Set(variants.filter(Boolean))],

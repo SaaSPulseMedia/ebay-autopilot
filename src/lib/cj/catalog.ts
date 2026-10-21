@@ -43,13 +43,13 @@ function throttled<T>(task: () => Promise<T>): Promise<T> {
 
 type CjResult<T> = { ok: true; data: T } | { ok: false; error: string; status: number };
 
-async function cjGet(path: string): Promise<CjResult<unknown>> {
+async function cjGet(path: string, init?: RequestInit): Promise<CjResult<unknown>> {
   const apiKey = process.env.CJ_API_KEY?.trim();
   if (!apiKey) return { ok: false, error: "CJ sourcing is not configured (CJ_API_KEY is missing).", status: 503 };
   // Token lookups are cached (and CJ limits that endpoint separately), so only data calls are queued.
   const token = await getCjAccessToken(apiKey);
   if (!token.ok) return { ok: false, error: `Could not sign in to CJ: ${token.error}`, status: 502 };
-  const body = (await throttled(() => cjFetch(path, token.token))) as {
+  const body = (await throttled(() => cjFetch(path, token.token, init))) as {
     ok?: boolean;
     result?: boolean;
     code?: number;
@@ -797,4 +797,72 @@ export async function getKeywordWinners(
       hiddenByFilters: pool.length - products.length,
     },
   };
+}
+
+/** One CJ shipping method to the US for a product. */
+export type CjShippingOption = {
+  /** CJ's method name, e.g. "CJPacket Ordinary". */
+  method: string;
+  /** USD, for one unit. */
+  price: number;
+  /** CJ's delivery estimate in days, e.g. "7-12"; empty when CJ gives none. */
+  days: string;
+  /** Warehouse it ships from: CJ's China warehouses or its US warehouse. */
+  from: "CN" | "US";
+};
+
+export type CjShippingQuote = {
+  /** The variant quoted (CJ prices shipping per variant, by its weight). */
+  variant: string;
+  /** Cheapest first. Empty when CJ has no method to the US for it. */
+  options: CjShippingOption[];
+};
+
+const SHIPPING_TTL_MS = 6 * 60 * 60 * 1000;
+const shippingCache = new Map<string, { at: number; quote: CjShippingQuote }>();
+
+type CjFreight = Array<{ logisticName?: unknown; logisticPrice?: unknown; logisticAging?: unknown }>;
+
+/**
+ * CJ's real shipping cost to the US for one unit of a product, from its
+ * freight calculator (POST /logistic/freightCalculate), from both its China
+ * and US warehouses (the US one only answers for products it stocks). CJ
+ * quotes by variant id, which the catalog doesn't keep, so the variant list
+ * is fetched first and `sku` (else the first variant) picks the one quoted.
+ * Three CJ calls through the shared 1.1 s queue; cached 6 h per server instance.
+ */
+export async function getCjShipping(pid: string, sku?: string | null): Promise<CjResult<CjShippingQuote>> {
+  const key = `${pid}:${sku ?? ""}`;
+  const hit = shippingCache.get(key);
+  if (hit && Date.now() - hit.at < SHIPPING_TTL_MS) return { ok: true, data: hit.quote };
+
+  const variants = await cjGet(`/product/variant/query?pid=${encodeURIComponent(pid)}`);
+  if (!variants.ok) return variants;
+  const list = (Array.isArray(variants.data) ? variants.data : []) as CjVariantFromApi[];
+  const variant = list.find((v) => sku && str(v.variantSku) === sku) ?? list.find((v) => str(v.vid));
+  if (!variant?.vid) return { ok: false, error: "CJ has no variants for this product to quote shipping on.", status: 404 };
+
+  const options: CjShippingOption[] = [];
+  let lastError: { ok: false; error: string; status: number } | null = null;
+  for (const from of ["CN", "US"] as const) {
+    const res = await cjGet("/logistic/freightCalculate", {
+      method: "POST",
+      body: JSON.stringify({ startCountryCode: from, endCountryCode: "US", products: [{ quantity: 1, vid: variant.vid }] }),
+    });
+    if (!res.ok) {
+      lastError = res;
+      continue;
+    }
+    for (const row of (Array.isArray(res.data) ? res.data : []) as CjFreight) {
+      const price = num(row.logisticPrice);
+      if (price > 0) options.push({ method: str(row.logisticName) || "CJ shipping", price: Math.round(price * 100) / 100, days: String(row.logisticAging ?? "").trim(), from });
+    }
+  }
+  // Both warehouses failing is an error; one failing (usually: not stocked in the US) isn't.
+  if (!options.length && lastError) return lastError;
+  options.sort((a, b) => a.price - b.price);
+  const quote = { variant: str(variant.variantNameEn) || str(variant.variantKey) || str(variant.variantSku), options };
+  shippingCache.set(key, { at: Date.now(), quote });
+  console.log(`[cj-shipping] pid=${pid} vid=${variant.vid} options=${options.length} cheapest=${options[0]?.price ?? "none"}`);
+  return { ok: true, data: quote };
 }

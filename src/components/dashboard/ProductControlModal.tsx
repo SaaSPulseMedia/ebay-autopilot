@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import type { CjShippingQuote } from "@/lib/cj/catalog";
 import type { ProductControl } from "@/lib/product-control";
 
 /** Which product to show, and what the row already knows (shown while the details load). */
@@ -12,6 +13,11 @@ export type ProductControlTarget = ({ listingId: number } | { externalId: string
 };
 
 type LoadState = { status: "loading" } | { status: "error"; message: string } | { status: "done"; product: ProductControl };
+type ShippingState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "done"; quote: CjShippingQuote };
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
@@ -37,6 +43,53 @@ function Row({ label, value, strong }: { label: string; value: string; strong?: 
   );
 }
 
+const FROM_LABEL = { CN: "China warehouse", US: "US warehouse" } as const;
+
+/** CJ's real shipping price to the US: the cheapest method, with the others listed under it. */
+function CjShipping({ state, onRetry }: { state: ShippingState; onRetry: () => void }) {
+  if (state.status === "idle") return null;
+  if (state.status === "loading") return <p className="py-1 text-xs text-slate-400">Getting CJ&apos;s shipping price…</p>;
+  if (state.status === "error") {
+    return (
+      <p className="py-1 text-xs text-amber-200">
+        Couldn&apos;t get CJ&apos;s shipping price: {state.message}{" "}
+        <button type="button" onClick={onRetry} className="font-semibold underline">
+          Retry
+        </button>
+      </p>
+    );
+  }
+  const [cheapest, ...others] = state.quote.options;
+  if (!cheapest) return <p className="py-1 text-xs text-amber-200">CJ has no shipping method to the US for this product.</p>;
+  return (
+    <div className="py-1">
+      <p className="text-[11px] text-slate-500">
+        Cheapest: {cheapest.method} from CJ&apos;s {FROM_LABEL[cheapest.from]}
+        {cheapest.days ? `, ${cheapest.days} days` : ""}
+        {state.quote.variant ? ` · quoted for ${state.quote.variant}` : ""}
+      </p>
+      {others.length ? (
+        <details className="mt-1 text-[11px] text-slate-400">
+          <summary className="cursor-pointer text-slate-300">
+            {others.length} other method{others.length === 1 ? "" : "s"}
+          </summary>
+          <ul className="mt-1 space-y-0.5">
+            {others.slice(0, 8).map((o) => (
+              <li key={`${o.from}:${o.method}`} className="flex justify-between gap-3">
+                <span>
+                  {o.method} · {o.from}
+                  {o.days ? ` · ${o.days} days` : ""}
+                </span>
+                <span className="text-slate-200">{money(o.price)}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 /**
  * Product Control Center: one screen with the product's large photos, CJ cost
  * and link, the eBay listing's live price and link, sizes, and CJ's
@@ -46,6 +99,7 @@ export function ProductControlModal({ target, onClose }: { target: ProductContro
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [active, setActive] = useState(0);
   const [enlarged, setEnlarged] = useState<string | null>(null);
+  const [shipping, setShipping] = useState<ShippingState>({ status: "idle" });
   const dialogRef = useRef<HTMLDivElement>(null);
   const url = endpoint(target);
 
@@ -67,6 +121,31 @@ export function ProductControlModal({ target, onClose }: { target: ProductContro
   useEffect(() => {
     void load(); // eslint-disable-line react-hooks/set-state-in-effect
   }, [load]);
+
+  // CJ's real shipping price, asked for once the product (and so its CJ id) is known.
+  const pid = state.status === "done" ? (state.product.cj?.pid ?? null) : null;
+  const quoteSku = state.status === "done" ? (state.product.cj?.quoteSku ?? null) : null;
+  const loadShipping = useCallback(async () => {
+    if (!pid) return;
+    setShipping({ status: "loading" });
+    try {
+      const params = new URLSearchParams({ pid });
+      if (quoteSku) params.set("sku", quoteSku);
+      const res = await fetch(`/api/source/shipping?${params}`);
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.ok) {
+        setShipping({ status: "error", message: body?.error ?? `HTTP ${res.status}` });
+        return;
+      }
+      setShipping({ status: "done", quote: { variant: body.variant, options: body.options } });
+    } catch {
+      setShipping({ status: "error", message: "couldn't reach AutoPilot" });
+    }
+  }, [pid, quoteSku]);
+
+  useEffect(() => {
+    void loadShipping(); // eslint-disable-line react-hooks/set-state-in-effect
+  }, [loadShipping]);
 
   // Escape closes the enlarged image first, then the modal. Page scroll is locked while open.
   useEffect(() => {
@@ -93,6 +172,7 @@ export function ProductControlModal({ target, onClose }: { target: ProductContro
   const mainImage = images[Math.min(active, Math.max(0, images.length - 1))] ?? null;
   const ebay = product?.ebay ?? null;
   const cj = product?.cj ?? null;
+  const realShipping = shipping.status === "done" ? (shipping.quote.options[0]?.price ?? null) : null;
 
   // Portalled to <body>: inside a table card (backdrop blur), `fixed` would be clipped to the card.
   return createPortal(
@@ -176,8 +256,20 @@ export function ProductControlModal({ target, onClose }: { target: ProductContro
                     <>
                       <dl className="mt-2">
                         <Row label="Base cost" value={money(cj.baseCost)} />
-                        <Row label="Shipping (estimate)" value={cj.shipping == null ? "—" : money(cj.shipping)} />
-                        <Row label="Total landed cost" value={money(cj.landed)} strong />
+                        {realShipping != null ? (
+                          <Row label="CJ shipping to US" value={money(realShipping)} />
+                        ) : (
+                          <Row
+                            label="Shipping (AutoPilot estimate)"
+                            value={cj.shipping == null ? "—" : money(cj.shipping)}
+                          />
+                        )}
+                        <CjShipping state={shipping} onRetry={() => void loadShipping()} />
+                        <Row
+                          label={realShipping != null ? "Total landed cost" : "Total landed cost (estimate)"}
+                          value={money(realShipping != null ? cj.baseCost + realShipping : cj.landed)}
+                          strong
+                        />
                       </dl>
                       {cj.url ? (
                         <a
