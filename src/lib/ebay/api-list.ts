@@ -64,8 +64,9 @@ function toCatalogProduct(draft: ListingDraft, context?: ApiPublishContext): Cat
     userId: context.userId,
     sku: context.sku,
     title: draft.title,
-    // The size chart (clothing/shoes) is appended as images in the description, never the gallery.
-    description: descriptionHtml(draft.description) + sizeChartHtml(draft.sizeChartImages ?? []),
+    // The size chart (clothing/shoes) is appended as images in the description, never the gallery,
+    // with CJ's sizing notes right below it.
+    description: descriptionHtml(draft.description) + sizeChartHtml(draft.sizeChartImages ?? [], draft.sizeNotes ?? []),
     imageUrls: listingImages(draft),
     price: draft.listPrice,
     quantity: draft.quantity && draft.quantity > 0 ? draft.quantity : 1,

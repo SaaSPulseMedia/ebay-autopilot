@@ -18,6 +18,8 @@ export type ListingDraft = {
   freeShipping?: boolean;
   /** Clothing and shoes: CJ's size chart images, embedded in the description HTML (see src/lib/size-chart.ts). */
   sizeChartImages?: string[];
+  /** Clothing and shoes: CJ's sizing warnings, shown under the size chart in the description. */
+  sizeNotes?: string[];
 };
 
 export type ListingResult = {

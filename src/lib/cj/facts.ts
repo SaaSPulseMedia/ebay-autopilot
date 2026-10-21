@@ -4,6 +4,8 @@
  * material. Pure: no I/O. Only what CJ actually sent is kept; nothing is guessed.
  */
 
+import { sizeNotes } from "@/lib/size-chart";
+
 export type ProductFacts = {
   /** CJ's description as plain text (no HTML), trimmed to a sane length. */
   description: string;
@@ -21,6 +23,12 @@ export type ProductFacts = {
    * measurement or detail shots. Optional: rows imported before it was kept lack it.
    */
   descriptionImages?: string[];
+  /**
+   * Sizing warnings from CJ's description ("Note: Asian sizes are 1 to 2 sizes
+   * smaller…"), read from the full text before it is shortened. Optional: rows
+   * imported before it was kept lack it (they fall back to `description`).
+   */
+  sizeNotes?: string[];
 };
 
 const MAX_DESCRIPTION = 3000;
@@ -127,5 +135,6 @@ export function extractFacts(input: {
     dimensionsMm: input.dimensionsMm ?? null,
     material: listText(input.material) || specMaterial,
     descriptionImages: descriptionImages(input.descriptionHtml),
+    sizeNotes: sizeNotes(text),
   };
 }

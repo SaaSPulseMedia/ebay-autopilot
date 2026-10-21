@@ -14,7 +14,7 @@ import { nextPlanUp, planLimits, type PlanLimits } from "@/lib/limits";
 import { withFooter, type ListingDefaults } from "@/lib/listing-defaults";
 import type { CatalogVariant } from "@/db/schema";
 import type { ProductFacts } from "@/lib/cj/facts";
-import { sizeChartImages } from "@/lib/size-chart";
+import { isApparel, sizeChartImages, sizeNotes } from "@/lib/size-chart";
 import { listingVariants, productSku, variantOptions } from "@/lib/variants";
 
 /**
@@ -228,6 +228,10 @@ export async function createListing(args: {
     title: source.title,
     descriptionImages: source.details?.descriptionImages,
   });
+  // ...with CJ's sizing warnings under it (older imports: read from the stored description text).
+  const notes = isApparel(source.category, source.title)
+    ? (source.details?.sizeNotes ?? sizeNotes(source.details?.description))
+    : [];
   const draft: ListingDraft = {
     title: copy.title,
     description: withFooter(copy.description, defaults.descriptionFooter),
@@ -240,6 +244,7 @@ export async function createListing(args: {
     variations: variants.length > 1 ? variants : undefined,
     ...(source.freeShipping ? { freeShipping: true } : {}),
     ...(chart.length ? { sizeChartImages: chart } : {}),
+    ...(notes.length ? { sizeNotes: notes } : {}),
   };
 
   const outcome = args.drip
