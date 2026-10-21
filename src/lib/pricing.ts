@@ -80,11 +80,28 @@ export const MARKET_MATCH_BUFFER = 0.5;
 /** Must match the Market Guard's limit (src/lib/ebay/market-price.ts), or every match would be blocked. */
 export const MARKET_MATCH_MAX_ABOVE = 0.2;
 
+/**
+ * Safety Margin Cap: a price more than SAFETY_CAP_TRIGGER above the cheapest
+ * active eBay listing is cut to that listing + SAFETY_CAP_ABOVE_LOWEST.
+ */
+export const SAFETY_CAP_TRIGGER = 0.15;
+export const SAFETY_CAP_ABOVE_LOWEST = 0.05;
+
 /** Where the eBay price came from: recent sales, or the competitive end of active listings. */
 export type MarketSource = "sold" | "active";
 
+/** The Safety Margin Cap's verdict, when the cheapest active listing was known. */
+export type SafetyCap = { lowest: number; capped: boolean };
+
 export type MarketMatch =
-  | { rule: "market"; listPrice: number; market: number; source: MarketSource; profitAtMarket: number }
+  | {
+      rule: "market";
+      listPrice: number;
+      market: number;
+      source: MarketSource;
+      profitAtMarket: number;
+      safety: SafetyCap | null;
+    }
   | {
       rule: "default";
       listPrice: number;
@@ -92,6 +109,17 @@ export type MarketMatch =
       source: MarketSource | null;
       profitAtMarket: number | null;
       reason: string;
+      safety: SafetyCap | null;
+    }
+  | {
+      /** The Safety Margin Cap left under $3 profit: shown as "Low" and never listed. */
+      rule: "low";
+      listPrice: number;
+      market: number | null;
+      source: MarketSource | null;
+      profitAtMarket: number;
+      reason: string;
+      safety: SafetyCap;
     };
 
 /**
@@ -106,7 +134,7 @@ export type MarketMatch =
  * back to AutoPilot's suggested price (cost + ~23% margin) and the seller's
  * normal shipping.
  */
-export function marketMatchPrice(input: {
+function marketMatchCore(input: {
   cost: number;
   shipping: number;
   suggested: number;
@@ -116,16 +144,17 @@ export function marketMatchPrice(input: {
   guardAverage?: number | null;
   /** Promoted Listings ad rate (%), charged on each sale like the final value fee. */
   adRatePct?: number;
-}): MarketMatch {
+}): Exclude<MarketMatch, { rule: "low" }> {
   const source = input.market != null ? (input.source ?? "active") : null;
   const label = source === "sold" ? "eBay sold price" : "eBay market price";
-  const fallback = (reason: string, profitAtMarket: number | null): MarketMatch => ({
+  const fallback = (reason: string, profitAtMarket: number | null): Exclude<MarketMatch, { rule: "low" }> => ({
     rule: "default",
     listPrice: input.suggested,
     market: input.market,
     source,
     profitAtMarket,
     reason,
+    safety: null,
   });
   if (input.market == null || !(input.market > 0) || !source) return fallback("no eBay market price found", null);
 
@@ -140,7 +169,51 @@ export function marketMatchPrice(input: {
     return fallback(`${atMarket} at the ${label}`, profitAtMarket);
   }
   const listPrice = cents(Math.min(input.market + MARKET_MATCH_BUFFER, ceiling));
-  return { rule: "market", listPrice, market: input.market, source, profitAtMarket };
+  return { rule: "market", listPrice, market: input.market, source, profitAtMarket, safety: null };
+}
+
+/**
+ * The market-match pricing rule (marketMatchCore) plus the Safety Margin Cap.
+ * With `lowest`, the cheapest active eBay listing (item + shipping): a price
+ * more than 15% above it — the match price, or the suggested price it fell
+ * back to — is cut to lowest + 5% with free shipping. If that cut leaves under
+ * $3 profit the result is rule "low": shown as Low and never listed.
+ */
+export function marketMatchPrice(
+  input: Parameters<typeof marketMatchCore>[0] & {
+    /** Cheapest active eBay listing (item + shipping); null/undefined skips the cap. */
+    lowest?: number | null;
+  },
+): MarketMatch {
+  const match = marketMatchCore(input);
+  if (input.lowest == null || !(input.lowest > 0)) return match;
+  const lowest = cents(input.lowest);
+  if (match.listPrice <= lowest * (1 + SAFETY_CAP_TRIGGER)) return { ...match, safety: { lowest, capped: false } };
+
+  const listPrice = Math.floor(lowest * (1 + SAFETY_CAP_ABOVE_LOWEST) * 100) / 100;
+  const profit = netProfitFor(listPrice, input.cost, input.shipping, input.adRatePct ?? 0);
+  const safety = { lowest, capped: true };
+  if (profit < MARKET_MATCH_MIN_PROFIT) {
+    const atCap = profit < 0 ? `a $${Math.abs(profit).toFixed(2)} loss` : `only $${profit.toFixed(2)} profit`;
+    return {
+      rule: "low",
+      listPrice,
+      market: match.market,
+      source: match.source,
+      profitAtMarket: profit,
+      reason: `${atCap} at $${listPrice.toFixed(2)}, 5% above the cheapest eBay listing ($${lowest.toFixed(2)})`,
+      safety,
+    };
+  }
+  // Capped prices are compared with eBay's item + shipping, so they always ship free.
+  return {
+    rule: "market",
+    listPrice,
+    market: match.market ?? lowest,
+    source: match.source ?? "active",
+    profitAtMarket: profit,
+    safety,
+  };
 }
 
 export function competitionFor(sales: number): "low" | "medium" | "high" {

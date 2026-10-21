@@ -53,6 +53,12 @@ export type MarketPrice = {
   average: number;
   /** Active listings' lower quartile: the competitive end of what's listed now. */
   low: number;
+  /**
+   * Cheapest active listing (item + shipping), for the Safety Margin Cap.
+   * Listings under half the median are ignored: those are accessories and
+   * spare parts that matched the search, not the product.
+   */
+  lowest: number;
   /** Active listings sampled. */
   count: number;
   query: string;
@@ -116,13 +122,18 @@ async function searchOnce(query: string, token: string): Promise<MarketLookup> {
   const kept = sorted.length >= 5 ? sorted.slice(1, -1) : sorted;
   const average = cents(kept.reduce((sum, p) => sum + p, 0) / kept.length);
   const low = cents(quantile(kept, 0.25));
+  const median = quantile(sorted, 0.5);
+  const lowest = cents(sorted.find((p) => p >= median * LOWEST_MIN_SHARE) ?? sorted[0]);
   return {
     ok: true,
-    market: { average, low, count: prices.length, query, sold: null, reference: low, referenceSource: "active" },
+    market: { average, low, lowest, count: prices.length, query, sold: null, reference: low, referenceSource: "active" },
   };
 }
 
 const cents = (n: number) => Math.round(n * 100) / 100;
+
+/** Below this share of the median, a listing is taken for an accessory or part, not the product. */
+const LOWEST_MIN_SHARE = 0.5;
 
 /** Linear-interpolated quantile of an ascending list. */
 function quantile(sorted: number[], q: number) {

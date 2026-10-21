@@ -3,6 +3,7 @@ import "server-only";
 import { getCurrentUser } from "@/lib/auth";
 import { getWinningProducts } from "@/lib/cj/catalog";
 import { applyMarketCheck } from "@/lib/market-check";
+import { dismissedPids } from "@/lib/seen-products";
 import { getListingDefaults } from "@/lib/seller-settings";
 
 /**
@@ -12,7 +13,7 @@ import { getListingDefaults } from "@/lib/seller-settings";
  * USD), maxSellers (default 20), usOnly=1, limit (default 24, max 60).
  * The top 30 are then checked against eBay's market price (applyMarketCheck):
  * below break-even they're dropped, below the suggested price scored down.
- * Signed-in users only.
+ * Products the seller dismissed are left out. Signed-in users only.
  */
 export const dynamic = "force-dynamic";
 // A category runs up to ~10 CJ calls spaced 1.1 s apart, then up to ~60 eBay lookups.
@@ -40,7 +41,9 @@ export async function GET(request: Request) {
   const maxSellers = sellersParam === "" || sellersParam === "any" ? undefined : (numberParam("maxSellers") ?? DEFAULT_MAX_SELLERS);
 
   try {
+    const dismissed = await dismissedPids(user.id);
     const result = await getWinningProducts(user.id, {
+      exclude: dismissed,
       category: params.get("category")?.trim().slice(0, 100) || undefined,
       minPrice: numberParam("minPrice"),
       maxPrice: numberParam("maxPrice"),

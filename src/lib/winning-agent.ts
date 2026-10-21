@@ -5,7 +5,10 @@ import {
   type KeywordSearchStat,
   type WinningFilters,
   type WinningProduct,
+  cjCategoryScope,
   getKeywordWinners,
+  getWinningProducts,
+  inCategoryScope,
 } from "@/lib/cj/catalog";
 import { type MarketCheckSummary, applyMarketCheck } from "@/lib/market-check";
 import type { NICHES } from "@/lib/niches";
@@ -18,9 +21,14 @@ import { getListingDefaults } from "@/lib/seller-settings";
  *  1. Claude picks 5 niche, trending and seasonal keywords for the niche,
  *     avoiding keywords this seller already used there;
  *  2. CJ is searched for them (up to 100 results each, through the 1.1 s
- *     queue), leaving out every product already in seen_products;
- *  3. if fewer than MIN_FRESH fresh products are left, the same keywords are
- *     searched again on random deeper CJ pages, while time allows;
+ *     queue), leaving out every product already in seen_products (shown,
+ *     rejected or dismissed) and every product outside the niche's own CJ
+ *     categories (cjCategoryScope: the niche's `cj` matched against CJ's
+ *     category tree, so a "Home & Garden" run never returns phone cases);
+ *  3. if fewer than MIN_FRESH fresh products are left, CJ is asked directly
+ *     for products in a few of the niche's categoryIds, then, if still short,
+ *     the keywords are searched again on random deeper CJ pages, while time
+ *     allows;
  *  4. the fresh pool is scored (Winning Score) and the top is checked against
  *     eBay's market price (Market Guard check: below break-even is dropped);
  *  5. the best RETURNED are returned and recorded as seen, along with the
@@ -47,6 +55,10 @@ type Niche = (typeof NICHES)[number];
 
 export type ScoutResult = {
   keywords: string[];
+  /** CJ top-level categories the niche was limited to (empty when CJ's category list couldn't be matched). */
+  categories: string[];
+  /** Keyword results dropped for being outside the niche's CJ categories. */
+  offCategory: number;
   keywordSource: "claude" | "fallback";
   searches: KeywordSearchStat[];
   /** Fresh (never-shown) CJ products found across all rounds, before the page's filters. */
@@ -62,17 +74,39 @@ export type ScoutResult = {
 
 const randomInt = (min: number, max: number) => min + Math.floor(Math.random() * (max - min + 1));
 
+/** CJ categoryIds asked for directly when the keywords find too few in-category products (2 CJ calls each). */
+const CATEGORY_TOP_UP = 3;
+
+/** A random `n` of `items` (Fisher–Yates on a copy). */
+function sample<T>(items: T[], n: number) {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = randomInt(0, i);
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.slice(0, n);
+}
+
 export async function scoutWinners(
   userId: number,
   niche: Niche,
   filters: Omit<WinningFilters, "category" | "limit">,
   started = Date.now(),
 ): Promise<{ ok: true; data: ScoutResult } | { ok: false; error: string; status: number }> {
-  const [seen, avoid, defaults] = await Promise.all([
+  const [seen, avoid, defaults, scope] = await Promise.all([
     seenPids(userId),
     usedKeywords(userId, niche.name),
     getListingDefaults(userId),
+    cjCategoryScope(niche.cj),
   ]);
+  if (!scope) console.warn(`[winning-agent] niche="${niche.name}": no matching CJ categories; results are not category-filtered.`);
+  let offCategory = 0;
+  const inNiche = (list: WinningProduct[]) => {
+    if (!scope) return list;
+    const kept = list.filter((p) => inCategoryScope(p.category, scope, niche.cj));
+    offCategory += list.length - kept.length;
+    return kept;
+  };
   const suggestion = await suggestNicheKeywords(niche.name, niche.fallback, avoid);
   const keywords = suggestion.keywords;
   const scoring = { ...filters, limit: 1000 };
@@ -82,10 +116,21 @@ export async function scoutWinners(
   const first = await getKeywordWinners(userId, keywords, scoring, { exclude });
   if (!first.ok) return first;
   const searches = [...first.data.searches];
-  let products = first.data.products;
+  let products = inNiche(first.data.products);
   let pooled = first.data.pooled;
   let hiddenByFilters = first.data.hiddenByFilters;
-  for (const p of products) exclude.add(p.pid);
+  for (const p of first.data.products) exclude.add(p.pid);
+
+  // Too few in-category products: ask CJ for products in the niche's own categoryIds.
+  let topUp = 0;
+  if (scope && products.length < MIN_FRESH && Date.now() - started < RETRY_BEFORE_MS) {
+    const more = await getWinningProducts(userId, { ...scoring, categoryIds: sample(scope.ids, CATEGORY_TOP_UP), exclude });
+    if (more.ok) {
+      topUp = more.data.length;
+      for (const p of more.data) exclude.add(p.pid);
+      products = [...products, ...more.data].sort((a, b) => b.winningScore - a.winningScore || b.profit - a.profit);
+    }
+  }
 
   // Rounds 2+: random deeper pages. Each keyword's deeper pages are searched
   // with the phrase that found its results: a long keyword usually finds a
@@ -120,7 +165,7 @@ export async function scoutWinners(
     pooled += more.data.pooled;
     hiddenByFilters += more.data.hiddenByFilters;
     for (const p of more.data.products) exclude.add(p.pid);
-    products = [...products, ...more.data.products].sort((a, b) => b.winningScore - a.winningScore || b.profit - a.profit);
+    products = [...products, ...inNiche(more.data.products)].sort((a, b) => b.winningScore - a.winningScore || b.profit - a.profit);
   }
 
   // Market Guard check on the best, then the top RETURNED.
@@ -140,12 +185,14 @@ export async function scoutWinners(
   ]);
 
   console.log(
-    `[winning-agent] niche="${niche.name}" keywords=${JSON.stringify(keywords)} seenBefore=${seen.size} fresh=${products.length} retries=${retries} shown=${shown.length} ms=${Date.now() - started}`,
+    `[winning-agent] niche="${niche.name}" categories=${JSON.stringify(scope?.firstLevels ?? [])} keywords=${JSON.stringify(keywords)} seenBefore=${seen.size} offCategory=${offCategory} topUp=${topUp} fresh=${products.length} retries=${retries} shown=${shown.length} ms=${Date.now() - started}`,
   );
   return {
     ok: true,
     data: {
       keywords,
+      categories: scope?.firstLevels ?? [],
+      offCategory,
       keywordSource: suggestion.source,
       searches,
       pooled,

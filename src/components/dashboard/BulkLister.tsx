@@ -28,12 +28,31 @@ export type BulkProduct = {
   customImages: boolean;
   /** False for the shared sample products, which no seller can delete. */
   deletable: boolean;
+  /** Already has a live or scheduled listing; the daily batch skips it. */
+  listed: boolean;
   /** Market Match result (only with that pricing rule; filled in after the page loads). */
   pricing?: PricingNote;
 };
 
-/** Which pricing rule a product gets under "Match eBay Market Price (Free Shipping)". */
-type PricingNote = { rule: "market" | "default"; market: number | null; marketSource?: "sold" | "active" | null; reason?: string };
+/**
+ * Which pricing rule a product gets under "Match eBay Market Price (Free
+ * Shipping)". "low": the Safety Margin Cap left under $3 profit, so it can't be listed.
+ */
+type PricingNote = {
+  rule: "market" | "default" | "low";
+  market: number | null;
+  marketSource?: "sold" | "active" | null;
+  /** Cheapest active eBay listing, and whether the Safety Margin Cap cut the price to it + 5%. */
+  lowest?: number | null;
+  capped?: boolean;
+  reason?: string;
+};
+
+/** Products the daily batch publishes per click (drip posting releases them up to DRIP_PER_RUN an hour). */
+const DAILY_WINNERS = 10;
+
+/** "Good": Market Match priced it (after the Safety Margin Cap) at $3+ profit, so the daily batch may list it. */
+const isGood = (p: BulkProduct) => p.pricing?.rule === "market" && p.breakdown.profit > 0 && p.veroRisk !== "high" && !p.listed;
 
 type PricePreview = PricingNote & { externalId: string; listPrice: number; breakdown: Breakdown };
 
@@ -92,13 +111,27 @@ function marketLabel(note: PricingNote) {
 /** "Market Match" or "Default Margin" under a product, for the Market Match pricing rule. */
 function PricingRuleNote({ note }: { note?: PricingNote }) {
   if (!note) return <span className="mt-0.5 block text-[11px] text-slate-500">Checking eBay market price…</span>;
+  if (note.rule === "low") {
+    return (
+      <span className="mt-0.5 block text-[11px] text-amber-300" title="Safety Margin Cap: priced to compete with the cheapest eBay listing it makes under $3, so it won't be listed.">
+        <span className="mr-1 rounded-full bg-amber-400/15 px-1.5 py-0.5 font-semibold">Low</span>
+        {note.reason ?? "under $3 profit at a competitive price"}
+      </span>
+    );
+  }
   if (note.rule === "market") {
+    const capped = note.capped && note.lowest != null;
     return (
       <span
         className="mt-0.5 block text-[11px] text-lime-brand"
-        title={`Priced at the ${note.marketSource === "sold" ? "eBay sold price (last 90 days)" : "competitive end of active eBay listings"} + $${MARKET_MATCH_BUFFER.toFixed(2)}, with free shipping.`}
+        title={
+          capped
+            ? `Safety Margin Cap: priced 5% above the cheapest eBay listing ($${note.lowest?.toFixed(2)}), with free shipping.`
+            : `Priced at the ${note.marketSource === "sold" ? "eBay sold price (last 90 days)" : "competitive end of active eBay listings"} + $${MARKET_MATCH_BUFFER.toFixed(2)}, with free shipping.`
+        }
       >
-        Market Match · {marketLabel(note)} · free shipping
+        <span className="mr-1 rounded-full bg-lime-brand/15 px-1.5 py-0.5 font-semibold">Good</span>
+        Market Match · {capped ? `cheapest eBay $${note.lowest?.toFixed(2)} + 5%` : marketLabel(note)} · free shipping
       </span>
     );
   }
@@ -187,6 +220,8 @@ export function BulkLister({
                 rule: preview.rule,
                 market: preview.market,
                 marketSource: preview.marketSource,
+                lowest: preview.lowest,
+                capped: preview.capped,
                 reason: preview.reason,
               },
             }
@@ -208,12 +243,33 @@ export function BulkLister({
   const overLimit = selected.size > perRunCap;
   const atCapacity = remaining === 0;
 
-  // Brand-blocked and money-losing products cannot be selected.
-  const isUnlistable = (p: BulkProduct) => p.veroRisk === "high" || p.breakdown.profit <= 0;
-  const blockedIds = useMemo(
-    () => new Set(products.filter((p) => p.veroRisk === "high" || p.breakdown.profit <= 0).map((p) => p.externalId)),
-    [products],
+  // Brand-blocked, money-losing and "Low" (Safety Margin Cap) products cannot be selected.
+  const isUnlistable = (p: BulkProduct) => p.veroRisk === "high" || p.breakdown.profit <= 0 || p.pricing?.rule === "low";
+  const blockedIds = useMemo(() => new Set(products.filter(isUnlistable).map((p) => p.externalId)), [products]);
+
+  // Daily batch: the most profitable "Good" products not listed yet, once every eBay price is in.
+  const pricesChecked = marketMode ? products.filter((p) => p.pricing).length : 0;
+  const pricesPending = marketMode && pricesChecked < products.length;
+  const dailyCount = Math.min(DAILY_WINNERS, perRunCap);
+  const dailyWinners = useMemo(
+    () =>
+      products
+        .filter(isGood)
+        .sort((a, b) => b.breakdown.profit - a.breakdown.profit)
+        .slice(0, dailyCount),
+    [products, dailyCount],
   );
+  const dailyBlocker = !marketMode
+    ? "Turn on “Match eBay Market Price (Free Shipping)” in Settings: the daily batch only lists products that pass the eBay price check."
+    : !dripAllowed
+      ? "The daily batch uses drip posting, which is included in Pro and Business."
+      : atCapacity
+        ? "No listing slots left on your plan."
+        : pricesPending && dailyWinners.length < dailyCount
+          ? `Checking eBay prices… ${pricesChecked}/${products.length}`
+          : !dailyWinners.length
+            ? "No products with a Good badge to list right now."
+            : null;
 
   function toggle(id: string) {
     if (blockedIds.has(id)) return;
@@ -237,13 +293,33 @@ export function BulkLister({
   }
 
   async function listSelected() {
+    await publish(Array.from(selected), dripAllowed && drip);
+  }
+
+  /** "Auto-List 10 Daily Winners": the top Good products, released by drip posting. */
+  async function listDailyWinners() {
+    if (dailyBlocker || !dailyWinners.length) return;
+    const ok = window.confirm(
+      `Schedule your ${dailyWinners.length} best Good products for drip posting?\n\n` +
+        dailyWinners.map((p) => `• ${p.title} — $${p.listPrice.toFixed(2)} (+$${p.breakdown.profit.toFixed(2)})`).join("\n") +
+        `\n\nPrices are set now (Safety Margin Cap included); up to ${dripPerRun} go live each hour.`,
+    );
+    if (!ok) return;
+    setSelected(new Set(dailyWinners.map((p) => p.externalId)));
+    await publish(
+      dailyWinners.map((p) => p.externalId),
+      true,
+    );
+  }
+
+  async function publish(externalIds: string[], useDrip: boolean) {
     setBusy(true);
     setSummary(null);
     try {
       const res = await fetch("/api/listings/bulk", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ externalIds: Array.from(selected), drip: dripAllowed && drip }),
+        body: JSON.stringify({ externalIds, drip: useDrip }),
       });
       const json = (await res.json()) as BatchResponse;
       setSummary(json);
@@ -316,6 +392,21 @@ export function BulkLister({
 
         <div className="mt-3">
           <DripToggle allowed={dripAllowed} checked={drip} perRun={dripPerRun} onChange={setDrip} />
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-lime-brand/25 bg-lime-brand/5 px-3 py-2.5">
+          <button
+            type="button"
+            onClick={() => void listDailyWinners()}
+            disabled={busy || Boolean(dailyBlocker)}
+            className="rounded-full bg-lime-brand px-5 py-2 text-sm font-bold text-navy-950 transition hover:brightness-110 disabled:opacity-50"
+          >
+            🚀 Auto-List {DAILY_WINNERS} Daily Winners
+          </button>
+          <span className="text-xs text-slate-300">
+            {dailyBlocker ??
+              `Schedules your ${dailyWinners.length} most profitable products with a Good badge (not listed yet), released by drip posting: up to ${dripPerRun} an hour.`}
+          </span>
         </div>
 
         {atCapacity ? (
@@ -451,6 +542,8 @@ export function BulkLister({
                         <span className="ml-2 rounded-full bg-red-500/15 px-2 py-0.5 font-semibold text-red-300">
                           Loses money
                         </span>
+                      ) : product.listed ? (
+                        <span className="ml-2 rounded-full bg-white/10 px-2 py-0.5 font-semibold text-slate-300">Listed</span>
                       ) : product.veroRisk === "medium" ? (
                         <span className="ml-2 rounded-full bg-amber-400/15 px-2 py-0.5 font-semibold text-amber-200">
                           {product.veroMatch ? "Brand mentioned" : "Brand-sensitive"}

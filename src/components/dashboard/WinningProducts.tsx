@@ -218,9 +218,12 @@ function MarketLine({ product }: { product: WinningProduct }) {
     `Active listings average ${money(market.average)}.`,
     `Break-even ${money(market.breakeven)}, our default price ${money(product.suggestedPrice)}.`,
     `Profit at ${money(market.reference)}: ${money(market.profitAtMarket)}.`,
-    market.listAt != null
-      ? `Match eBay Market Price lists it at ${money(market.listAt)} with free shipping.`
-      : "Match eBay Market Price would use the default price (under $3 profit at the eBay price).",
+    market.lowest != null ? `Cheapest active listing ${money(market.lowest)}.` : "",
+    market.blocked
+      ? `Won't be listed: ${market.blocked}.`
+      : market.listAt != null
+        ? `Match eBay Market Price lists it at ${money(market.listAt)} with free shipping${market.capped ? " (Safety Margin Cap: 5% above the cheapest listing)" : ""}.`
+        : "Match eBay Market Price would use the default price (under $3 profit at the eBay price).",
     market.status === "low" ? `Winning Score lowered from ${market.scoreBefore}.` : "",
   ]
     .filter(Boolean)
@@ -228,7 +231,12 @@ function MarketLine({ product }: { product: WinningProduct }) {
   return (
     <p className={`mt-0.5 text-[11px] font-medium ${MARKET_TONE[market.status]}`} title={title}>
       {sold ? "eBay Sold Price" : "eBay Market (active)"}: {money(market.reference)}
-      {market.listAt != null ? ` · lists at ${money(market.listAt)}` : ""} ({MARKET_LABEL[market.status]})
+      {market.blocked
+        ? " · won't list"
+        : market.listAt != null
+          ? ` · lists at ${money(market.listAt)}${market.capped ? " (capped)" : ""}`
+          : ""}{" "}
+      ({MARKET_LABEL[market.status]})
     </p>
   );
 }
@@ -482,6 +490,21 @@ export function WinningProducts() {
       );
     } else {
       window.alert("Couldn't reset your seen history. Try again in a moment.");
+    }
+  }
+
+  /** Hides a product for good (feed and Auto-Suggest); it leaves the grid at once and comes back if saving fails. */
+  async function dismiss(product: WinningProduct) {
+    const removeFrom = (list: WinningProduct[]) => list.filter((p) => p.pid !== product.pid);
+    setFeed((prev) => (prev.status === "done" ? { ...prev, products: removeFrom(prev.products) } : prev));
+    const res = await fetch("/api/source/seen", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pid: product.pid, niche: suggesting ?? "" }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      setFeed((prev) => (prev.status === "done" ? { ...prev, products: [...removeFrom(prev.products), product] } : prev));
+      window.alert("Couldn't dismiss that product. Try again in a moment.");
     }
   }
 
@@ -816,6 +839,14 @@ export function WinningProducts() {
                           ) : null}
                         </>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => void dismiss(product)}
+                        title="Hide this product for good: it won't show in the feed or Auto-Suggest again."
+                        className="mt-1.5 w-full rounded-full border border-white/10 px-3 py-1 text-[11px] font-medium text-slate-400 hover:border-red-400/40 hover:text-red-300"
+                      >
+                        Dismiss
+                      </button>
                     </div>
                   </div>
                 </div>

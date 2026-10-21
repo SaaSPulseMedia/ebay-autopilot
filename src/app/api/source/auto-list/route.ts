@@ -57,7 +57,11 @@ export async function POST(request: Request) {
   }
 
   const defaults = await getListingDefaults(user.id);
-  const { listPrice, freeShipping } = await resolveListingPrice(defaults, product);
+  const price = await resolveListingPrice(defaults, product);
+  const { listPrice, freeShipping } = price;
+  if (price.rule === "low") {
+    return Response.json({ ok: false, step: "pricing", error: `Low: not listed, ${price.reason}.` }, { status: 422 });
+  }
   const profit = netProfitFor(listPrice, product.supplierPrice, product.shippingCost, defaults.adRatePct);
   if (profit <= 0) {
     return Response.json(

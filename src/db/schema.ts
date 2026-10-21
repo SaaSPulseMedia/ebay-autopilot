@@ -136,7 +136,7 @@ export const seenProducts = pgTable(
     pid: text("pid").notNull(),
     niche: text("niche").notNull().default(""),
     keyword: text("keyword").notNull().default(""),
-    /** "shown" in the feed, or "rejected" by the Market Guard (eBay sells it below break-even). */
+    /** "shown" in the feed, "rejected" by the Market Guard (eBay sells it below break-even), or "dismissed" by the seller. */
     outcome: text("outcome").notNull().default("shown"),
     seenAt: timestamp("seen_at", { withTimezone: true }).notNull().defaultNow(),
   },

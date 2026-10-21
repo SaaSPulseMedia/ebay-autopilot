@@ -99,6 +99,9 @@ export function winningScore(input: WinningInput, now = Date.now()): WinningBrea
  *             cheaper than planned, so the Winning Score is cut;
  *   too_low — below break-even (cost + shipping + eBay fees): every sale at
  *             that price loses money, so the product is dropped.
+ * The Safety Margin Cap (see marketMatchPrice) also makes a product "low":
+ * priced down to the cheapest active listing + 5% it would make under $3, so
+ * it is never listed (`blocked`).
  */
 export type MarketInfo = {
   status: "good" | "low" | "too_low";
@@ -116,6 +119,11 @@ export type MarketInfo = {
   referenceSource: MarketSource;
   /** What "Match eBay Market Price" would list it at (reference + $0.50, free shipping); null when it would fall back. */
   listAt: number | null;
+  /** Cheapest active eBay listing (item + shipping), and whether the Safety Margin Cap cut `listAt` to it + 5%. */
+  lowest: number | null;
+  capped: boolean;
+  /** Why it won't be listed: under $3 profit even at the Safety Margin Cap's price. */
+  blocked: string | null;
   /** The lowest price that doesn't lose money after cost, shipping and eBay fees. */
   breakeven: number;
   /** Net profit per sale at the reference price. */
@@ -141,6 +149,7 @@ export function marketAdjustment(
     sold: { price: number; count: number } | null;
     reference: number;
     referenceSource: MarketSource;
+    lowest?: number;
   },
   adRatePct = 0,
 ): { winningScore: number; market: MarketInfo } {
@@ -153,6 +162,7 @@ export function marketAdjustment(
     market: reference,
     source: market.referenceSource,
     guardAverage: market.average,
+    lowest: market.lowest,
     adRatePct,
   });
   const base = {
@@ -164,6 +174,9 @@ export function marketAdjustment(
     reference,
     referenceSource: market.referenceSource,
     listAt: match.rule === "market" ? match.listPrice : null,
+    lowest: match.safety?.lowest ?? null,
+    capped: match.safety?.capped ?? false,
+    blocked: match.rule === "low" ? match.reason : null,
     breakeven,
     profitAtMarket: netProfitFor(reference, input.cost, input.shipping, adRatePct),
     scoreBefore: input.winningScore,
@@ -175,6 +188,9 @@ export function marketAdjustment(
     const room = (reference - breakeven) / Math.max(0.01, input.suggestedPrice - breakeven);
     const factor = LOW_MARKET_FLOOR + (1 - LOW_MARKET_FLOOR) * clamp01(room);
     return { winningScore: Math.round(input.winningScore * factor), market: { ...base, status: "low" } };
+  }
+  if (base.blocked) {
+    return { winningScore: Math.round(input.winningScore * LOW_MARKET_FLOOR), market: { ...base, status: "low" } };
   }
   return { winningScore: input.winningScore, market: { ...base, status: "good" } };
 }

@@ -12,7 +12,7 @@ import { getListingDefaults } from "@/lib/seller-settings";
 import { withUserImages } from "@/lib/product-images";
 import { getCatalog, isSampleProduct } from "@/lib/suppliers";
 import { listingVariants } from "@/lib/variants";
-import { and, count, eq, ne } from "drizzle-orm";
+import { and, count, eq, isNotNull, ne, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -23,14 +23,21 @@ export default async function BulkPage() {
   if (!user) return null;
 
   const limits = planLimits(user.plan);
-  const [catalog, defaults, [{ count: activeUsed }]] = await Promise.all([
+  const externalId = sql<string>`${listings.payload}->>'externalId'`;
+  const [catalog, defaults, [{ count: activeUsed }], listedRows] = await Promise.all([
     getCatalog(user.id, 120),
     getListingDefaults(user.id),
     db
       .select({ count: count() })
       .from(listings)
       .where(and(eq(listings.userId, user.id), ne(listings.status, "ended"))),
+    // Catalog products with a live or scheduled listing (listings made before payload.externalId aren't matched).
+    db
+      .selectDistinct({ externalId })
+      .from(listings)
+      .where(and(eq(listings.userId, user.id), ne(listings.status, "ended"), isNotNull(externalId))),
   ]);
+  const listedIds = new Set(listedRows.map((r) => r.externalId));
 
   const withImages = await withUserImages(user.id, catalog);
   const products: BulkProduct[] = withImages.map((product) => {
@@ -59,6 +66,7 @@ export default async function BulkPage() {
     customImages: product.customImages,
     // Shared sample products belong to no one, so no seller can delete them.
     deletable: !isSampleProduct(product),
+    listed: listedIds.has(product.externalId),
     };
   });
   const sample = catalog.some(isSampleProduct);

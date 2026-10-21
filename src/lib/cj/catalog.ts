@@ -321,7 +321,9 @@ export type CjCategory = {
 };
 
 const CATEGORY_TTL_MS = 24 * 60 * 60 * 1000;
-let categoryCache: { at: number; categories: CjCategory[] } | null = null;
+/** One third-level CJ category with the names above it. */
+type CjCategoryLeaf = { id: string; name: string; second: string; first: string };
+let categoryCache: { at: number; categories: CjCategory[]; leaves: CjCategoryLeaf[] } | null = null;
 
 type CjCategoryTree = Array<{
   categoryFirstName?: string;
@@ -341,6 +343,20 @@ export async function getCjCategories(): Promise<CjResult<CjCategory[]>> {
   const res = await cjGet("/product/getCategory");
   if (!res.ok) return res;
   const tree = Array.isArray(res.data) ? (res.data as CjCategoryTree) : [];
+  const leaves: CjCategoryLeaf[] = [];
+  for (const first of tree) {
+    for (const second of first.categoryFirstList ?? []) {
+      for (const third of second.categorySecondList ?? []) {
+        if (!str(third.categoryId)) continue;
+        leaves.push({
+          id: str(third.categoryId),
+          name: str(third.categoryName),
+          second: str(second.categorySecondName),
+          first: str(first.categoryFirstName),
+        });
+      }
+    }
+  }
   const categories = tree
     .map((first): CjCategory => {
       const names = new Set<string>();
@@ -362,8 +378,39 @@ export async function getCjCategories(): Promise<CjResult<CjCategory[]>> {
     })
     .filter((c) => c.name)
     .sort((a, b) => a.name.localeCompare(b.name));
-  if (categories.length) categoryCache = { at: Date.now(), categories };
+  if (categories.length) categoryCache = { at: Date.now(), categories, leaves };
   return { ok: true, data: categories };
+}
+
+/** The CJ categories a niche covers: third-level IDs (what CJ's product list filters by) and their names. */
+export type CjCategoryScope = { ids: string[]; names: Set<string>; firstLevels: string[] };
+
+/**
+ * Maps a niche to CJ's own categories: every third-level category whose name,
+ * or the second- or top-level name above it, matches `match` (see NICHES in
+ * src/lib/niches.ts). IDs are interleaved across top-level categories so the
+ * first few span all of them. Null when CJ's category list can't be loaded or
+ * nothing matches.
+ */
+export async function cjCategoryScope(match: RegExp): Promise<CjCategoryScope | null> {
+  const loaded = await getCjCategories();
+  if (!loaded.ok || !categoryCache) return null;
+  const hits = categoryCache.leaves.filter((leaf) => match.test(leaf.name) || match.test(leaf.second) || match.test(leaf.first));
+  if (!hits.length) return null;
+  const byFirst = new Map<string, CjCategoryLeaf[]>();
+  for (const leaf of hits) byFirst.set(leaf.first, [...(byFirst.get(leaf.first) ?? []), leaf]);
+  const groups = [...byFirst.values()];
+  const ids: string[] = [];
+  for (let i = 0; groups.some((g) => i < g.length); i += 1) {
+    for (const group of groups) if (i < group.length) ids.push(group[i].id);
+  }
+  return { ids, names: new Set(hits.map((l) => l.name.toLowerCase()).filter(Boolean)), firstLevels: [...byFirst.keys()] };
+}
+
+/** Whether a CJ product's (third-level) category name falls inside a niche's scope. */
+export function inCategoryScope(category: string, scope: CjCategoryScope, match: RegExp) {
+  const name = category.trim().toLowerCase();
+  return Boolean(name) && (scope.names.has(name) || match.test(category));
 }
 
 /** CJ's "listed by N sellers" as our competition level. */
@@ -549,6 +596,10 @@ export async function getCjProductDetail(pid: string): Promise<CjResult<CjProduc
 export type WinningFilters = {
   /** Top-level CJ category name (from getCjCategories); blank = any. */
   category?: string;
+  /** Third-level CJ category IDs to query instead of `category` (e.g. a niche's, from cjCategoryScope). */
+  categoryIds?: string[];
+  /** CJ product IDs to leave out (e.g. ones the seller dismissed). */
+  exclude?: Set<string>;
   minPrice?: number;
   maxPrice?: number;
   /** Minimum net profit in USD at the suggested eBay price. */
@@ -595,7 +646,9 @@ export async function getWinningProducts(userId: number, filters: WinningFilters
   // Each entry is one CJ query: no category (the general feed), or one of the
   // chosen category's third-level IDs, so CJ returns products from that category.
   let scopes: Array<{ categoryId?: string; pageSize: number }> = [{ pageSize: FEED_POOL }];
-  if (filters.category) {
+  if (filters.categoryIds?.length) {
+    scopes = filters.categoryIds.slice(0, CATEGORY_QUERIES).map((categoryId) => ({ categoryId, pageSize: CATEGORY_POOL }));
+  } else if (filters.category) {
     const categories = await getCjCategories();
     if (!categories.ok) return categories;
     const selected = categories.data.find((c) => c.name === filters.category);
@@ -648,7 +701,7 @@ export async function getWinningProducts(userId: number, filters: WinningFilters
   for (const row of rows) {
     const pid = str(row.pid);
     const cost = num(row.sellPrice);
-    if (!pid || seen.has(pid) || cost <= 0) continue;
+    if (!pid || seen.has(pid) || cost <= 0 || filters.exclude?.has(pid)) continue;
     seen.add(pid);
     const category = str(row.categoryName);
     const origin: CjSearchItem["origin"] = usPids ? (usPids.has(pid) ? "US" : "CN") : null;
@@ -676,7 +729,7 @@ export async function getWinningProducts(userId: number, filters: WinningFilters
 
   products.sort((a, b) => b.winningScore - a.winningScore || b.profit - a.profit);
   console.log(
-    `[cj-winning] queries=${scopes.length} pool=${rows.length} scored=${products.length} us=${usPids ? usPids.size : "n/a"} filters=${JSON.stringify(filters)}`,
+    `[cj-winning] queries=${scopes.length} pool=${rows.length} scored=${products.length} us=${usPids ? usPids.size : "n/a"} filters=${JSON.stringify({ ...filters, exclude: filters.exclude?.size })}`,
   );
   return { ok: true, data: products.slice(0, filters.limit) };
 }
@@ -703,7 +756,7 @@ export type KeywordWinners = {
 export async function getKeywordWinners(
   userId: number,
   keywords: string[],
-  filters: Omit<WinningFilters, "category">,
+  filters: Omit<WinningFilters, "category" | "categoryIds" | "exclude">,
   search: Pick<NonNullable<Parameters<typeof searchCjKeywords>[2]>, "exclude" | "pageFor" | "broaden"> = {},
 ): Promise<CjResult<KeywordWinners>> {
   const found = await searchCjKeywords(userId, keywords, {

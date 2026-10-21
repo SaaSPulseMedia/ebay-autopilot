@@ -53,11 +53,13 @@ export async function POST(request: Request) {
   for (const product of found.filter((p) => p.veroRisk !== "high")) {
     const price = await resolveListingPrice(defaults, product);
     const profit = netProfitFor(price.listPrice, product.supplierPrice, product.shippingCost, defaults.adRatePct);
-    priced.push({ product, listPrice: price.listPrice, freeShipping: price.freeShipping, profit });
+    priced.push({ product, listPrice: price.listPrice, freeShipping: price.freeShipping, profit, price });
   }
+  // Safety Margin Cap: priced down to the cheapest eBay listing + 5%, it would make under $3.
+  const low = priced.filter((row) => row.price.rule === "low");
   // Never publish something that loses money under the seller's own pricing rule.
-  const losing = priced.filter((row) => row.profit <= 0);
-  const selected = priced.filter((row) => row.profit > 0);
+  const losing = priced.filter((row) => row.price.rule !== "low" && row.profit <= 0);
+  const selected = priced.filter((row) => row.price.rule !== "low" && row.profit > 0);
 
   const requested = parseEngine(body.engine);
   const accessToken = await connectedAccessToken(user.id);
@@ -70,6 +72,12 @@ export async function POST(request: Request) {
     message: `Skipped to protect your eBay account: ${product.veroReason}`,
   }));
   results.push(
+    ...low.map(({ product, price }) => ({
+      title: product.title,
+      status: "skipped",
+      variants: 0,
+      message: `Low: not listed, ${price.reason ?? "too little profit at a competitive eBay price"}.`,
+    })),
     ...losing.map(({ product, profit }) => ({
       title: product.title,
       status: "skipped",
