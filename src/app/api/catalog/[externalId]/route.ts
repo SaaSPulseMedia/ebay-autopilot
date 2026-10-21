@@ -3,8 +3,23 @@ import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { catalogProducts, listings, productImages } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
+import { getProductControl } from "@/lib/product-control";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * GET /api/catalog/:externalId — the Product Control Center for a catalog
+ * product (with its latest live or scheduled listing, if any).
+ */
+export async function GET(_request: Request, { params }: { params: Promise<{ externalId: string }> }) {
+  const user = await getCurrentUser();
+  if (!user) return Response.json({ ok: false, error: "Sign in first." }, { status: 401 });
+  const externalId = decodeURIComponent((await params).externalId ?? "").trim();
+  if (!externalId) return Response.json({ ok: false, error: "Missing product id." }, { status: 400 });
+  const product = await getProductControl(user.id, { externalId });
+  if (!product) return Response.json({ ok: false, error: "Product not found." }, { status: 404 });
+  return Response.json({ ok: true, product });
+}
 
 /**
  * DELETE /api/catalog/:externalId — removes a product from the signed-in

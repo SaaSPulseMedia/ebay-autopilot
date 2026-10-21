@@ -6,6 +6,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 
 import { BatchSummary, DripToggle, type BatchResponse } from "@/components/dashboard/BatchControls";
 import { ImageManager } from "@/components/dashboard/ImageManager";
+import { type ProductControlTarget, ProductControlModal } from "@/components/dashboard/ProductControlModal";
 import { PriceBreakdown } from "@/components/dashboard/PriceBreakdown";
 import { MARKET_MATCH_BUFFER, type PriceBreakdown as Breakdown } from "@/lib/pricing";
 
@@ -183,6 +184,7 @@ export function BulkLister({
   const [drip, setDrip] = useState(false);
   const [openWhy, setOpenWhy] = useState<string | null>(null);
   const [previews, setPreviews] = useState<Record<string, PricePreview>>({});
+  const [details, setDetails] = useState<ProductControlTarget | null>(null);
 
   // Market Match needs each product's eBay market price: fetch it in batches
   // after the page renders, so the list never waits on eBay.
@@ -489,7 +491,18 @@ export function BulkLister({
                   }`}
                 >
                   <td className="hidden py-2 pl-4 sm:table-cell">
-                    <ProductThumb src={product.imageUrl} />
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDetails({ externalId: product.externalId, title: product.title, imageUrl: product.imageUrl });
+                      }}
+                      aria-label={`Open details: ${product.title}`}
+                      title="Open product details"
+                      className="block rounded-lg hover:ring-2 hover:ring-brand-500"
+                    >
+                      <ProductThumb src={product.imageUrl} />
+                    </button>
                   </td>
                   <td className="px-4 py-3">
                     <input
@@ -593,6 +606,7 @@ export function BulkLister({
           </tbody>
         </table>
       </div>
+      {details ? <ProductControlModal target={details} onClose={() => setDetails(null)} /> : null}
       {editingImages ? (
         <ImageManager
           externalId={editingImages.externalId}

@@ -32,7 +32,8 @@ function throttled<T>(task: () => Promise<T>): Promise<T> {
 }
 
 export type ItemStatus =
-  | { state: "active" }
+  /** `price`: eBay's current price (the lowest variation's on a multi-variation listing), when it says. */
+  | { state: "active"; price: number | null }
   /** `listingStatus` is eBay's value (Completed, Ended) or "NotFound". */
   | { state: "ended"; listingStatus: string }
   /** eBay couldn't answer (network, auth, rate limit…); the caller leaves the row alone. */
@@ -47,6 +48,7 @@ export function getEbayItemStatus(itemId: string, accessToken: string): Promise<
   <ItemID>${itemId.replace(/\D/g, "")}</ItemID>
   <OutputSelector>Item.ItemID</OutputSelector>
   <OutputSelector>Item.SellingStatus.ListingStatus</OutputSelector>
+  <OutputSelector>Item.SellingStatus.CurrentPrice</OutputSelector>
 </GetItemRequest>`;
     let xml: string;
     try {
@@ -69,7 +71,10 @@ export function getEbayItemStatus(itemId: string, accessToken: string): Promise<
     }
 
     const listingStatus = tag(xml, "ListingStatus");
-    if (listingStatus === "Active") return { state: "active" };
+    if (listingStatus === "Active") {
+      const price = Number(xml.match(/<CurrentPrice\b[^>]*>([^<]*)<\/CurrentPrice>/)?.[1]);
+      return { state: "active", price: Number.isFinite(price) && price > 0 ? price : null };
+    }
     if (listingStatus) return { state: "ended", listingStatus };
 
     const codes = [...xml.matchAll(/<ErrorCode>(\d+)<\/ErrorCode>/g)].map((m) => m[1]);

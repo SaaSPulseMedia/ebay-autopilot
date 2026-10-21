@@ -4,6 +4,7 @@ import { and, desc, eq } from "drizzle-orm";
 
 import { db } from "@/db";
 import { catalogProducts, listings } from "@/db/schema";
+import { cjProductUrl } from "@/lib/cj/urls";
 import { ebaySku } from "@/lib/variants";
 
 /**
@@ -33,14 +34,6 @@ export type CjMatch = {
 type Variant = { sku: string; key?: string; name?: string };
 type CatalogRow = { externalId: string; title: string; imageUrl: string | null; images: string[]; variants: Variant[] };
 
-function slug(text: string) {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
-}
-
-/** CJ's product page; CJ reads the id after "-p-", the slug is for humans. */
-export function cjProductUrl(pid: string, title: string) {
-  return `https://cjdropshipping.com/product/${slug(title) || "product"}-p-${encodeURIComponent(pid)}.html`;
-}
 
 const pidOf = (externalId: string) => externalId.replace(/^cj-/, "");
 const variantLabel = (v: Variant) => v.key || v.name || v.sku;

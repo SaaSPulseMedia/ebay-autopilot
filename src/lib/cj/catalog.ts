@@ -8,6 +8,7 @@ import { cjFetch, getCjAccessToken } from "@/lib/cj/client";
 import { type CjProductFromApi, type CjVariantFromApi, mapCjProductToDraft, parseVariantKey } from "@/lib/cj/mapper";
 import { rankByRelevance } from "@/lib/cj/relevance";
 import { sanitizeCjDescription } from "@/lib/cj/sanitize";
+import { cjProductUrl } from "@/lib/cj/urls";
 import { priceForEbay } from "@/lib/pricing";
 import { type MarketInfo, type WinningBreakdown, parseCjDate, winningScore } from "@/lib/winning-score";
 
@@ -452,6 +453,7 @@ export async function importCjProduct(
     title: draft.title,
     category: draft.category || "General",
     supplier: "cj",
+    supplierUrl: cjProductUrl(draft.externalId, draft.title),
     imageUrl: draft.images[0] ?? null,
     images: draft.images,
     variants: draft.variants,

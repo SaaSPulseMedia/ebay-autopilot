@@ -3,6 +3,7 @@ import "server-only";
 import { db } from "@/db";
 import { type CatalogVariant, catalogProducts } from "@/db/schema";
 import type { ProductFacts } from "@/lib/cj/facts";
+import { cjPidOf, cjProductUrl } from "@/lib/cj/urls";
 import { competitionFor, netProfitFor, priceForEbay } from "@/lib/pricing";
 import { SAMPLE_SUPPLIER, STARTER_ROWS, starterImageUrl } from "@/lib/starter-catalog";
 import { screenVero, stricterRisk } from "@/lib/vero";
@@ -113,7 +114,8 @@ function rowToProduct(row: CatalogRow): SupplierProduct {
     title: row.title,
     category: row.category,
     supplier: row.supplier,
-    supplierUrl: row.supplierUrl,
+    // CJ products imported before the link was saved get it from their id.
+    supplierUrl: row.supplierUrl ?? (cjPidOf(row.externalId) ? cjProductUrl(cjPidOf(row.externalId) as string, row.title) : null),
     imageUrl: row.imageUrl,
     images: Array.isArray(row.images) ? row.images.filter((url): url is string => typeof url === "string" && url !== "") : [],
     variants: Array.isArray(row.variants) ? row.variants.filter((v) => v && typeof v.sku === "string" && v.sku) : [],

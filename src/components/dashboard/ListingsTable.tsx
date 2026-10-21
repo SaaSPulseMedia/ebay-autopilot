@@ -1,7 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useState } from "react";
+
+import { type ProductControlTarget, ProductControlModal } from "@/components/dashboard/ProductControlModal";
 
 export type ListingRow = {
   id: number;
@@ -12,6 +14,7 @@ export type ListingRow = {
   engine: string;
   status: string;
   ebayItemId: string | null;
+  imageUrl: string | null;
   createdAt: Date | string;
 };
 
@@ -19,6 +22,9 @@ export function ListingsTable({ initialListings }: { initialListings: ListingRow
   const router = useRouter();
   const [items, setItems] = useState<ListingRow[]>(initialListings);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [details, setDetails] = useState<ProductControlTarget | null>(null);
+  const closeDetails = useCallback(() => setDetails(null), []);
+  const openDetails = (row: ListingRow) => setDetails({ listingId: row.id, title: row.title, imageUrl: row.imageUrl });
 
   async function endListing(id: number, scheduled: boolean) {
     const question = scheduled
@@ -75,9 +81,12 @@ export function ListingsTable({ initialListings }: { initialListings: ListingRow
 
   return (
     <div className="ap-card overflow-x-auto rounded-2xl">
-      <table className="w-full min-w-[800px] text-left text-sm">
+      <table className="w-full min-w-[860px] text-left text-sm">
         <thead className="border-b border-white/10 text-[11px] uppercase tracking-wide text-slate-400">
           <tr>
+            <th className="w-16 py-3 pl-4">
+              <span className="sr-only">Photo</span>
+            </th>
             <th className="px-4 py-3">Title</th>
             <th className="px-4 py-3 text-right">Cost</th>
             <th className="px-4 py-3 text-right">Price</th>
@@ -91,7 +100,29 @@ export function ListingsTable({ initialListings }: { initialListings: ListingRow
         <tbody>
           {items.map((row) => (
             <tr key={row.id} className="border-b border-white/5 last:border-0 hover:bg-white/[0.02]">
-              <td className="max-w-[300px] truncate px-4 py-3 font-medium text-white">{row.title}</td>
+              <td className="py-2 pl-4">
+                <button
+                  type="button"
+                  onClick={() => openDetails(row)}
+                  aria-label={`Open details: ${row.title}`}
+                  className="block h-12 w-12 overflow-hidden rounded-lg bg-white/5 ring-1 ring-white/10 hover:ring-brand-500"
+                >
+                  {row.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- supplier image from any host
+                    <img src={row.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+                  ) : null}
+                </button>
+              </td>
+              <td className="max-w-[300px] px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => openDetails(row)}
+                  title="Open product details"
+                  className="block w-full truncate text-left font-medium text-white hover:text-brand-400"
+                >
+                  {row.title}
+                </button>
+              </td>
               <td className="px-4 py-3 text-right text-slate-300">${Number(row.supplierPrice).toFixed(2)}</td>
               <td className="px-4 py-3 text-right font-semibold text-white">${Number(row.listPrice).toFixed(2)}</td>
               <td className="px-4 py-3 text-right text-slate-300">{row.variantCount}</td>
@@ -143,6 +174,7 @@ export function ListingsTable({ initialListings }: { initialListings: ListingRow
           ))}
         </tbody>
       </table>
+      {details ? <ProductControlModal target={details} onClose={closeDetails} /> : null}
     </div>
   );
 }

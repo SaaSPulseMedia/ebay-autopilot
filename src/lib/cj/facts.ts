@@ -16,11 +16,17 @@ export type ProductFacts = {
   /** Length × width × height as CJ sends them (assumed millimetres); null when unknown. */
   dimensionsMm: { length: number; width: number; height: number } | null;
   material: string;
+  /**
+   * Images inside CJ's description, in order: usually the size chart and
+   * measurement or detail shots. Optional: rows imported before it was kept lack it.
+   */
+  descriptionImages?: string[];
 };
 
 const MAX_DESCRIPTION = 3000;
 const MAX_SPECS = 15;
 const MAX_INCLUDED = 8;
+const MAX_DESCRIPTION_IMAGES = 12;
 
 const CJ_MENTION = /(?:https?:\/\/)?(?:[\w-]+\.)*cjdropshipping\.com[^\s]*/gi;
 const URL = /https?:\/\/\S+/gi;
@@ -40,6 +46,15 @@ export function htmlToText(html: string | null | undefined): string {
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .join("\n");
+}
+
+/** The http(s) image URLs in description HTML, in order, without duplicates. */
+export function descriptionImages(html: string | null | undefined): string[] {
+  if (!html) return [];
+  const urls = [...String(html).matchAll(/<img\b[^>]*?\bsrc\s*=\s*["']?([^"'\s>]+)/gi)]
+    .map((m) => (m[1].startsWith("//") ? `https:${m[1]}` : m[1]))
+    .filter((url) => /^https?:\/\//i.test(url));
+  return [...new Set(urls)].slice(0, MAX_DESCRIPTION_IMAGES);
 }
 
 /** Section headings CJ uses; not specs themselves. */
@@ -111,5 +126,6 @@ export function extractFacts(input: {
     weightGrams: input.weightGrams && input.weightGrams > 0 ? Math.round(input.weightGrams) : 0,
     dimensionsMm: input.dimensionsMm ?? null,
     material: listText(input.material) || specMaterial,
+    descriptionImages: descriptionImages(input.descriptionHtml),
   };
 }
