@@ -21,7 +21,7 @@ function apiBase() {
 }
 
 /**
- * Calls an eBay REST path (e.g. "/sell/inventory/v1/offer"). Never throws:
+ * Calls an eBay REST path (e.g. "/sell/inventory/v1/offer") or a full eBay API URL. Never throws:
  * 204 → {}, otherwise the parsed JSON. Network failures and non-JSON error
  * bodies come back as `{ errors: [{ message }] }` so callers check one shape.
  */
@@ -41,7 +41,8 @@ export async function ebayRequest<T = Record<string, unknown>>(
 ): Promise<{ status: number; body: T & EbayErrorBody }> {
   type Body = T & EbayErrorBody;
   try {
-    const res = await fetch(`${apiBase()}${path}`, {
+    // Most APIs live on api.ebay.com; a few (the Media API) are passed as full URLs.
+    const res = await fetch(/^https:\/\//.test(path) ? path : `${apiBase()}${path}`, {
       ...init,
       headers: {
         ...(init.headers as Record<string, string> | undefined),

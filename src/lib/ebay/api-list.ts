@@ -3,6 +3,7 @@ import "server-only";
 import { isEbayConfigured } from "./oauth";
 import { promotionMessage } from "./promoted";
 import { type CatalogProductForPublish, publishWithResolver } from "./publish-with-resolver";
+import { sizeChartHtml } from "@/lib/size-chart";
 import type { ListingDraft, ListingResult } from "./types";
 
 /**
@@ -63,7 +64,8 @@ function toCatalogProduct(draft: ListingDraft, context?: ApiPublishContext): Cat
     userId: context.userId,
     sku: context.sku,
     title: draft.title,
-    description: descriptionHtml(draft.description),
+    // The size chart (clothing/shoes) is appended as images in the description, never the gallery.
+    description: descriptionHtml(draft.description) + sizeChartHtml(draft.sizeChartImages ?? []),
     imageUrls: listingImages(draft),
     price: draft.listPrice,
     quantity: draft.quantity && draft.quantity > 0 ? draft.quantity : 1,

@@ -14,6 +14,7 @@ import { nextPlanUp, planLimits, type PlanLimits } from "@/lib/limits";
 import { withFooter, type ListingDefaults } from "@/lib/listing-defaults";
 import type { CatalogVariant } from "@/db/schema";
 import type { ProductFacts } from "@/lib/cj/facts";
+import { sizeChartImages } from "@/lib/size-chart";
 import { listingVariants, productSku, variantOptions } from "@/lib/variants";
 
 /**
@@ -221,6 +222,12 @@ export async function createListing(args: {
     maxVariants: limits.maxVariants,
   });
 
+  // Clothing and shoes: CJ's size chart goes into the description (the gallery stays product photos).
+  const chart = sizeChartImages({
+    category: source.category,
+    title: source.title,
+    descriptionImages: source.details?.descriptionImages,
+  });
   const draft: ListingDraft = {
     title: copy.title,
     description: withFooter(copy.description, defaults.descriptionFooter),
@@ -232,6 +239,7 @@ export async function createListing(args: {
     quantity: variants.reduce((sum, variant) => sum + variant.quantity, 0),
     variations: variants.length > 1 ? variants : undefined,
     ...(source.freeShipping ? { freeShipping: true } : {}),
+    ...(chart.length ? { sizeChartImages: chart } : {}),
   };
 
   const outcome = args.drip

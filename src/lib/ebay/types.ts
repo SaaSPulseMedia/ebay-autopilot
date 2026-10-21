@@ -16,6 +16,8 @@ export type ListingDraft = {
   variations?: Variant[];
   /** Priced by "Match eBay Market Price (Free Shipping)": publish with the seller's free-shipping policy. */
   freeShipping?: boolean;
+  /** Clothing and shoes: CJ's size chart images, embedded in the description HTML (see src/lib/size-chart.ts). */
+  sizeChartImages?: string[];
 };
 
 export type ListingResult = {

@@ -60,6 +60,7 @@ async function releaseScheduled() {
         // Only listings stored since variation publishing carry `variations` (real supplier variants).
         variations: Array.isArray(payload.variations) && payload.variations.length > 1 ? payload.variations : undefined,
         freeShipping: payload.freeShipping === true,
+        sizeChartImages: Array.isArray(payload.sizeChartImages) ? payload.sizeChartImages : undefined,
       };
       const sku = typeof payload.sku === "string" && payload.sku ? payload.sku : productSku(draft.title);
       const result = await publishWithFallback(draft, parseEngine(payload.requestedEngine), accessToken, { userId, sku });

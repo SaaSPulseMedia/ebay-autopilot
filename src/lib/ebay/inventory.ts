@@ -3,8 +3,10 @@ import "server-only";
 import { ensureFreeShippingPolicy, ensureMerchantLocation, fetchBusinessPolicies } from "@/lib/ebay/account";
 import { type EbayError, ebayErrorMessage, ebayFetch, getAccessTokenForUser } from "@/lib/ebay/client";
 import { marketPriceWarning } from "@/lib/ebay/market-price";
+import { hostAllOnEbay } from "@/lib/ebay/media";
 import { type PromotionResult, promoteListing } from "@/lib/ebay/promoted";
 import { getListingDefaults } from "@/lib/seller-settings";
+import { descriptionImageSources } from "@/lib/size-chart";
 
 export type PublishInput = {
   userId: number;
@@ -194,16 +196,65 @@ export async function publishListing(input: PublishInput): Promise<PublishResult
   return { ...published, promotion };
 }
 
-async function publishOnly(input: PublishInput): Promise<PublishResult> {
+const unescapeAttr = (text: string) => text.replace(/&amp;/g, "&");
+const escapeAttr = (text: string) => text.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+
+/**
+ * The listing with every image on eBay Picture Services (see media.ts):
+ *  - gallery and variation pictures: their EPS copies. One eBay won't take is
+ *    left out so the gallery stays all-EPS; if it takes none, the original URLs
+ *    are kept (the listing still publishes, as before) and a warning is logged.
+ *  - <img> in the description (the size chart): its EPS copy, or, when eBay
+ *    won't take it, the original HTTPS image, still embedded (logged).
+ * Never fails the listing.
+ */
+async function withEbayHostedImages(input: PublishInput): Promise<PublishInput> {
+  const token = await getAccessTokenForUser(input.userId);
+  if (!token) return input;
+  const gallery = pictureList(input.imageUrls);
+  const variantPictures = (input.variations ?? []).map((v) => v.imageUrl).filter((u): u is string => Boolean(u));
+  const inDescription = descriptionImageSources(input.description);
+  const hosted = await hostAllOnEbay(token, [...gallery, ...variantPictures, ...inDescription]);
+
+  const hostedGallery = gallery.map((url) => hosted.get(url)).filter((url): url is string => Boolean(url));
+  const allEps = hostedGallery.length > 0;
+  if (!allEps) {
+    console.warn(`[ebay-media] sku ${input.sku}: eBay took none of ${gallery.length} pictures; publishing them self-hosted.`);
+  } else if (hostedGallery.length < gallery.length) {
+    console.warn(`[ebay-media] sku ${input.sku}: ${gallery.length - hostedGallery.length} picture(s) eBay wouldn't take were left out.`);
+  }
+  const missingCharts = inDescription.filter((url) => !hosted.has(url));
+  if (missingCharts.length) {
+    console.warn(`[ebay-media] sku ${input.sku}: ${missingCharts.length} description image(s) kept at their original URL.`);
+  }
+
+  return {
+    ...input,
+    imageUrls: allEps ? hostedGallery : gallery,
+    description: input.description.replace(/(<img\b[^>]*?\bsrc=")([^"]+)(")/gi, (whole, open: string, src: string, close: string) => {
+      const copy = hosted.get(unescapeAttr(src));
+      return copy ? `${open}${escapeAttr(copy)}${close}` : whole;
+    }),
+    variations: input.variations?.map((v) => ({
+      ...v,
+      // An all-EPS listing can't carry a self-hosted variant picture: drop one eBay wouldn't take.
+      imageUrl: v.imageUrl ? (hosted.get(v.imageUrl) ?? (allEps ? null : v.imageUrl)) : v.imageUrl,
+    })),
+  };
+}
+
+async function publishOnly(original: PublishInput): Promise<PublishResult> {
   // 0. Market price: nothing is sent to eBay when the price is far above what
   // the same item sells for there (it would never sell). For variations, the
   // cheapest variant is the one a buyer compares.
-  const variations = input.variations && input.variations.length > 1 ? input.variations : null;
-  const askPrice = variations ? Math.min(...variations.map((v) => v.price)) : input.price;
-  const warning = await marketPriceWarning(input.title, askPrice);
+  const multi = original.variations && original.variations.length > 1;
+  const askPrice = multi ? Math.min(...(original.variations ?? []).map((v) => v.price)) : original.price;
+  const warning = await marketPriceWarning(original.title, askPrice);
   if (warning) return { ok: false, step: "market", error: warning };
 
-  if (variations) return publishVariationListing(input, variations);
+  // Every picture on eBay's own hosting, so photos added later in eBay's editor never mix hosting types.
+  const input = await withEbayHostedImages(original);
+  if (multi && input.variations) return publishVariationListing(input, input.variations);
 
   const prepared = await prepareSeller(input.userId, { freeShipping: input.freeShipping });
   if (!prepared.ok) return prepared;
