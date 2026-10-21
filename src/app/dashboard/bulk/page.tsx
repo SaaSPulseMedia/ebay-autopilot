@@ -10,7 +10,7 @@ import { DRIP_PER_RUN, planLimits } from "@/lib/limits";
 import { listPriceFor, priceBreakdown } from "@/lib/pricing";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { withUserImages } from "@/lib/product-images";
-import { getCatalog, isSampleProduct } from "@/lib/suppliers";
+import { getCatalog } from "@/lib/suppliers";
 import { listingVariants } from "@/lib/variants";
 import { and, count, eq, isNotNull, ne, sql } from "drizzle-orm";
 
@@ -64,12 +64,11 @@ export default async function BulkPage() {
     imageUrl: product.imageUrl,
     imageCount: product.images.length || (product.imageUrl ? 1 : 0),
     customImages: product.customImages,
-    // Shared sample products belong to no one, so no seller can delete them.
-    deletable: !isSampleProduct(product),
+    // getCatalog returns only this seller's own products, so every one can be deleted.
+    deletable: true,
     listed: listedIds.has(product.externalId),
     };
   });
-  const sample = catalog.some(isSampleProduct);
   const blockedCount = products.filter((p) => p.veroRisk === "high").length;
 
   return (
@@ -98,12 +97,6 @@ export default async function BulkPage() {
             Change in Settings
           </Link>
         </p>
-        {sample ? (
-          <p className="mt-3 rounded-xl border border-white/12 bg-white/5 px-3 py-2 text-xs text-slate-300">
-            These are starter products with <span className="text-white">example supplier prices</span>, not live
-            quotes. Check the real cost with your supplier before you list.
-          </p>
-        ) : null}
         {blockedCount ? (
           <p className="mt-3 rounded-xl border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-200">
             {blockedCount} product{blockedCount === 1 ? " is" : "s are"} greyed out because the name includes a brand
@@ -112,17 +105,40 @@ export default async function BulkPage() {
         ) : null}
       </div>
 
-      <BulkLister
-        products={products}
-        marketMode={defaults.pricingMode === "market"}
-        batchSize={limits.batchSize}
-        activeListings={limits.activeListings}
-        activeUsed={activeUsed}
-        planName={limits.planName}
-        isTrial={limits.isTrial}
-        dripAllowed={limits.dripPosting}
-        dripPerRun={DRIP_PER_RUN}
-      />
+      {products.length ? (
+        <BulkLister
+          products={products}
+          marketMode={defaults.pricingMode === "market"}
+          batchSize={limits.batchSize}
+          activeListings={limits.activeListings}
+          activeUsed={activeUsed}
+          planName={limits.planName}
+          isTrial={limits.isTrial}
+          dripAllowed={limits.dripPosting}
+          dripPerRun={DRIP_PER_RUN}
+        />
+      ) : (
+        <div className="ap-card rounded-2xl p-10 text-center">
+          <p className="text-base font-semibold text-white">No products yet.</p>
+          <p className="mt-1 text-sm text-slate-400">
+            Find products on Source or Winning, add them to your catalog, and they&apos;ll show up here ready to list.
+          </p>
+          <div className="mt-5 flex flex-wrap justify-center gap-3">
+            <Link
+              href="/dashboard/source"
+              className="rounded-full bg-brand-500 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-brand-400"
+            >
+              Go to Source
+            </Link>
+            <Link
+              href="/dashboard/winning"
+              className="rounded-full border border-white/20 px-5 py-2.5 text-sm font-semibold text-slate-200 hover:bg-white/5"
+            >
+              🏆 Go to Winning
+            </Link>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

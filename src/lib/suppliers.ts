@@ -7,7 +7,7 @@ import { cjPidOf, cjProductUrl } from "@/lib/cj/urls";
 import { competitionFor, netProfitFor, priceForEbay } from "@/lib/pricing";
 import { SAMPLE_SUPPLIER, STARTER_ROWS, starterImageUrl } from "@/lib/starter-catalog";
 import { screenVero, stricterRisk } from "@/lib/vero";
-import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 
 export type SupplierProduct = {
   externalId: string;
@@ -62,7 +62,7 @@ function withVero(product: SupplierProduct): SupplierProduct & { veroMatch: stri
   return { ...product, supplier, veroRisk, veroMatch: screen.match, veroReason };
 }
 
-/** Starter products with EXAMPLE prices — used when the catalog table is empty. */
+/** Starter products with EXAMPLE prices — for the marketing pages only, when no shared products are stored. */
 function starterCatalog(limit: number): SupplierProduct[] {
   return STARTER_ROWS.slice(0, limit).map((row) => {
     const { shipping, suggested } = priceForEbay(row.supplierPrice);
@@ -90,13 +90,12 @@ function starterCatalog(limit: number): SupplierProduct[] {
 export type CatalogProduct = ReturnType<typeof withVero>;
 
 /**
- * Rows a seller can see: their own products plus the shared sample products
- * (user_id is null). With no seller (marketing pages), only the shared ones.
+ * Rows a seller can see: only their own products, so example data is never
+ * mixed in with real ones. With no seller (marketing pages), only the shared
+ * sample products (user_id is null).
  */
 export function visibleTo(userId: number | null) {
-  return userId == null
-    ? isNull(catalogProducts.userId)
-    : or(eq(catalogProducts.userId, userId), isNull(catalogProducts.userId));
+  return userId == null ? isNull(catalogProducts.userId) : eq(catalogProducts.userId, userId);
 }
 
 /** The catalog as `userId` sees it; null for the shared sample products only. */
@@ -151,11 +150,11 @@ async function loadCatalog(userId: number | null, limit: number): Promise<Suppli
       .where(visibleTo(userId))
       .orderBy(desc(catalogProducts.monthlySales))
       .limit(limit);
-    if (rows.length) {
-      return rows.map(rowToProduct);
-    }
-  } catch {
-    // Database not reachable yet — fall through to the starter catalog.
+    // A seller with no products sees an empty catalog, never the examples.
+    if (rows.length || userId != null) return rows.map(rowToProduct);
+  } catch (error) {
+    if (userId != null) throw error;
+    // Marketing pages only: database not reachable yet, so fall through to the starter catalog.
   }
   return starterCatalog(limit);
 }
