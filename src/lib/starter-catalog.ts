@@ -12,6 +12,9 @@
 /** Shown wherever a sample product's supplier would appear. */
 export const SAMPLE_SUPPLIER = "Example wholesale supplier";
 
+/** Shipping assumed for the example products (marketing pages and seed data only; real products use CJ's quote). */
+export const SAMPLE_SHIPPING = 4.25;
+
 /**
  * Image keyword per starter product (externalId -> keyword).
  *

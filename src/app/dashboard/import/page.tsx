@@ -18,16 +18,17 @@ export default async function ImportPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-white">Paste supplier links</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-white">Paste CJ links</h1>
         <p className="mt-1 text-sm text-slate-400">
-          Paste your product links, set your markup, press one button. AutoPilot reads each page, writes the listing,
-          builds the variants, checks for brand names, and publishes them all.
+          Paste CJ Dropshipping product links, set your markup, press one button. AutoPilot imports each product from
+          CJ, gets CJ&apos;s real shipping cost to the US, writes the listing, builds the variants, checks for brand
+          names, and publishes them all.
         </p>
         <p className="mt-3 rounded-xl border border-white/12 bg-white/5 px-3 py-2 text-xs leading-relaxed text-slate-300">
-          Use <span className="text-white">wholesale or dropship suppliers</span>. Links to retail stores like Amazon,
-          Walmart or Target are skipped, because eBay does not allow filling an order by buying it from another
-          retailer — sellers get restricted for it. Works with supplier pages that show the product name and price
-          without signing in.
+          Prices are your markup on the <span className="text-white">true landed cost</span>: CJ cost + CJ&apos;s real
+          shipping + eBay&apos;s $0.40 order fee, never less than <span className="text-white">$5.00 profit</span> per
+          sale. Links from other suppliers are skipped, because only CJ provides the real shipping cost. About 8 links
+          go through per run.
         </p>
       </div>
 

@@ -47,18 +47,51 @@ export function netProfitFor(listPrice: number, cost: number, shipping = 0, adRa
   return priceBreakdown(listPrice, cost, shipping, adRatePct).profit;
 }
 
+/** Every listing must keep at least this much per sale after supplier cost, real shipping and every eBay fee. */
+export const MIN_PROFIT = 5;
+
 /**
- * Seller's pricing rule: AutoPilot's suggested price, or their own markup on
- * cost + shipping. "market" needs an eBay lookup (see resolveListingPrice in
- * src/lib/market-pricing.ts); here it gives its fallback, the suggested price.
+ * The lowest list price that keeps `minProfit` after cost, shipping, the final
+ * value fee, the $0.40 order fee and the ad rate, rounded up to the cent.
  */
-export function listPriceFor(
+export function priceForMinProfit(cost: number, shipping: number, adRatePct = 0, minProfit = MIN_PROFIT) {
+  const keep = 1 - EBAY_FINAL_VALUE_FEE - adRatePct / 100;
+  let price = Math.ceil(((minProfit + EBAY_FIXED_FEE + cost + shipping) / keep) * 100) / 100;
+  // Fees are rounded to the cent per line; step up until the floor really holds.
+  while (netProfitFor(price, cost, shipping, adRatePct) < minProfit) price = cents(price + 0.01);
+  return price;
+}
+
+/** The $5.00 hard floor: `price` if it already keeps MIN_PROFIT, else the price that does. */
+export function withProfitFloor(price: number, cost: number, shipping: number, adRatePct = 0) {
+  if (netProfitFor(price, cost, shipping, adRatePct) >= MIN_PROFIT) return { price: cents(price), raised: false };
+  return { price: priceForMinProfit(cost, shipping, adRatePct), raised: true };
+}
+
+/**
+ * The price a rule gives before the floor: AutoPilot's suggested price, or the
+ * seller's markup on the true landed cost (supplier cost + real shipping +
+ * eBay's $0.40 order fee). "market" needs an eBay lookup (see
+ * resolveListingPrice in src/lib/market-pricing.ts); here it is its fallback,
+ * the suggested price.
+ */
+export function rulePriceFor(
   rule: { pricingMode: "suggested" | "markup" | "market"; markupPct: number },
   cost: number,
   shipping: number,
   suggested: number,
 ) {
-  return rule.pricingMode === "markup" ? priceFromMarkup(cost + shipping, rule.markupPct) : suggested;
+  return rule.pricingMode === "markup" ? priceFromMarkup(cost + shipping + EBAY_FIXED_FEE, rule.markupPct) : suggested;
+}
+
+/** The seller's pricing rule (rulePriceFor), raised to the $5.00 profit floor when it falls short. */
+export function listPriceFor(
+  rule: { pricingMode: "suggested" | "markup" | "market"; markupPct: number; adRatePct?: number },
+  cost: number,
+  shipping: number,
+  suggested: number,
+) {
+  return withProfitFloor(rulePriceFor(rule, cost, shipping, suggested), cost, shipping, rule.adRatePct ?? 0).price;
 }
 
 /** List price from a markup on supplier cost, e.g. 40% markup on $10 → $14.00. */
@@ -66,16 +99,19 @@ export function priceFromMarkup(cost: number, markupPct: number) {
   return Math.round(cost * (1 + markupPct / 100) * 100) / 100;
 }
 
-/** Price a supplier item for eBay so the net margin lands near 23% after fees. */
-export function priceForEbay(cost: number) {
-  const shipping = cost < 25 ? 4.25 : 0;
+/**
+ * AutoPilot's suggested eBay price for a supplier item: about 23% net margin
+ * after fees on its true landed cost, supplier cost + `shipping` (the real
+ * CJ quote; see getCjShipping) + the $0.40 order fee. Never below the $5.00
+ * profit floor (before any ad rate, which listPriceFor adds on).
+ */
+export function priceForEbay(cost: number, shipping: number) {
   const target = (cost + shipping + EBAY_FIXED_FEE) / (1 - EBAY_FINAL_VALUE_FEE - 0.23);
-  const suggested = Math.max(cost + 6, Math.round(target * 100) / 100);
-  return { shipping, suggested: Math.round(suggested * 100) / 100 };
+  return Math.max(cents(target), priceForMinProfit(cost, shipping));
 }
 
 /** "Match eBay Market Price (Free Shipping)": profit per sale needed at the eBay price, and the buffer added on top. */
-export const MARKET_MATCH_MIN_PROFIT = 3;
+export const MARKET_MATCH_MIN_PROFIT = MIN_PROFIT;
 export const MARKET_MATCH_BUFFER = 0.5;
 /** Must match the Market Guard's limit (src/lib/ebay/market-price.ts), or every match would be blocked. */
 export const MARKET_MATCH_MAX_ABOVE = 0.2;
@@ -112,7 +148,7 @@ export type MarketMatch =
       safety: SafetyCap | null;
     }
   | {
-      /** The Safety Margin Cap left under $3 profit: shown as "Low" and never listed. */
+      /** The Safety Margin Cap left under $5 profit: shown as "Low" and never listed. */
       rule: "low";
       listPrice: number;
       market: number | null;
@@ -128,7 +164,7 @@ export type MarketMatch =
  * the lower quartile of active listings (see getMarketPrice). With free
  * shipping the seller pays shipping, so profit at that price = price − eBay
  * fees (13.55% + $0.40 + the Promoted Listings ad rate) − CJ cost − shipping.
- * At least $3 → list at the price + $0.50 with free shipping, capped at the
+ * At least $5 → list at the price + $0.50 with free shipping, capped at the
  * Market Guard's limit (20% above the active average, `guardAverage`) so the
  * guard never blocks its own price. Otherwise, or without an eBay price, fall
  * back to AutoPilot's suggested price (cost + ~23% margin) and the seller's
@@ -149,7 +185,8 @@ function marketMatchCore(input: {
   const label = source === "sold" ? "eBay sold price" : "eBay market price";
   const fallback = (reason: string, profitAtMarket: number | null): Exclude<MarketMatch, { rule: "low" }> => ({
     rule: "default",
-    listPrice: input.suggested,
+    // The seller's normal price, raised to the $5.00 floor when the suggested price falls short.
+    listPrice: withProfitFloor(input.suggested, input.cost, input.shipping, input.adRatePct ?? 0).price,
     market: input.market,
     source,
     profitAtMarket,
@@ -177,7 +214,7 @@ function marketMatchCore(input: {
  * With `lowest`, the cheapest active eBay listing (item + shipping): a price
  * more than 15% above it — the match price, or the suggested price it fell
  * back to — is cut to lowest + 5% with free shipping. If that cut leaves under
- * $3 profit the result is rule "low": shown as Low and never listed.
+ * $5 profit the result is rule "low": shown as Low and never listed.
  */
 export function marketMatchPrice(
   input: Parameters<typeof marketMatchCore>[0] & {

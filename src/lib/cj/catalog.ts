@@ -444,7 +444,13 @@ export async function importCjProduct(
   if (!draft.title) return { ok: false, error: "CJ returned this product without an English title.", status: 422 };
   if (draft.supplierPrice <= 0) return { ok: false, error: "CJ returned this product without a price.", status: 422 };
 
-  const { shipping, suggested } = priceForEbay(draft.supplierPrice);
+  // Real shipping to the US for the cheapest variant (the one supplierPrice is). No quote, no import:
+  // a product priced without its real shipping can be listed at a loss.
+  const quoteSku = [...draft.variants].sort((a, b) => (a.price || Infinity) - (b.price || Infinity))[0]?.sku ?? null;
+  const quote = await cjShippingCost(draft.externalId, quoteSku);
+  if (!quote.ok) return quote;
+  const shipping = quote.data;
+  const suggested = priceForEbay(draft.supplierPrice, shipping);
   const externalId = cjExternalId(draft.externalId);
   const values = {
     userId,
@@ -461,6 +467,7 @@ export async function importCjProduct(
     supplierPrice: draft.supplierPrice.toFixed(2),
     suggestedPrice: suggested.toFixed(2),
     shippingCost: shipping.toFixed(2),
+    shippingQuotedAt: new Date(),
     competition: competitionFromListed(draft.listedNum),
   };
   const [row] = await db
@@ -865,4 +872,42 @@ export async function getCjShipping(pid: string, sku?: string | null): Promise<C
   shippingCache.set(key, { at: Date.now(), quote });
   console.log(`[cj-shipping] pid=${pid} vid=${variant.vid} options=${options.length} cheapest=${options[0]?.price ?? "none"}`);
   return { ok: true, data: quote };
+}
+
+/**
+ * The real shipping cost a product is priced with: CJ's cheapest method to the
+ * US for one unit of the variant `sku` (else the first), from getCjShipping.
+ * An error (with a message for the seller) when CJ can't quote it or has no
+ * way to ship it to the US: callers must not fall back to a guess.
+ */
+export async function cjShippingCost(pid: string, sku?: string | null): Promise<CjResult<number>> {
+  const quote = await getCjShipping(pid, sku);
+  if (!quote.ok) {
+    return { ok: false, error: `Couldn't get CJ's shipping price (${quote.error}), so it can't be priced safely. Try again in a moment.`, status: quote.status };
+  }
+  const cheapest = quote.data.options[0];
+  if (!cheapest) return { ok: false, error: "CJ has no shipping method to the US for this product.", status: 422 };
+  return { ok: true, data: cheapest.price };
+}
+
+/**
+ * Re-quotes a catalog product's shipping with CJ and saves it (shippingCost,
+ * the suggested price built on it, shippingQuotedAt), for products imported
+ * before real quotes were stored. Returns the new shipping cost.
+ */
+export async function refreshCjShipping(
+  userId: number,
+  product: { externalId: string; supplierPrice: number; variants: Array<{ sku: string; price: number }> },
+): Promise<CjResult<{ shipping: number; suggested: number }>> {
+  const pid = product.externalId.startsWith("cj-") ? product.externalId.slice(3) : "";
+  if (!pid) return { ok: false, error: "Not a CJ product, so CJ can't quote its shipping.", status: 422 };
+  const sku = [...product.variants].sort((a, b) => (a.price || Infinity) - (b.price || Infinity))[0]?.sku ?? null;
+  const quote = await cjShippingCost(pid, sku);
+  if (!quote.ok) return quote;
+  const suggested = priceForEbay(product.supplierPrice, quote.data);
+  await db
+    .update(catalogProducts)
+    .set({ shippingCost: quote.data.toFixed(2), suggestedPrice: suggested.toFixed(2), shippingQuotedAt: new Date() })
+    .where(and(eq(catalogProducts.userId, userId), eq(catalogProducts.externalId, product.externalId)));
+  return { ok: true, data: { shipping: quote.data, suggested } };
 }

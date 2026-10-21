@@ -12,7 +12,8 @@ import {
   type ItemResult,
 } from "@/lib/listing-pipeline";
 import { resolveListingPrice } from "@/lib/market-pricing";
-import { netProfitFor } from "@/lib/pricing";
+import { MIN_PROFIT, netProfitFor } from "@/lib/pricing";
+import { withRealShipping } from "@/lib/real-shipping";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { withUserImages } from "@/lib/product-images";
 import { getCatalog } from "@/lib/suppliers";
@@ -21,7 +22,11 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /** One-click bulk listing from the catalog: the core of the product. */
+/** Stop re-quoting CJ shipping after this long, so the request still answers in time. */
+const QUOTE_BUDGET_MS = 35_000;
+
 export async function POST(request: Request) {
+  const started = Date.now();
   const user = await getCurrentUser();
   if (!user) return Response.json({ ok: false, error: "Not signed in." }, { status: 401 });
 
@@ -48,18 +53,30 @@ export async function POST(request: Request) {
 
   // Per-item VeRO gate: brand-name products are skipped, the rest of the batch still goes out.
   const blocked = found.filter((product) => product.veroRisk === "high");
-  // One at a time: Market Match pricing looks each product up on eBay (rate-limited, cached).
+  // Products without a real CJ shipping quote can't be priced safely, so they are skipped.
+  const noShipping: Array<{ title: string; error: string }> = [];
+  // One at a time: pricing may quote CJ shipping and look the product up on eBay (both rate-limited, cached).
   const priced = [];
-  for (const product of found.filter((p) => p.veroRisk !== "high")) {
+  for (const candidate of found.filter((p) => p.veroRisk !== "high")) {
+    if (!candidate.shippingQuoted && Date.now() - started > QUOTE_BUDGET_MS) {
+      noShipping.push({ title: candidate.title, error: "Ran out of time checking CJ shipping. List it again." });
+      continue;
+    }
+    const shipped = await withRealShipping(user.id, candidate);
+    if (!shipped.ok) {
+      noShipping.push({ title: candidate.title, error: shipped.error });
+      continue;
+    }
+    const product = shipped.product;
     const price = await resolveListingPrice(defaults, product);
     const profit = netProfitFor(price.listPrice, product.supplierPrice, product.shippingCost, defaults.adRatePct);
     priced.push({ product, listPrice: price.listPrice, freeShipping: price.freeShipping, profit, price });
   }
-  // Safety Margin Cap: priced down to the cheapest eBay listing + 5%, it would make under $3.
+  // Safety Margin Cap: priced down to the cheapest eBay listing + 5%, it would make under $5.
   const low = priced.filter((row) => row.price.rule === "low");
-  // Never publish something that loses money under the seller's own pricing rule.
-  const losing = priced.filter((row) => row.price.rule !== "low" && row.profit <= 0);
-  const selected = priced.filter((row) => row.price.rule !== "low" && row.profit > 0);
+  // Never publish below the $5.00 profit floor (resolveListingPrice raises prices to it; this is the backstop).
+  const losing = priced.filter((row) => row.price.rule !== "low" && row.profit < MIN_PROFIT);
+  const selected = priced.filter((row) => row.price.rule !== "low" && row.profit >= MIN_PROFIT);
 
   const requested = parseEngine(body.engine);
   const accessToken = await connectedAccessToken(user.id);
@@ -72,6 +89,12 @@ export async function POST(request: Request) {
     message: `Skipped to protect your eBay account: ${product.veroReason}`,
   }));
   results.push(
+    ...noShipping.map(({ title, error }) => ({
+      title,
+      status: "skipped",
+      variants: 0,
+      message: `Not listed: ${error}`,
+    })),
     ...low.map(({ product, price }) => ({
       title: product.title,
       status: "skipped",
@@ -82,7 +105,7 @@ export async function POST(request: Request) {
       title: product.title,
       status: "skipped",
       variants: 0,
-      message: `Would lose $${Math.abs(profit).toFixed(2)} per sale after eBay fees at your current pricing. Raise your markup in Settings.`,
+      message: `Not listed: only $${profit.toFixed(2)} profit per sale after real shipping and eBay fees (the floor is $${MIN_PROFIT.toFixed(2)}).`,
     })),
   );
 

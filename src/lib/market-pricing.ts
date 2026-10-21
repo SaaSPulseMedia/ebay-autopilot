@@ -2,14 +2,22 @@ import "server-only";
 
 import { getMarketPrice } from "@/lib/ebay/market-price";
 import type { ListingDefaults } from "@/lib/listing-defaults";
-import { type MarketSource, listPriceFor, marketMatchPrice } from "@/lib/pricing";
+import {
+  MARKET_MATCH_MAX_ABOVE,
+  MIN_PROFIT,
+  type MarketSource,
+  marketMatchPrice,
+  rulePriceFor,
+  withProfitFloor,
+} from "@/lib/pricing";
 
 export type ListingPrice = {
   listPrice: number;
   /**
    * "market": priced by Market Match (free shipping); "default": the seller's
-   * normal rule; "low": the Safety Margin Cap left under $3 profit, so it must
-   * not be listed (see marketMatchPrice).
+   * normal rule; "low": must not be listed: the Safety Margin Cap left under
+   * $5 profit, or the price that keeps $5 profit is more than 20% above the
+   * eBay market average (see resolveListingPrice).
    */
   rule: "market" | "default" | "low";
   freeShipping: boolean;
@@ -20,39 +28,73 @@ export type ListingPrice = {
   /** Cheapest active eBay listing, and whether the Safety Margin Cap cut the price to it + 5%. */
   lowest: number | null;
   capped: boolean;
-  /** Why Market Match fell back to the default rule, or why it's "low". */
+  /** The rule's price kept under $5.00 profit, so it was raised to the price that keeps $5.00. */
+  floorRaised: boolean;
+  /** Why Market Match fell back to the default rule, why the price was raised, or why it's "low". */
   reason?: string;
 };
 
+const money = (n: number) => `$${n.toFixed(2)}`;
+
 /**
  * The price (and shipping) a catalog product lists at under the seller's
- * pricing rule. Only "Match eBay Market Price (Free Shipping)" needs eBay: it
- * looks up the eBay price (recent sold price, else the competitive end of
- * active listings; cached, rate-limited, see market-price.ts) and applies
- * marketMatchPrice, falling back to AutoPilot's suggested price. Its Safety
- * Margin Cap can return rule "low": callers must not list those.
+ * pricing rule, from its true landed cost: supplier cost + its real CJ
+ * shipping (product.shippingCost, quoted on import) + eBay's fees.
+ *  - Every rule ends at or above the $5.00 profit floor: a price that keeps
+ *    less is raised to the one that keeps exactly $5.00 (withProfitFloor).
+ *  - A raised price more than 20% above the eBay market average is "low":
+ *    buyers won't pay it (and the Market Guard would block it), so it must
+ *    not be listed. The market is only looked up when the price was raised,
+ *    or for "Match eBay Market Price", which always needs it.
+ *  - "Match eBay Market Price" applies marketMatchPrice (and its Safety
+ *    Margin Cap, which can also return "low").
  */
 export async function resolveListingPrice(
   defaults: ListingDefaults,
   product: { title: string; supplierPrice: number; shippingCost: number; suggestedPrice: number },
 ): Promise<ListingPrice> {
+  const cost = product.supplierPrice;
+  const shipping = product.shippingCost;
+  const base = { market: null, marketSource: null, lowest: null, capped: false } as const;
+
   if (defaults.pricingMode !== "market") {
+    const rulePrice = rulePriceFor(defaults, cost, shipping, product.suggestedPrice);
+    const floored = withProfitFloor(rulePrice, cost, shipping, defaults.adRatePct);
+    if (!floored.raised) {
+      return { ...base, listPrice: floored.price, rule: "default", freeShipping: false, floorRaised: false };
+    }
+    const lookup = await getMarketPrice(product.title);
+    const average = lookup.ok ? (lookup.market?.average ?? null) : null;
+    const raisedReason = `raised from ${money(rulePrice)} to ${money(floored.price)} to keep ${money(MIN_PROFIT)} profit`;
+    if (average != null && floored.price > average * (1 + MARKET_MATCH_MAX_ABOVE)) {
+      return {
+        ...base,
+        listPrice: floored.price,
+        rule: "low",
+        freeShipping: false,
+        floorRaised: true,
+        market: average,
+        marketSource: "active",
+        reason: `it needs ${money(floored.price)} to keep ${money(MIN_PROFIT)} profit, more than 20% above the eBay average (${money(average)})`,
+      };
+    }
     return {
-      listPrice: listPriceFor(defaults, product.supplierPrice, product.shippingCost, product.suggestedPrice),
+      ...base,
+      listPrice: floored.price,
       rule: "default",
       freeShipping: false,
-      market: null,
-      marketSource: null,
-      lowest: null,
-      capped: false,
+      floorRaised: true,
+      market: average,
+      marketSource: average != null ? "active" : null,
+      reason: raisedReason,
     };
   }
 
   const lookup = await getMarketPrice(product.title);
   const market = lookup.ok ? lookup.market : null;
   const match = marketMatchPrice({
-    cost: product.supplierPrice,
-    shipping: product.shippingCost,
+    cost,
+    shipping,
     suggested: product.suggestedPrice,
     market: market?.reference ?? null,
     source: market?.referenceSource,
@@ -69,6 +111,7 @@ export async function resolveListingPrice(
       market: match.market,
       marketSource: match.source,
       ...safety,
+      floorRaised: false,
     };
   }
   if (match.rule === "low") {
@@ -79,7 +122,23 @@ export async function resolveListingPrice(
       market: match.market,
       marketSource: match.source,
       ...safety,
+      floorRaised: false,
       reason: match.reason,
+    };
+  }
+  // The fallback is the suggested price raised to the $5.00 floor (see marketMatchPrice).
+  const floorRaised = match.listPrice > product.suggestedPrice;
+  const average = market?.average ?? null;
+  if (average != null && match.listPrice > average * (1 + MARKET_MATCH_MAX_ABOVE)) {
+    return {
+      listPrice: match.listPrice,
+      rule: "low",
+      freeShipping: false,
+      market: match.market,
+      marketSource: match.source,
+      ...safety,
+      floorRaised,
+      reason: `it needs ${money(match.listPrice)} to keep ${money(MIN_PROFIT)} profit, more than 20% above the eBay average (${money(average)})`,
     };
   }
   return {
@@ -89,6 +148,7 @@ export async function resolveListingPrice(
     market: match.market,
     marketSource: match.source,
     ...safety,
+    floorRaised,
     reason: lookup.ok ? match.reason : "eBay market lookup failed",
   };
 }

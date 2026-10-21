@@ -31,13 +31,15 @@ export type BulkProduct = {
   deletable: boolean;
   /** Already has a live or scheduled listing; the daily batch skips it. */
   listed: boolean;
+  /** Shipping is CJ's real quote; false for products imported before quotes were stored (re-quoted when listed). */
+  shippingQuoted: boolean;
   /** Market Match result (only with that pricing rule; filled in after the page loads). */
   pricing?: PricingNote;
 };
 
 /**
  * Which pricing rule a product gets under "Match eBay Market Price (Free
- * Shipping)". "low": the Safety Margin Cap left under $3 profit, so it can't be listed.
+ * Shipping)". "low": the Safety Margin Cap left under $5 profit, so it can't be listed.
  */
 type PricingNote = {
   rule: "market" | "default" | "low";
@@ -46,6 +48,8 @@ type PricingNote = {
   /** Cheapest active eBay listing, and whether the Safety Margin Cap cut the price to it + 5%. */
   lowest?: number | null;
   capped?: boolean;
+  /** The rule's price kept under $5.00 profit, so it was raised to the price that does. */
+  floorRaised?: boolean;
   reason?: string;
 };
 
@@ -119,9 +123,9 @@ function PricingRuleNote({ note }: { note?: PricingNote }) {
   if (!note) return <span className="mt-0.5 block text-[11px] text-slate-500">Checking eBay market price…</span>;
   if (note.rule === "low") {
     return (
-      <span className="mt-0.5 block text-[11px] text-amber-300" title="Safety Margin Cap: priced to compete with the cheapest eBay listing it makes under $3, so it won't be listed.">
+      <span className="mt-0.5 block text-[11px] text-amber-300" title="Safety Margin Cap: priced to compete with the cheapest eBay listing it makes under $5, so it won't be listed.">
         <span className="mr-1 rounded-full bg-amber-400/15 px-1.5 py-0.5 font-semibold">Low</span>
-        {note.reason ?? "under $3 profit at a competitive price"}
+        {note.reason ?? "under $5 profit at a competitive price"}
       </span>
     );
   }
@@ -142,11 +146,18 @@ function PricingRuleNote({ note }: { note?: PricingNote }) {
     );
   }
   return (
-    <span className="mt-0.5 block text-[11px] text-slate-400" title="Suggested price (about 23% margin) with your normal shipping.">
+    <span className="mt-0.5 block text-[11px] text-slate-400" title="Your pricing rule, with your normal shipping.">
       Default Margin · {note.reason ?? "market price too low"}
       {note.market != null ? ` (${marketLabel(note)})` : ""}
     </span>
   );
+}
+
+/** Under "Suggested" or "Markup" pricing: only shown when the $5.00 floor raised the price or made it Low. */
+function FloorNote({ note }: { note?: PricingNote }) {
+  if (!note || (note.rule !== "low" && !note.floorRaised)) return null;
+  if (note.rule === "low") return <PricingRuleNote note={note} />;
+  return <span className="mt-0.5 block text-[11px] text-amber-200">Price {note.reason}</span>;
 }
 
 type Props = {
@@ -189,7 +200,7 @@ export function BulkLister({
   // Market Match needs each product's eBay market price: fetch it in batches
   // after the page renders, so the list never waits on eBay.
   useEffect(() => {
-    if (!marketMode) return;
+    // Every rule is checked: the $5.00 floor can raise a price, and a raised price can be Low (eBay lookup).
     let cancelled = false;
     (async () => {
       const ids = initialProducts.map((p) => p.externalId);
@@ -228,6 +239,7 @@ export function BulkLister({
                 market: preview.market,
                 marketSource: preview.marketSource,
                 lowest: preview.lowest,
+                floorRaised: preview.floorRaised,
                 capped: preview.capped,
                 reason: preview.reason,
               },
@@ -255,25 +267,25 @@ export function BulkLister({
   const blockedIds = useMemo(() => new Set(products.filter(isUnlistable).map((p) => p.externalId)), [products]);
 
   // Daily batch: the most profitable products by net profit that aren't Low or
-  // listed yet, under whatever pricing rule is set. With Market Match a product
-  // only counts once its eBay price is in (it may still turn out Low).
-  const pricesChecked = marketMode ? products.filter((p) => p.pricing).length : 0;
-  const pricesPending = marketMode && pricesChecked < products.length;
+  // listed yet, under whatever pricing rule is set. A product only counts once
+  // its price check is in (the $5.00 floor can make it Low).
+  const pricesChecked = products.filter((p) => p.pricing).length;
+  const pricesPending = pricesChecked < products.length;
   const dailyCount = Math.min(DAILY_WINNERS, perRunCap);
   const dailyWinners = useMemo(
     () =>
       products
-        .filter((p) => isDailyCandidate(p) && (!marketMode || p.pricing))
+        .filter((p) => isDailyCandidate(p) && p.pricing)
         .sort((a, b) => b.breakdown.profit - a.breakdown.profit)
         .slice(0, dailyCount),
-    [products, dailyCount, marketMode],
+    [products, dailyCount],
   );
   const dailyBlocker = !dripAllowed
     ? "The daily batch uses drip posting, which is included in Pro and Business."
     : atCapacity
       ? "No listing slots left on your plan."
       : pricesPending && dailyWinners.length < dailyCount
-        ? `Checking eBay prices… ${pricesChecked}/${products.length}`
+        ? `Checking prices… ${pricesChecked}/${products.length}`
         : !dailyWinners.length
           ? "No profitable products left to list: everything is listed, Low or loses money."
           : null;
@@ -569,7 +581,15 @@ export function BulkLister({
                         </span>
                       ) : null}
                     </span>
-                    {marketMode ? <PricingRuleNote note={product.pricing} /> : null}
+                    {marketMode ? <PricingRuleNote note={product.pricing} /> : <FloorNote note={product.pricing} />}
+                    {!product.shippingQuoted ? (
+                      <span
+                        className="mt-0.5 block text-[11px] text-slate-500"
+                        title="Imported before AutoPilot stored CJ's real shipping cost. It is quoted with CJ when you list it, and the price is set from that."
+                      >
+                        Shipping not yet checked with CJ (checked when listed)
+                      </span>
+                    ) : null}
                   </td>
                   <td className="px-4 py-3 text-right text-slate-300">${product.supplierPrice.toFixed(2)}</td>
                   <td className="px-4 py-3 text-right font-semibold text-white">${product.listPrice.toFixed(2)}</td>

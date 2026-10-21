@@ -8,7 +8,7 @@ import { isEbaySandbox } from "@/lib/ebay/oauth";
 import { planLimits } from "@/lib/limits";
 import { checkPlanCapacity, connectedAccessToken, createListing } from "@/lib/listing-pipeline";
 import { resolveListingPrice } from "@/lib/market-pricing";
-import { netProfitFor } from "@/lib/pricing";
+import { MIN_PROFIT, netProfitFor } from "@/lib/pricing";
 import { withUserImages } from "@/lib/product-images";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { getCatalogProduct } from "@/lib/suppliers";
@@ -63,12 +63,13 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, step: "pricing", error: `Low: not listed, ${price.reason}.` }, { status: 422 });
   }
   const profit = netProfitFor(listPrice, product.supplierPrice, product.shippingCost, defaults.adRatePct);
-  if (profit <= 0) {
+  // Backstop for the $5.00 floor resolveListingPrice already prices to.
+  if (profit < MIN_PROFIT) {
     return Response.json(
       {
         ok: false,
         step: "pricing",
-        error: `Not listed: it would lose $${Math.abs(profit).toFixed(2)} per sale after eBay fees at your pricing. Raise your markup in Settings.`,
+        error: `Not listed: only $${profit.toFixed(2)} profit per sale after real shipping and eBay fees (the floor is $${MIN_PROFIT.toFixed(2)}).`,
       },
       { status: 422 },
     );

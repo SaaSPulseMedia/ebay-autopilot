@@ -53,8 +53,16 @@ export function competitionLevel(listedNum: number): "low" | "medium" | "high" {
   return "low";
 }
 
+/**
+ * Shipping assumed while RANKING CJ's feed only: scoring hundreds of products
+ * can't wait on CJ's freight calculator (3 calls each). It never prices a
+ * listing; a product is quoted for real when it is imported (importCjProduct).
+ */
+export const RANKING_SHIPPING_ESTIMATE = (cost: number) => (cost < 25 ? 4.25 : 0);
+
 export function winningScore(input: WinningInput, now = Date.now()): WinningBreakdown {
-  const { shipping, suggested } = priceForEbay(input.cost);
+  const shipping = RANKING_SHIPPING_ESTIMATE(input.cost);
+  const suggested = priceForEbay(input.cost, shipping);
   const profit = netProfitFor(suggested, input.cost, shipping);
   const margin = suggested > 0 ? profit / suggested : 0;
 
@@ -100,7 +108,7 @@ export function winningScore(input: WinningInput, now = Date.now()): WinningBrea
  *   too_low — below break-even (cost + shipping + eBay fees): every sale at
  *             that price loses money, so the product is dropped.
  * The Safety Margin Cap (see marketMatchPrice) also makes a product "low":
- * priced down to the cheapest active listing + 5% it would make under $3, so
+ * priced down to the cheapest active listing + 5% it would make under $5, so
  * it is never listed (`blocked`).
  */
 export type MarketInfo = {
@@ -122,7 +130,7 @@ export type MarketInfo = {
   /** Cheapest active eBay listing (item + shipping), and whether the Safety Margin Cap cut `listAt` to it + 5%. */
   lowest: number | null;
   capped: boolean;
-  /** Why it won't be listed: under $3 profit even at the Safety Margin Cap's price. */
+  /** Why it won't be listed: under $5 profit even at the Safety Margin Cap's price. */
   blocked: string | null;
   /** The lowest price that doesn't lose money after cost, shipping and eBay fees. */
   breakeven: number;

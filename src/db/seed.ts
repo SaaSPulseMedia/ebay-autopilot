@@ -5,7 +5,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
 import { competitionFor, priceForEbay } from "../lib/pricing";
-import { SAMPLE_SUPPLIER, STARTER_ROWS, starterImageUrl } from "../lib/starter-catalog";
+import { SAMPLE_SHIPPING, SAMPLE_SUPPLIER, STARTER_ROWS, starterImageUrl } from "../lib/starter-catalog";
 import { backfillStarterImages } from "./backfill-images";
 import { catalogProducts } from "./schema";
 
@@ -18,7 +18,8 @@ async function main() {
   const db = drizzle(pool);
 
   for (const row of STARTER_ROWS) {
-    const { shipping, suggested } = priceForEbay(row.supplierPrice);
+    const shipping = SAMPLE_SHIPPING;
+    const suggested = priceForEbay(row.supplierPrice, shipping);
     await db
       .insert(catalogProducts)
       .values({

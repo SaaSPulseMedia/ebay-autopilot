@@ -67,6 +67,7 @@ export default async function BulkPage() {
     // getCatalog returns only this seller's own products, so every one can be deleted.
     deletable: true,
     listed: listedIds.has(product.externalId),
+    shippingQuoted: product.shippingQuoted,
     };
   });
   const blockedCount = products.filter((p) => p.veroRisk === "high").length;
@@ -87,12 +88,13 @@ export default async function BulkPage() {
           Prices use{" "}
           <span className="text-white">
             {defaults.pricingMode === "market"
-              ? "Match eBay Market Price (Free Shipping) where it leaves $3+ profit, otherwise AutoPilot's suggested price"
+              ? "Match eBay Market Price (Free Shipping) where it leaves $5+ profit, otherwise AutoPilot's suggested price"
               : defaults.pricingMode === "markup"
                 ? `your ${defaults.markupPct}% markup`
                 : "AutoPilot's suggested price"}
           </span>
-          {defaults.adRatePct ? <> with a {defaults.adRatePct}% ad rate</> : null}.{" "}
+          {defaults.adRatePct ? <> with a {defaults.adRatePct}% ad rate</> : null}, on CJ cost + CJ&apos;s real shipping,
+          never below <span className="text-white">$5.00 profit</span> per sale.{" "}
           <Link href="/dashboard/settings" className="font-semibold text-brand-400 hover:text-brand-500">
             Change in Settings
           </Link>

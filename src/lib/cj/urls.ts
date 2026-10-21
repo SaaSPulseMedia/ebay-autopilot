@@ -13,3 +13,23 @@ export function cjProductUrl(pid: string, title: string) {
 export function cjPidOf(externalId: string | null | undefined) {
   return externalId?.startsWith("cj-") ? externalId.slice(3) || null : null;
 }
+
+/**
+ * The CJ product id in a CJ product link, or null for any other link:
+ * ".../product/<slug>-p-<pid>.html" (CJ's product pages) or
+ * ".../product-detail.html?id=<pid>" (older links).
+ */
+export function cjPidFromUrl(raw: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  const host = url.hostname.toLowerCase();
+  if (host !== "cjdropshipping.com" && !host.endsWith(".cjdropshipping.com")) return null;
+  const fromPath = url.pathname.match(/-p-([A-Za-z0-9-]+)\.html$/)?.[1];
+  const fromQuery = url.searchParams.get("id") ?? url.searchParams.get("pid");
+  const pid = fromPath ?? fromQuery;
+  return pid && /^[A-Za-z0-9-]{4,64}$/.test(pid) ? pid : null;
+}

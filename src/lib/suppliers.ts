@@ -5,7 +5,7 @@ import { type CatalogVariant, catalogProducts } from "@/db/schema";
 import type { ProductFacts } from "@/lib/cj/facts";
 import { cjPidOf, cjProductUrl } from "@/lib/cj/urls";
 import { competitionFor, netProfitFor, priceForEbay } from "@/lib/pricing";
-import { SAMPLE_SUPPLIER, STARTER_ROWS, starterImageUrl } from "@/lib/starter-catalog";
+import { SAMPLE_SHIPPING, SAMPLE_SUPPLIER, STARTER_ROWS, starterImageUrl } from "@/lib/starter-catalog";
 import { screenVero, stricterRisk } from "@/lib/vero";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 
@@ -26,6 +26,8 @@ export type SupplierProduct = {
   supplierPrice: number;
   suggestedPrice: number;
   shippingCost: number;
+  /** True when shippingCost is CJ's real quote; false for old flat estimates (re-quoted before listing). */
+  shippingQuoted: boolean;
   monthlySales: number;
   competition: "low" | "medium" | "high";
   veroRisk: "low" | "medium" | "high";
@@ -65,7 +67,8 @@ function withVero(product: SupplierProduct): SupplierProduct & { veroMatch: stri
 /** Starter products with EXAMPLE prices — for the marketing pages only, when no shared products are stored. */
 function starterCatalog(limit: number): SupplierProduct[] {
   return STARTER_ROWS.slice(0, limit).map((row) => {
-    const { shipping, suggested } = priceForEbay(row.supplierPrice);
+    const shipping = SAMPLE_SHIPPING;
+    const suggested = priceForEbay(row.supplierPrice, shipping);
     return {
       externalId: row.externalId,
       source: "starter",
@@ -80,6 +83,7 @@ function starterCatalog(limit: number): SupplierProduct[] {
       supplierPrice: row.supplierPrice,
       suggestedPrice: suggested,
       shippingCost: shipping,
+      shippingQuoted: false,
       monthlySales: row.monthlySales,
       competition: competitionFor(row.monthlySales),
       veroRisk: row.veroRisk,
@@ -122,6 +126,7 @@ function rowToProduct(row: CatalogRow): SupplierProduct {
     supplierPrice: Number(row.supplierPrice),
     suggestedPrice: Number(row.suggestedPrice),
     shippingCost: Number(row.shippingCost),
+    shippingQuoted: row.shippingQuotedAt != null,
     monthlySales: row.monthlySales,
     competition: row.competition as SupplierProduct["competition"],
     veroRisk: row.veroRisk as SupplierProduct["veroRisk"],

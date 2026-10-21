@@ -102,6 +102,8 @@ export const catalogProducts = pgTable(
     supplierPrice: numeric("supplier_price", { precision: 10, scale: 2 }).notNull(),
     suggestedPrice: numeric("suggested_price", { precision: 10, scale: 2 }).notNull(),
     shippingCost: numeric("shipping_cost", { precision: 10, scale: 2 }).notNull().default("0"),
+    /** When `shippingCost` was last quoted by CJ's freight calculator; null = an old flat estimate. */
+    shippingQuotedAt: timestamp("shipping_quoted_at", { withTimezone: true }),
     monthlySales: integer("monthly_sales").notNull().default(0),
     competition: text("competition").notNull().default("medium"),
     veroRisk: text("vero_risk").notNull().default("low"),

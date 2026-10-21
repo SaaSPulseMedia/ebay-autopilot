@@ -223,7 +223,7 @@ function MarketLine({ product }: { product: WinningProduct }) {
       ? `Won't be listed: ${market.blocked}.`
       : market.listAt != null
         ? `Match eBay Market Price lists it at ${money(market.listAt)} with free shipping${market.capped ? " (Safety Margin Cap: 5% above the cheapest listing)" : ""}.`
-        : "Match eBay Market Price would use the default price (under $3 profit at the eBay price).",
+        : "Match eBay Market Price would use the default price (under $5 profit at the eBay price).",
     market.status === "low" ? `Winning Score lowered from ${market.scoreBefore}.` : "",
   ]
     .filter(Boolean)

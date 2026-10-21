@@ -40,7 +40,9 @@ export function ListingDefaultsForm({ initial }: { initial: ListingDefaults }) {
 
   // Worked example on a $20 supplier item, using the same maths as real listings.
   const example = normalizeDefaults(values);
-  const { shipping, suggested } = priceForEbay(20);
+  // $5.00 stands in for the real CJ shipping quote each product is priced with.
+  const shipping = 5;
+  const suggested = priceForEbay(20, shipping);
   const exampleBreakdown = priceBreakdown(listPriceFor(example, 20, shipping, suggested), 20, shipping, example.adRatePct);
 
   async function save() {
@@ -87,7 +89,9 @@ export function ListingDefaultsForm({ initial }: { initial: ListingDefaults }) {
           />
           <span>
             <span className="block font-medium text-white">Use AutoPilot&apos;s suggested price</span>
-            <span className="block text-xs text-slate-400">Aims for about 23% profit after eBay fees.</span>
+            <span className="block text-xs text-slate-400">
+              Aims for about 23% profit after eBay fees and CJ&apos;s real shipping, never below $5.00 per sale.
+            </span>
           </span>
         </label>
         <label className="flex items-start gap-3 rounded-xl border border-white/10 p-3 text-sm">
@@ -99,7 +103,10 @@ export function ListingDefaultsForm({ initial }: { initial: ListingDefaults }) {
           />
           <span className="flex-1">
             <span className="block font-medium text-white">Use my own markup</span>
-            <span className="block text-xs text-slate-400">Added on top of the supplier cost plus shipping.</span>
+            <span className="block text-xs text-slate-400">
+              Added on top of the true landed cost: CJ cost + CJ&apos;s real shipping + eBay&apos;s $0.40 order fee.
+              Raised if needed to keep $5.00 profit per sale.
+            </span>
             {values.pricingMode === "markup" ? (
               <span className="mt-2 flex items-center gap-2">
                 <input
@@ -201,7 +208,7 @@ export function ListingDefaultsForm({ initial }: { initial: ListingDefaults }) {
       </label>
 
       <div>
-        <p className={label}>Example: a $20.00 supplier item with these settings</p>
+        <p className={label}>Example: a $20.00 supplier item with $5.00 CJ shipping, with these settings</p>
         {values.pricingMode === "market" ? (
           <p className="text-[11px] text-slate-500">
             With Market Match each price depends on that item&apos;s eBay market; this shows the fallback (suggested)

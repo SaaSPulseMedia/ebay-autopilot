@@ -11,11 +11,14 @@ import {
   summarizeBatch,
   type ItemResult,
 } from "@/lib/listing-pipeline";
-import { netProfitFor, priceFromMarkup } from "@/lib/pricing";
-import { extractProduct } from "@/lib/product-extract";
+import { cjExternalId, importCjProduct } from "@/lib/cj/catalog";
+import { cjPidFromUrl } from "@/lib/cj/urls";
+import { resolveListingPrice } from "@/lib/market-pricing";
+import { MIN_PROFIT, netProfitFor } from "@/lib/pricing";
+import { withUserImages } from "@/lib/product-images";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { checkSupplierUrl } from "@/lib/supplier-policy";
-import { screenVero } from "@/lib/vero";
+import { getCatalogProduct } from "@/lib/suppliers";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -25,12 +28,22 @@ function clamp(value: unknown, min: number, max: number, fallback: number) {
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
 }
 
+/** Don't start another link after this long: each CJ link takes ~5 CJ calls spaced 1.1 s apart. */
+const START_BEFORE_MS = 45_000;
+
 /**
- * Paste-a-list bulk lister: up to one batch of supplier links in, listings out.
- * Each link is policy-checked, read, priced at the seller's markup, VeRO-screened,
- * and only listed if it still makes a profit after eBay fees and the ad rate.
+ * Paste-a-list bulk lister: up to one batch of CJ product links in, listings
+ * out. Each link is policy-checked, then imported from CJ's API into the
+ * catalog (importCjProduct), which also stores CJ's real shipping cost to the
+ * US. It is priced at the seller's markup on the true landed cost (CJ cost +
+ * real shipping + eBay's $0.40 order fee), raised to the $5.00 profit floor
+ * when short, VeRO-screened, and skipped as "Low" when that price is more than
+ * 20% above the eBay market average (see resolveListingPrice). Links from
+ * other suppliers are skipped: without CJ's freight quote there is no real
+ * shipping cost to price them with.
  */
 export async function POST(request: Request) {
+  const started = Date.now();
   const user = await getCurrentUser();
   if (!user) return Response.json({ ok: false, error: "Not signed in." }, { status: 401 });
 
@@ -72,21 +85,34 @@ export async function POST(request: Request) {
     const supplier = checkSupplierUrl(url);
     if (!supplier.allowed) return skip(supplier.host, supplier.reason, "blocked");
 
-    const product = await extractProduct(url);
-    if (!product.ok) return skip(supplier.host, product.note ?? "Could not read this page.");
-    if (!product.price || product.price <= 0) {
-      return skip(product.title, "No price found on the page. Use New listing to enter it by hand.");
+    const pid = cjPidFromUrl(url);
+    if (!pid) {
+      return skip(
+        supplier.host,
+        "Only CJ Dropshipping product links can be listed here: AutoPilot prices with CJ's real shipping cost, which only CJ's API provides.",
+      );
+    }
+    if (Date.now() - started > START_BEFORE_MS) {
+      return skip(supplier.host, "Ran out of time for this batch. Paste this link again.");
     }
 
-    const vero = screenVero(product.title);
-    if (vero.risk === "high") return skip(product.title, `Skipped to protect your eBay account: ${vero.reason}`, "blocked");
+    const imported = await importCjProduct(pid, user.id);
+    if (!imported.ok) return skip(supplier.host, `Not listed: ${imported.error}`);
+    const found = await getCatalogProduct(user.id, cjExternalId(pid));
+    if (!found) return skip(supplier.host, "The product didn't save. Try again.");
+    const [product] = await withUserImages(user.id, [found]);
 
-    const listPrice = priceFromMarkup(product.price, markupPct);
-    const profit = netProfitFor(listPrice, product.price, 0, adRatePct);
-    if (profit <= 0) {
+    if (product.veroRisk === "high") {
+      return skip(product.title, `Skipped to protect your eBay account: ${product.veroReason}`, "blocked");
+    }
+
+    const price = await resolveListingPrice({ ...defaults, pricingMode: "markup", markupPct, adRatePct }, product);
+    if (price.rule === "low") return skip(product.title, `Low: not listed, ${price.reason}.`);
+    const profit = netProfitFor(price.listPrice, product.supplierPrice, product.shippingCost, adRatePct);
+    if (profit < MIN_PROFIT) {
       return skip(
         product.title,
-        `At ${markupPct}% markup${adRatePct ? ` and a ${adRatePct}% ad rate` : ""} this would lose $${Math.abs(profit).toFixed(2)} per sale after eBay fees. Raise your markup.`,
+        `Not listed: only $${profit.toFixed(2)} profit per sale after real shipping and eBay fees (the floor is $${MIN_PROFIT.toFixed(2)}).`,
       );
     }
 
@@ -96,17 +122,26 @@ export async function POST(request: Request) {
       defaults: { ...defaults, markupPct, adRatePct },
       source: {
         title: product.title,
-        supplierPrice: product.price,
-        listPrice,
-        sourceUrl: product.url,
+        category: product.category,
+        supplierPrice: product.supplierPrice,
+        listPrice: price.listPrice,
+        sourceUrl: product.supplierUrl,
         imageUrl: product.imageUrl,
+        images: product.images,
+        variants: product.variants,
+        details: product.details,
+        externalId: product.externalId,
+        freeShipping: price.freeShipping,
       },
       requested,
       accessToken,
       drip,
       batchId,
     });
-    const notes = [supplier.warning, vero.risk === "medium" ? vero.reason : null].filter(Boolean).join(" ");
+    const shippingNote = `Priced with CJ shipping $${product.shippingCost.toFixed(2)}${price.floorRaised ? `, ${price.reason}` : ""}.`;
+    const notes = [shippingNote, supplier.warning, product.veroRisk === "medium" ? product.veroReason : null]
+      .filter(Boolean)
+      .join(" ");
     return notes ? { ...created, message: `${created.message} Note: ${notes}` } : created;
   });
 

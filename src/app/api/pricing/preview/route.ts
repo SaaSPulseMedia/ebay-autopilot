@@ -9,9 +9,10 @@ import { getCatalog } from "@/lib/suppliers";
 /**
  * POST /api/pricing/preview { externalIds } — the price each catalog product
  * would list at under the seller's pricing rule, with the rule used (Market
- * Match or the default) and the profit breakdown. The Bulk list calls this in
- * small batches when "Match eBay Market Price (Free Shipping)" is on, since
- * every product needs an eBay lookup (rate-limited, cached for publishing).
+ * Match, the default, or Low) and the profit breakdown. The Bulk list calls
+ * this in small batches for every pricing rule: Market Match needs an eBay
+ * lookup per product, and any rule's price raised to the $5.00 floor is
+ * checked against the eBay average (lookups are rate-limited, cached).
  */
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;

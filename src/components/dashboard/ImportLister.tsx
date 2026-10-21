@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 
 import { BatchSummary, DripToggle, type BatchResponse } from "@/components/dashboard/BatchControls";
 import { PriceBreakdown } from "@/components/dashboard/PriceBreakdown";
-import { priceBreakdown, priceFromMarkup } from "@/lib/pricing";
+import { listPriceFor, priceBreakdown } from "@/lib/pricing";
 import { checkSupplierUrl } from "@/lib/supplier-policy";
 
 type Props = {
@@ -37,8 +37,8 @@ export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun, de
   const cap = Math.min(batchSize, remaining);
   const tooMany = links.length > cap;
 
-  // Worked example so the markup is easy to judge: a $20 supplier item.
-  const example = priceBreakdown(priceFromMarkup(20, markupPct), 20, 0, adRatePct);
+  // Worked example so the markup is easy to judge: a $20 CJ item with $5 shipping, priced like a real link.
+  const example = priceBreakdown(listPriceFor({ pricingMode: "markup", markupPct, adRatePct }, 20, 5, 0), 20, 5, adRatePct);
 
   async function submit() {
     setBusy(true);
@@ -73,7 +73,7 @@ export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun, de
             value={text}
             onChange={(e) => setText(e.target.value)}
             rows={8}
-            placeholder={"https://your-supplier.com/product/123\nhttps://your-supplier.com/product/456"}
+            placeholder={"https://cjdropshipping.com/product/…-p-1234567890.html\nhttps://cjdropshipping.com/product/…-p-0987654321.html"}
             className="mt-1 w-full rounded-xl border border-white/15 bg-navy-900 px-3.5 py-2.5 font-mono text-xs text-white outline-none focus:border-brand-500"
           />
           <span className="mt-1 block text-[11px] text-slate-500">
@@ -111,7 +111,7 @@ export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun, de
 
         <div>
           <p className="text-[11px] uppercase tracking-wide text-slate-400">
-            Example: a $20.00 supplier item at these settings (assumes the supplier price includes shipping)
+            Example: a $20.00 CJ item with $5.00 CJ shipping at these settings
           </p>
           <div className="mt-1 max-w-md">
             <PriceBreakdown breakdown={example} compact />
@@ -121,7 +121,8 @@ export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun, de
             <Link href="/dashboard/settings" className="font-semibold text-brand-400 hover:text-brand-500">
               Edit defaults
             </Link>
-            . Links that would lose money are skipped.
+            . Prices are raised to keep at least $5.00 profit; ones that would then be more than 20% above the
+            eBay average are skipped.
           </p>
         </div>
 

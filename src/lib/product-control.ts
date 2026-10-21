@@ -5,6 +5,7 @@ import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { listings } from "@/db/schema";
 import { htmlToText } from "@/lib/cj/facts";
+import { EBAY_FIXED_FEE } from "@/lib/pricing";
 import { cjPidOf, cjProductUrl } from "@/lib/cj/urls";
 import { getEbayItemStatus } from "@/lib/ebay/item-status";
 import { isEbaySandbox } from "@/lib/ebay/oauth";
@@ -28,8 +29,10 @@ export type ProductControl = {
     url: string | null;
     /** Supplier price (cheapest variant). */
     baseCost: number;
-    /** AutoPilot's shipping estimate (CJ's real quote is fetched separately: /api/source/shipping). */
+    /** The shipping cost the product is priced with: CJ's quote from import, or an old flat estimate. */
     shipping: number | null;
+    /** True when `shipping` is CJ's real quote (see SupplierProduct.shippingQuoted). */
+    shippingQuoted: boolean;
     /** The variant to quote CJ shipping on: the cheapest, which the base cost is. */
     quoteSku: string | null;
     landed: number;
@@ -141,8 +144,10 @@ export async function getProductControl(
             url: cjUrl,
             baseCost,
             shipping,
+            shippingQuoted: product?.shippingQuoted ?? false,
             quoteSku: [...(product?.variants ?? [])].sort((a, b) => (a.price || Infinity) - (b.price || Infinity))[0]?.sku ?? null,
-            landed: Math.round((baseCost + (shipping ?? 0)) * 100) / 100,
+            // Landed cost: CJ cost + shipping + eBay's $0.40 order fee (the percentage fees depend on the price).
+            landed: Math.round((baseCost + (shipping ?? 0) + EBAY_FIXED_FEE) * 100) / 100,
           }
         : null,
     ebay,

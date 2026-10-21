@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import type { CjShippingQuote } from "@/lib/cj/catalog";
+import { EBAY_FIXED_FEE } from "@/lib/pricing";
 import type { ProductControl } from "@/lib/product-control";
 
 /** Which product to show, and what the row already knows (shown while the details load). */
@@ -260,14 +261,15 @@ export function ProductControlModal({ target, onClose }: { target: ProductContro
                           <Row label="CJ shipping to US" value={money(realShipping)} />
                         ) : (
                           <Row
-                            label="Shipping (AutoPilot estimate)"
+                            label={cj.shippingQuoted ? "CJ shipping (quoted on import)" : "Shipping (old estimate)"}
                             value={cj.shipping == null ? "—" : money(cj.shipping)}
                           />
                         )}
                         <CjShipping state={shipping} onRetry={() => void loadShipping()} />
+                        <Row label="eBay order fee" value={money(EBAY_FIXED_FEE)} />
                         <Row
-                          label={realShipping != null ? "Total landed cost" : "Total landed cost (estimate)"}
-                          value={money(realShipping != null ? cj.baseCost + realShipping : cj.landed)}
+                          label={realShipping != null || cj.shippingQuoted ? "Total landed cost" : "Total landed cost (estimate)"}
+                          value={money(realShipping != null ? cj.baseCost + realShipping + EBAY_FIXED_FEE : cj.landed)}
                           strong
                         />
                       </dl>
