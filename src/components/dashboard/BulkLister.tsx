@@ -51,8 +51,13 @@ type PricingNote = {
 /** Products the daily batch publishes per click (drip posting releases them up to DRIP_PER_RUN an hour). */
 const DAILY_WINNERS = 10;
 
-/** "Good": Market Match priced it (after the Safety Margin Cap) at $3+ profit, so the daily batch may list it. */
-const isGood = (p: BulkProduct) => p.pricing?.rule === "market" && p.breakdown.profit > 0 && p.veroRisk !== "high" && !p.listed;
+/**
+ * A daily-batch candidate under any pricing rule: makes money, isn't
+ * brand-blocked, isn't "Low" (Safety Margin Cap, Market Match only) and has no
+ * live or scheduled listing yet.
+ */
+const isDailyCandidate = (p: BulkProduct) =>
+  p.breakdown.profit > 0 && p.veroRisk !== "high" && p.pricing?.rule !== "low" && !p.listed;
 
 type PricePreview = PricingNote & { externalId: string; listPrice: number; breakdown: Breakdown };
 
@@ -247,29 +252,29 @@ export function BulkLister({
   const isUnlistable = (p: BulkProduct) => p.veroRisk === "high" || p.breakdown.profit <= 0 || p.pricing?.rule === "low";
   const blockedIds = useMemo(() => new Set(products.filter(isUnlistable).map((p) => p.externalId)), [products]);
 
-  // Daily batch: the most profitable "Good" products not listed yet, once every eBay price is in.
+  // Daily batch: the most profitable products by net profit that aren't Low or
+  // listed yet, under whatever pricing rule is set. With Market Match a product
+  // only counts once its eBay price is in (it may still turn out Low).
   const pricesChecked = marketMode ? products.filter((p) => p.pricing).length : 0;
   const pricesPending = marketMode && pricesChecked < products.length;
   const dailyCount = Math.min(DAILY_WINNERS, perRunCap);
   const dailyWinners = useMemo(
     () =>
       products
-        .filter(isGood)
+        .filter((p) => isDailyCandidate(p) && (!marketMode || p.pricing))
         .sort((a, b) => b.breakdown.profit - a.breakdown.profit)
         .slice(0, dailyCount),
-    [products, dailyCount],
+    [products, dailyCount, marketMode],
   );
-  const dailyBlocker = !marketMode
-    ? "Turn on “Match eBay Market Price (Free Shipping)” in Settings: the daily batch only lists products that pass the eBay price check."
-    : !dripAllowed
-      ? "The daily batch uses drip posting, which is included in Pro and Business."
-      : atCapacity
-        ? "No listing slots left on your plan."
-        : pricesPending && dailyWinners.length < dailyCount
-          ? `Checking eBay prices… ${pricesChecked}/${products.length}`
-          : !dailyWinners.length
-            ? "No products with a Good badge to list right now."
-            : null;
+  const dailyBlocker = !dripAllowed
+    ? "The daily batch uses drip posting, which is included in Pro and Business."
+    : atCapacity
+      ? "No listing slots left on your plan."
+      : pricesPending && dailyWinners.length < dailyCount
+        ? `Checking eBay prices… ${pricesChecked}/${products.length}`
+        : !dailyWinners.length
+          ? "No profitable products left to list: everything is listed, Low or loses money."
+          : null;
 
   function toggle(id: string) {
     if (blockedIds.has(id)) return;
@@ -300,11 +305,12 @@ export function BulkLister({
   async function listDailyWinners() {
     if (dailyBlocker || !dailyWinners.length) return;
     const ok = window.confirm(
-      `Schedule your ${dailyWinners.length} best Good products for drip posting?\n\n` +
+      `Schedule your ${dailyWinners.length} most profitable products for drip posting?\n\n` +
         dailyWinners.map((p) => `• ${p.title} — $${p.listPrice.toFixed(2)} (+$${p.breakdown.profit.toFixed(2)})`).join("\n") +
-        `\n\nPrices are set now (Safety Margin Cap included); up to ${dripPerRun} go live each hour.`,
+        `\n\nPrices are set now${marketMode ? " (Safety Margin Cap included)" : ""}; up to ${dripPerRun} go live each hour.`,
     );
     if (!ok) return;
+    setDrip(true);
     setSelected(new Set(dailyWinners.map((p) => p.externalId)));
     await publish(
       dailyWinners.map((p) => p.externalId),
@@ -405,7 +411,7 @@ export function BulkLister({
           </button>
           <span className="text-xs text-slate-300">
             {dailyBlocker ??
-              `Schedules your ${dailyWinners.length} most profitable products with a Good badge (not listed yet), released by drip posting: up to ${dripPerRun} an hour.`}
+              `Schedules your ${dailyWinners.length} most profitable products by net profit (not Low, not listed yet), released by drip posting: up to ${dripPerRun} an hour.`}
           </span>
         </div>
 
