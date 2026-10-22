@@ -830,6 +830,10 @@ const shippingCache = new Map<string, { at: number; quote: CjShippingQuote }>();
 
 type CjFreight = Array<{ logisticName?: unknown; logisticPrice?: unknown; logisticAging?: unknown }>;
 
+/** True when CJ actually stated a price (0 included), not left it out or blank. */
+const hasPrice = (value: unknown) =>
+  (typeof value === "number" && Number.isFinite(value)) || (typeof value === "string" && /\d/.test(value));
+
 /**
  * CJ's real shipping cost to the US for one unit of a product, from its
  * freight calculator (POST /logistic/freightCalculate), from both its China
@@ -851,19 +855,28 @@ export async function getCjShipping(pid: string, sku?: string | null): Promise<C
 
   const options: CjShippingOption[] = [];
   let lastError: { ok: false; error: string; status: number } | null = null;
+  /** CJ's raw answer per warehouse, logged when nothing usable came back. */
+  const raw: Record<string, unknown> = {};
   for (const from of ["CN", "US"] as const) {
     const res = await cjGet("/logistic/freightCalculate", {
       method: "POST",
       body: JSON.stringify({ startCountryCode: from, endCountryCode: "US", products: [{ quantity: 1, vid: variant.vid }] }),
     });
+    raw[from] = res.ok ? res.data : { error: res.error };
     if (!res.ok) {
       lastError = res;
       continue;
     }
     for (const row of (Array.isArray(res.data) ? res.data : []) as CjFreight) {
+      // A stated price of 0 is free shipping (common from CJ's US warehouse) and counts;
+      // a missing or unreadable price doesn't, so a gap in CJ's answer is never taken as free.
+      if (!hasPrice(row.logisticPrice)) continue;
       const price = num(row.logisticPrice);
-      if (price > 0) options.push({ method: str(row.logisticName) || "CJ shipping", price: Math.round(price * 100) / 100, days: String(row.logisticAging ?? "").trim(), from });
+      if (price >= 0) options.push({ method: str(row.logisticName) || "CJ shipping", price: Math.round(price * 100) / 100, days: String(row.logisticAging ?? "").trim(), from });
     }
+  }
+  if (!options.length) {
+    console.warn(`[cj-shipping] pid=${pid} vid=${variant.vid}: no usable shipping option. CJ said: ${JSON.stringify(raw).slice(0, 2000)}`);
   }
   // Both warehouses failing is an error; one failing (usually: not stocked in the US) isn't.
   if (!options.length && lastError) return lastError;
