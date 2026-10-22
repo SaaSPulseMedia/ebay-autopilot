@@ -106,7 +106,8 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
 
   // Size-constrained categories (apparel "Size", footwear "US Shoe Size", …)
   // accept only their standardized values: map each supplier size to the
-  // category's list and leave out variants whose size has no match.
+  // category's list. If any size has no match, nothing is listed (never a
+  // partial listing missing some of the supplier's sizes).
   let variants = input.variations ?? [];
   /** Two or more supplier variants: the product goes out as a multi-variation listing or not at all. */
   const hasVariants = variants.length > 1;
@@ -119,11 +120,8 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     const plan = standardizeSizes(variants, sizeRule, genderFromCategoryPath(categoryPath));
     sizes = { aspect: sizeRule.name, published: plan.mapped, dropped: plan.skipped };
     if (plan.skipped.length) {
-      console.warn(
-        `[ebay-sizes] sku ${input.sku}: no ${sizeRule.name} value in ${categoryId} matches supplier size(s) ${plan.skipped.join(", ")}; those variants are left out.`,
-      );
-    }
-    if (plan.variants.length < 2) {
+      variantProblem = `no eBay ${sizeRule.name} matches the supplier's size${plan.skipped.length === 1 ? "" : "s"} ${plan.skipped.join(", ")}`;
+    } else if (plan.variants.length < 2) {
       variantProblem = plan.variants.length
         ? `only one of the supplier's sizes matches an eBay ${sizeRule.name}`
         : `none of the supplier's sizes match an eBay ${sizeRule.name}`;
