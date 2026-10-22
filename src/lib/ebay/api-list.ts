@@ -93,8 +93,9 @@ export async function publishViaApi(
 
   const result = await publishWithResolver(product);
   if (!result.ok) {
-    // The market check is AutoPilot's own, so its warning is shown as written.
-    const message = result.step === "market" ? result.error : `eBay ${result.step} step failed: ${result.error}`;
+    // The market and variant checks are AutoPilot's own, so their messages are shown as written.
+    const message =
+      result.step === "market" || result.step === "variants" ? result.error : `eBay ${result.step} step failed: ${result.error}`;
     return { engine: "api", status: "error", message, itemId: null, title: draft.title };
   }
   const where = result.usedFallbackCategory
@@ -110,9 +111,7 @@ export async function publishViaApi(
           ? ` with ${sizeCount} sizes.`
           : ` with ${result.variations} variations (${sizeCount} sizes).`
         : ` with ${result.variations} variations.`
-      : result.variationFallback
-        ? `. Note: published as a single listing without variations because ${result.variationFallback}.`
-        : ".";
+      : ".";
   if (report?.dropped.length) {
     variants += ` ${report.dropped.length} size${report.dropped.length === 1 ? " was" : "s were"} unmapped and dropped (${report.dropped.join(", ")}).`;
   }

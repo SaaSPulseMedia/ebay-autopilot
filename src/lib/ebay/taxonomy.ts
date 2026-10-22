@@ -25,6 +25,11 @@ export type CategorySuggestion = {
   /** Aspect names this category allows a multi-variation listing to vary by (e.g. Color, Size). */
   variationAspects: string[];
   /**
+   * For each of those aspects that only takes eBay's own values (SELECTION_ONLY),
+   * every value it accepts. Free-text aspects (usually Color) aren't listed.
+   */
+  variationValues: Record<string, string[]>;
+  /**
    * The category's standardized size aspect ("US Shoe Size", "Size", …) with
    * every value eBay accepts, or null when it has none. eBay rejects custom
    * size values in these categories.
@@ -147,6 +152,20 @@ export async function resolveCategory(userId: number, productTitle: string): Pro
     const variationAspects = (aspectsResponse.aspects ?? [])
       .filter((a) => a.aspectConstraint?.aspectEnabledForVariations && a.localizedAspectName)
       .map((a) => a.localizedAspectName as string);
+    const variationValues = Object.fromEntries(
+      (aspectsResponse.aspects ?? [])
+        .filter(
+          (a) =>
+            a.aspectConstraint?.aspectEnabledForVariations &&
+            a.aspectConstraint.aspectMode === "SELECTION_ONLY" &&
+            a.localizedAspectName &&
+            a.aspectValues?.length,
+        )
+        .map((a) => [
+          a.localizedAspectName as string,
+          (a.aspectValues ?? []).map((v) => v.localizedValue?.trim() ?? "").filter(Boolean),
+        ]),
+    );
 
     return {
       ok: true,
@@ -157,6 +176,7 @@ export async function resolveCategory(userId: number, productTitle: string): Pro
         requiredAspects: aspects.filter((a) => a.required),
         optionalAspects: aspects.filter((a) => !a.required),
         variationAspects,
+        variationValues,
         sizeAspect,
       },
       alternatives: rest.slice(0, MAX_ALTERNATIVES).map((s) => ({

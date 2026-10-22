@@ -89,22 +89,44 @@ export function listingVariants(args: {
   return rows.length >= 2 ? rows : single;
 }
 
+/** eBay's limits on a variation's aspect name and value. */
+const MAX_VARIATION_NAME = 40;
+const MAX_VARIATION_VALUE = 65;
+
 /**
  * Why these variants can't be one eBay multi-variation listing, or null if
  * they can. Every variant needs the same aspect names (all within what the
- * category allows for variations), with no two variants alike.
+ * category allows for variations), each with a value eBay accepts (within its
+ * length limit, and from the category's list when the aspect has one; see
+ * CategorySuggestion.variationValues), with no two variants alike.
  */
-export function variationProblem(variants: Variant[], allowedAspects: string[]): string | null {
+export function variationProblem(
+  variants: Variant[],
+  allowedAspects: string[],
+  allowedValues: Record<string, string[]> = {},
+): string | null {
   if (variants.length < 2) return "fewer than two variants";
   const names = Object.keys(variants[0].options).sort();
   if (!names.length) return "the supplier's variant names could not be read as Color or Size";
   const allowed = new Set(allowedAspects.map((name) => name.toLowerCase()));
   const blocked = names.filter((name) => !allowed.has(name.toLowerCase()));
   if (blocked.length) return `this eBay category does not allow variations by ${blocked.join(" and ")}`;
+  const tooLong = names.find((name) => name.length > MAX_VARIATION_NAME);
+  if (tooLong) return `the variation name "${tooLong}" is longer than eBay allows`;
+  const lists = new Map(
+    Object.entries(allowedValues).map(([name, values]) => [name.toLowerCase(), new Set(values.map((v) => v.toLowerCase()))]),
+  );
   const combos = new Set<string>();
   for (const variant of variants) {
     if (Object.keys(variant.options).sort().join("|") !== names.join("|")) {
       return "the supplier's variants do not all have the same options";
+    }
+    for (const name of names) {
+      const value = variant.options[name]?.trim() ?? "";
+      if (!value) return `variant ${variant.sku} has no ${name}`;
+      if (value.length > MAX_VARIATION_VALUE) return `the ${name} "${value}" is longer than eBay allows`;
+      const list = lists.get(name.toLowerCase());
+      if (list?.size && !list.has(value.toLowerCase())) return `"${value}" is not a ${name} eBay accepts in this category`;
     }
     const combo = names.map((name) => variant.options[name].toLowerCase()).join("|");
     if (combos.has(combo)) return `two variants are both "${names.map((name) => variant.options[name]).join(" / ")}"`;

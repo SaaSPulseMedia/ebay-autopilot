@@ -45,7 +45,7 @@ export type PublishVariation = {
 
 type PublishFailure = {
   ok: false;
-  step: "market" | "setup" | "item" | "offer" | "publish";
+  step: "market" | "setup" | "variants" | "item" | "offer" | "publish";
   error: string;
   details?: unknown;
 };
@@ -243,11 +243,48 @@ async function withEbayHostedImages(input: PublishInput): Promise<PublishInput> 
   };
 }
 
+/** What a product with variants gets instead of a listing when they can't go out as eBay variations. */
+export const VARIANTS_INVALID = "Variant data invalid. Product not listed.";
+
+/**
+ * Why `variations` can't make an eBay multi-variation listing, or null. The
+ * resolver already checked them against the category (variationProblem);
+ * this is the last check before anything is sent, so a listing with variants
+ * is never published without its Color/Size choices.
+ */
+function variationDataProblem(variations: PublishVariation[]): string | null {
+  const names = Object.keys(variations[0]?.aspects ?? {}).sort();
+  if (!names.length) return "the variants have no Color or Size";
+  const skus = new Set<string>();
+  const combos = new Set<string>();
+  for (const variant of variations) {
+    if (!variant.sku) return "a variant has no SKU";
+    if (skus.has(variant.sku)) return `two variants share the SKU ${variant.sku}`;
+    skus.add(variant.sku);
+    if (Object.keys(variant.aspects).sort().join("|") !== names.join("|")) return "the variants do not all have the same options";
+    const missing = names.find((name) => !variant.aspects[name]?.trim());
+    if (missing) return `variant ${variant.sku} has no ${missing}`;
+    if (!(variant.price > 0)) return `variant ${variant.sku} has no price`;
+    const combo = names.map((name) => variant.aspects[name].trim().toLowerCase()).join("|");
+    if (combos.has(combo)) return `two variants are both "${names.map((name) => variant.aspects[name]).join(" / ")}"`;
+    combos.add(combo);
+  }
+  return null;
+}
+
 async function publishOnly(original: PublishInput): Promise<PublishResult> {
+  const multi = original.variations && original.variations.length > 1;
+  if (multi && original.variations) {
+    const problem = variationDataProblem(original.variations);
+    if (problem) {
+      console.warn(`[ebay-variations] sku ${original.sku}: not listed because ${problem}.`);
+      return { ok: false, step: "variants", error: `${VARIANTS_INVALID} Reason: ${problem}.` };
+    }
+  }
+
   // 0. Market price: nothing is sent to eBay when the price is far above what
   // the same item sells for there (it would never sell). For variations, the
   // cheapest variant is the one a buyer compares.
-  const multi = original.variations && original.variations.length > 1;
   const askPrice = multi ? Math.min(...(original.variations ?? []).map((v) => v.price)) : original.price;
   const warning = await marketPriceWarning(original.title, askPrice);
   if (warning) return { ok: false, step: "market", error: warning };

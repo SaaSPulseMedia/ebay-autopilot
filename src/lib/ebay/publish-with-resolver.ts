@@ -1,6 +1,6 @@
 import "server-only";
 
-import { publishListing } from "@/lib/ebay/inventory";
+import { VARIANTS_INVALID, publishListing } from "@/lib/ebay/inventory";
 import type { PromotionResult } from "@/lib/ebay/promoted";
 import { defaultSizeValue, genderFromCategoryPath, standardizeSizes } from "@/lib/ebay/sizes";
 import { type CategoryAspect, resolveCategory } from "@/lib/ebay/taxonomy";
@@ -41,14 +41,12 @@ export type PublishWithResolverResult =
       usedFallbackCategory: boolean;
       /** Variants on the eBay listing (1 for a single listing). */
       variations: number;
-      /** Why the product's variants went out as a single listing, if they did. */
-      variationFallback?: string;
       /** Size standardization in a size-constrained category (apparel, footwear). */
       sizes?: SizeReport;
       /** Promoted Listings (General) outcome. */
       promotion?: PromotionResult;
     }
-  | { ok: false; step: "market" | "setup" | "item" | "offer" | "publish" | "category"; error: string };
+  | { ok: false; step: "market" | "setup" | "variants" | "item" | "offer" | "publish" | "category"; error: string };
 
 export type SizeReport = {
   /** The category's size aspect, e.g. "Size" or "US Shoe Size". */
@@ -110,14 +108,14 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
   // accept only their standardized values: map each supplier size to the
   // category's list and leave out variants whose size has no match.
   let variants = input.variations ?? [];
-  let variationFallback: string | undefined;
+  /** Two or more supplier variants: the product goes out as a multi-variation listing or not at all. */
+  const hasVariants = variants.length > 1;
+  let variantProblem: string | undefined;
   const sizeAspect = resolved.ok ? resolved.suggestion.sizeAspect : null;
   // Enforced when eBay gives a list to check against; shoe sizes are also converted to US without one.
   const sizeRule = sizeAspect && (sizeAspect.values.length || sizeAspect.kind === "shoe") ? sizeAspect : null;
   let sizes: SizeReport | undefined;
-  /** The one supplier size a single listing goes out at, when exactly one matched. */
-  let matchedSize: string | undefined;
-  if (sizeRule && variants.length > 1) {
+  if (sizeRule && hasVariants) {
     const plan = standardizeSizes(variants, sizeRule, genderFromCategoryPath(categoryPath));
     sizes = { aspect: sizeRule.name, published: plan.mapped, dropped: plan.skipped };
     if (plan.skipped.length) {
@@ -126,42 +124,35 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
       );
     }
     if (plan.variants.length < 2) {
-      variationFallback = plan.variants.length
+      variantProblem = plan.variants.length
         ? `only one of the supplier's sizes matches an eBay ${sizeRule.name}`
         : `none of the supplier's sizes match an eBay ${sizeRule.name}`;
-      console.warn(`[ebay-sizes] sku ${input.sku}: publishing as a single listing because ${variationFallback}.`);
-      // A single listing at the one size that matched.
-      matchedSize = plan.variants[0]?.options[sizeRule.name];
     }
     variants = plan.variants;
   }
 
   // Variants go out as eBay variations only when the category lets the listing
-  // vary by every one of their aspects; otherwise the product is one listing.
-  if (variants.length > 1 && !variationFallback) {
-    const problem = resolved.ok
-      ? variationProblem(variants, resolved.suggestion.variationAspects)
-      : "the eBay category could not be resolved";
-    if (problem) {
-      variationFallback = problem;
-      console.warn(
-        `[ebay-variations] sku ${input.sku}: publishing ${variants.length} variants as a single listing in ${categoryId} because ${problem}.`,
-      );
-    }
+  // vary by every one of their aspects, with values eBay accepts. Otherwise
+  // nothing is sent: a single listing would drop the buyer's Color/Size choice.
+  if (hasVariants && !variantProblem) {
+    variantProblem =
+      (resolved.ok
+        ? variationProblem(variants, resolved.suggestion.variationAspects, resolved.suggestion.variationValues)
+        : "the eBay category could not be resolved") ?? undefined;
   }
-  const variations =
-    variants.length > 1 && !variationFallback
-      ? variants.map((v) => ({ sku: v.sku, aspects: v.options, price: v.price, quantity: v.quantity, imageUrl: v.imageUrl }))
-      : undefined;
+  if (variantProblem) {
+    console.warn(`[ebay-variations] sku ${input.sku}: not listed in ${categoryId} because ${variantProblem}.`);
+    return { ok: false, step: "variants", error: `${VARIANTS_INVALID} Reason: ${variantProblem}.` };
+  }
+  const variations = hasVariants
+    ? variants.map((v) => ({ sku: v.sku, aspects: v.options, price: v.price, quantity: v.quantity, imageUrl: v.imageUrl }))
+    : undefined;
 
   // When the size doesn't vary (a single listing, or variations by Color only),
   // the listing's own size value must still be one eBay accepts — never a
   // generic default like "Other".
   if (sizeRule && !variations?.some((v) => sizeRule.name in v.aspects)) {
-    if (matchedSize) {
-      aspects = { ...aspects, [sizeRule.name]: [matchedSize] };
-      sizes = { ...(sizes ?? { aspect: sizeRule.name, dropped: [] }), published: [matchedSize] };
-    } else if (sizeRule.required) {
+    if (sizeRule.required) {
       // No supplier size to use (none given, or none matched): eBay still
       // requires one, so stand in its "One Size" or first value, and say so.
       const standIn = defaultSizeValue(sizeRule.values) ?? aspects[sizeRule.name]?.[0];
@@ -204,7 +195,6 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     categoryPath,
     usedFallbackCategory: !resolved.ok,
     variations: result.variations ?? 1,
-    variationFallback,
     sizes,
     promotion: result.promotion,
   };
