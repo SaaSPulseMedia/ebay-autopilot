@@ -22,6 +22,15 @@ type ReadyProduct = {
   checkedAt: string | null;
 };
 
+type TurnedDownProduct = {
+  pid: string;
+  title: string;
+  imageUrl: string | null;
+  reason: RejectReason;
+  detail: string;
+  checkedAt: string | null;
+};
+
 type Counts = { checked: number; ready: number; rejected: Partial<Record<RejectReason, number>> };
 
 type RunResult =
@@ -44,6 +53,7 @@ type Props = {
   waiting: number;
   last24h: Counts;
   ready: ReadyProduct[];
+  turnedDown: TurnedDownProduct[];
   ebayConnected: boolean;
 };
 
@@ -67,7 +77,7 @@ function reasonsLine(rejected: Partial<Record<RejectReason, number>>) {
     .join(" · ");
 }
 
-export function SourcingBoard({ niches, selected, enabled, lastRunAt, waiting, last24h, ready, ebayConnected }: Props) {
+export function SourcingBoard({ niches, selected, enabled, lastRunAt, waiting, last24h, ready, turnedDown, ebayConnected }: Props) {
   const router = useRouter();
   const [picked, setPicked] = useState<string[]>(selected);
   const [auto, setAuto] = useState(enabled);
@@ -211,42 +221,151 @@ export function SourcingBoard({ niches, selected, enabled, lastRunAt, waiting, l
         {ready.length ? (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {ready.map((p) => (
-              <article key={p.pid} className="ap-card flex min-w-0 gap-3 rounded-2xl p-3">
-                {p.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={p.imageUrl} alt="" className="h-20 w-20 flex-none rounded-xl object-cover" />
-                ) : (
-                  <div className="h-20 w-20 flex-none rounded-xl bg-white/5" />
-                )}
-                <div className="min-w-0 flex-1 space-y-1 text-xs">
-                  <p className="line-clamp-2 text-sm text-white">{p.title}</p>
-                  <p className="text-slate-400">
-                    List at <span className="text-white">{money(p.listPrice)}</span> · profit{" "}
-                    <span className="font-semibold text-lime-brand">{money(p.profit)}</span>
-                  </p>
-                  <p className="text-slate-500">
-                    CJ {money(p.cost)} + shipping {p.shipping === 0 ? "free" : money(p.shipping)}
-                    {p.market != null ? ` · eBay avg ${money(p.market)}` : ""}
-                    {p.variantCount > 1 ? ` · ${p.variantCount} variants` : ""}
-                  </p>
-                  <p className="truncate text-slate-500">
-                    {p.niche}
-                    {p.ebayCategory ? ` → ${p.ebayCategory}` : ""}
-                  </p>
-                  <a href={cjProductUrl(p.pid, p.title)} target="_blank" rel="noreferrer" className="inline-block text-brand-300 hover:underline">
-                    View on CJ
-                  </a>
-                </div>
-              </article>
+              <ReadyCard key={p.pid} product={p} ebayConnected={ebayConnected} />
             ))}
           </div>
         ) : (
           <p className="ap-card rounded-2xl p-8 text-center text-sm text-slate-400">
-            Nothing ready yet. Products appear here once they pass every check: real CJ shipping, at least {MIN_PROFIT_LABEL} profit, a price
+            Nothing ready yet. Products appear here once they pass every check: real CJ shipping, at least {`${MIN_PROFIT_LABEL} profit, `}a price
             eBay buyers pay, no brand risk, and eBay&apos;s category and size rules.
           </p>
         )}
       </section>
+
+      {turnedDown.length ? (
+        <details className="ap-card rounded-2xl p-4">
+          <summary className="cursor-pointer text-sm text-slate-300">
+            See the last {turnedDown.length} product{turnedDown.length === 1 ? "" : "s"} turned down, and why
+          </summary>
+          <ul className="mt-3 divide-y divide-white/8">
+            {turnedDown.map((p) => (
+              <li key={p.pid} className="flex min-w-0 gap-3 py-2.5 text-xs">
+                {p.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={p.imageUrl} alt="" className="h-12 w-12 flex-none rounded-lg object-cover" />
+                ) : (
+                  <div className="h-12 w-12 flex-none rounded-lg bg-white/5" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-slate-200">{p.title || p.pid}</p>
+                  <p className="text-amber-200">{REJECT_REASONS[p.reason] ?? p.reason}</p>
+                  {p.detail ? <p className="text-slate-500">{p.detail}</p> : null}
+                </div>
+                <span className="flex-none text-slate-500">{ago(p.checkedAt)}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
     </div>
+  );
+}
+
+type ListResult = { ok: true; itemUrl: string; listPrice: number; message?: string } | { ok: false; error: string };
+
+/** One ready product: its numbers, "List on eBay" (imports it and publishes it now) and "Not for me". */
+function ReadyCard({ product: p, ebayConnected }: { product: ReadyProduct; ebayConnected: boolean }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState<"list" | "dismiss" | null>(null);
+  const [result, setResult] = useState<ListResult | null>(null);
+  const [gone, setGone] = useState(false);
+
+  async function list() {
+    setBusy("list");
+    setResult(null);
+    try {
+      const res = await fetch("/api/source/auto-list", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ pid: p.pid }),
+      });
+      setResult((await res.json()) as ListResult);
+    } catch {
+      setResult({ ok: false, error: "The listing didn't finish. Check your Listings page before trying again." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function dismiss() {
+    setBusy("dismiss");
+    try {
+      const res = await fetch("/api/sourcing/dismiss", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ pid: p.pid }),
+      });
+      if (res.ok) {
+        setGone(true);
+        router.refresh();
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (gone) return null;
+  return (
+    <article className="ap-card flex min-w-0 flex-col gap-3 rounded-2xl p-3">
+      <div className="flex min-w-0 gap-3">
+        {p.imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={p.imageUrl} alt="" className="h-20 w-20 flex-none rounded-xl object-cover" />
+        ) : (
+          <div className="h-20 w-20 flex-none rounded-xl bg-white/5" />
+        )}
+        <div className="min-w-0 flex-1 space-y-1 text-xs">
+          <p className="line-clamp-2 text-sm text-white">{p.title}</p>
+          <p className="text-slate-400">
+            List at <span className="text-white">{money(p.listPrice)}</span> · profit{" "}
+            <span className="font-semibold text-lime-brand">{money(p.profit)}</span>
+          </p>
+          <p className="text-slate-500">
+            CJ {money(p.cost)} + shipping {p.shipping === 0 ? "free" : money(p.shipping)}
+            {p.market != null ? ` · eBay avg ${money(p.market)}` : ""}
+            {p.variantCount > 1 ? ` · ${p.variantCount} variants` : ""}
+          </p>
+          <p className="truncate text-slate-500">
+            {p.niche}
+            {p.ebayCategory ? ` → ${p.ebayCategory}` : ""}
+          </p>
+          <a href={cjProductUrl(p.pid, p.title)} target="_blank" rel="noreferrer" className="inline-block text-brand-400 hover:underline">
+            View on CJ
+          </a>
+        </div>
+      </div>
+
+      {result?.ok ? (
+        <p className="rounded-xl border border-lime-brand/30 bg-lime-brand/10 px-3 py-2 text-xs text-lime-brand">
+          Listed on eBay at {money(result.listPrice)}.{" "}
+          <a href={result.itemUrl} target="_blank" rel="noreferrer" className="underline">
+            See it on eBay
+          </a>
+        </p>
+      ) : (
+        <>
+          {result && !result.ok ? <p className="text-xs text-red-300">{result.error}</p> : null}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={list}
+              disabled={busy !== null || !ebayConnected}
+              title={ebayConnected ? undefined : "Connect your eBay store in Settings first."}
+              className="flex-1 rounded-full bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-400 disabled:opacity-50"
+            >
+              {busy === "list" ? "Listing… (up to a minute)" : "List on eBay"}
+            </button>
+            <button
+              type="button"
+              onClick={dismiss}
+              disabled={busy !== null}
+              className="rounded-full border border-white/15 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5 disabled:opacity-50"
+            >
+              {busy === "dismiss" ? "…" : "Not for me"}
+            </button>
+          </div>
+        </>
+      )}
+    </article>
   );
 }

@@ -121,7 +121,7 @@ export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun, de
             <Link href="/dashboard/settings" className="font-semibold text-brand-400 hover:text-brand-500">
               Edit defaults
             </Link>
-            . Prices are raised to keep at least {MIN_PROFIT_LABEL} profit; ones that would then be more than 20% above the
+            . Prices are raised to keep at least {`${MIN_PROFIT_LABEL} profit; `}ones that would then be more than 20% above the
             eBay average are skipped.
           </p>
         </div>

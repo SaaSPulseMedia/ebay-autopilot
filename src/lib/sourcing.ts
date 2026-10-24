@@ -12,7 +12,7 @@ import { connectedAccessToken } from "@/lib/listing-pipeline";
 import { resolveListingPrice } from "@/lib/market-pricing";
 import { findNiche } from "@/lib/niches";
 import { MIN_PROFIT, netProfitFor } from "@/lib/pricing";
-import { dismissedPids } from "@/lib/seen-products";
+import { dismissProduct, dismissedPids } from "@/lib/seen-products";
 import { getListingDefaults } from "@/lib/seller-settings";
 import type { RejectReason } from "@/lib/sourcing-reasons";
 import { listingVariants, productSku } from "@/lib/variants";
@@ -362,9 +362,21 @@ export type ReadyProduct = {
   checkedAt: string | null;
 };
 
+export type TurnedDownProduct = {
+  pid: string;
+  title: string;
+  imageUrl: string | null;
+  reason: RejectReason;
+  /** The seller-facing why, e.g. "Variant data invalid. Product not listed. Reason: …". */
+  detail: string;
+  checkedAt: string | null;
+};
+
 export type SourcingOverview = {
   settings: SourcingSettings;
   ready: ReadyProduct[];
+  /** The most recent products turned down, newest first, with why. */
+  turnedDown: TurnedDownProduct[];
   waiting: number;
   /** Checks finished in the last 24 hours: how many, how many ready, and why the rest were turned down. */
   last24h: { checked: number; ready: number; rejected: Partial<Record<RejectReason, number>> };
@@ -374,7 +386,7 @@ const toNumber = (value: string | null) => (value == null ? null : Number(value)
 
 export async function getSourcingOverview(userId: number): Promise<SourcingOverview> {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const [settings, readyRows, [waitingRow], recent] = await Promise.all([
+  const [settings, readyRows, [waitingRow], recent, rejectedRows, listed] = await Promise.all([
     getSourcingSettings(userId),
     db
       .select()
@@ -397,6 +409,13 @@ export async function getSourcingOverview(userId: number): Promise<SourcingOverv
         ),
       )
       .groupBy(sourcingCandidates.status, sourcingCandidates.reason),
+    db
+      .select()
+      .from(sourcingCandidates)
+      .where(and(eq(sourcingCandidates.userId, userId), eq(sourcingCandidates.status, "rejected")))
+      .orderBy(desc(sourcingCandidates.checkedAt))
+      .limit(50),
+    listedPids(userId),
   ]);
 
   const last24h: SourcingOverview["last24h"] = { checked: 0, ready: 0, rejected: {} };
@@ -410,7 +429,16 @@ export async function getSourcingOverview(userId: number): Promise<SourcingOverv
     settings,
     waiting: waitingRow?.n ?? 0,
     last24h,
-    ready: readyRows.map((r) => ({
+    turnedDown: rejectedRows.map((r) => ({
+      pid: r.pid,
+      title: r.title,
+      imageUrl: r.imageUrl,
+      reason: r.reason as RejectReason,
+      detail: r.detail ?? "",
+      checkedAt: r.checkedAt ? r.checkedAt.toISOString() : null,
+    })),
+    // A ready product the seller has since listed (from here or any other page) leaves the list.
+    ready: readyRows.filter((r) => !listed.has(r.pid)).map((r) => ({
       pid: r.pid,
       niche: r.niche,
       title: r.title,
@@ -425,4 +453,14 @@ export async function getSourcingOverview(userId: number): Promise<SourcingOverv
       checkedAt: r.checkedAt ? r.checkedAt.toISOString() : null,
     })),
   };
+}
+
+/** "Not for me": hides a product from this page and every other sourcing page (see dismissProduct). */
+export async function dismissCandidate(userId: number, pid: string) {
+  const [row] = await db
+    .update(sourcingCandidates)
+    .set({ status: "dismissed" })
+    .where(and(eq(sourcingCandidates.userId, userId), eq(sourcingCandidates.pid, pid)))
+    .returning({ niche: sourcingCandidates.niche });
+  await dismissProduct(userId, pid, row?.niche ?? "");
 }

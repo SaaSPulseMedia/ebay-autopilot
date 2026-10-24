@@ -160,7 +160,7 @@ export const sourcingCandidates = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     pid: text("pid").notNull(),
     niche: text("niche").notNull().default(""),
-    status: text("status").notNull().default("queued"), // 'queued' | 'ready' | 'rejected'
+    status: text("status").notNull().default("queued"), // 'queued' | 'ready' | 'rejected' | 'dismissed'
     reason: text("reason"),
     detail: text("detail"),
     title: text("title").notNull().default(""),

@@ -94,7 +94,7 @@ export default async function BulkPage() {
                 : "AutoPilot's suggested price"}
           </span>
           {defaults.adRatePct ? <> with a {defaults.adRatePct}% ad rate</> : null}, on CJ cost + CJ&apos;s real shipping,
-          never below <span className="text-white">{MIN_PROFIT_LABEL} profit</span> per sale.{" "}
+          never below <span className="text-white">{`${MIN_PROFIT_LABEL} profit`}</span> per sale.{" "}
           <Link href="/dashboard/settings" className="font-semibold text-brand-400 hover:text-brand-500">
             Change in Settings
           </Link>
