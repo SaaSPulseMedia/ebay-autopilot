@@ -67,7 +67,7 @@ const RUN_LOCK_MS = 55_000;
  * a time at (or just after) the deploy, never far ahead: a product re-checked
  * and turned down again before it would be re-queued every run until then.
  */
-const VARIANT_RULES_CHANGED = new Date("2026-10-24T16:39:00Z");
+const VARIANT_RULES_CHANGED = new Date("2026-10-24T16:53:00Z");
 
 export type SourcingSettings = { niches: string[]; enabled: boolean; lastRunAt: Date | null };
 

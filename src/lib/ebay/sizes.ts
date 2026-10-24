@@ -28,9 +28,13 @@ export function genderFromCategoryPath(path: string): ShoeGender {
   return "men";
 }
 
-/** True for categories whose path is about footwear. */
+/**
+ * True for categories whose path is about footwear. eBay's top level
+ * "Clothing, Shoes & Accessories" holds clothing too, so it doesn't count.
+ */
 export function isFootwearPath(path: string) {
-  return /\b(shoes?|footwear|boots?|sneakers?|sandals?|slippers?|heels?|loafers?|clogs?|flats?)\b/i.test(path);
+  const below = path.replace(/clothing,\s*shoes\s*&\s*accessories/gi, "");
+  return /\b(shoes?|footwear|boots?|sneakers?|sandals?|slippers?|heels?|loafers?|clogs?|flats?)\b/i.test(below);
 }
 
 type ParsedSize = { system: "US" | "EU" | "UK" | null; value: number };
@@ -179,7 +183,8 @@ export function mapSizeValue(
   const canonical = canonicalApparelSize(value);
   const alias = aspect.values.find((v) => canonicalApparelSize(v) === canonical);
   if (alias) return alias;
-  if (aspect.kind === "shoe") return mapToEbayShoeSize(value, aspect.values, gender);
+  // A child's height ("110cm") and a foot length ("13cm") can't be confused, so both are tried whatever the kind.
+  if (aspect.kind === "shoe") return mapToEbayShoeSize(value, aspect.values, gender) ?? mapKidsHeightSize(value, aspect.values, gender);
   return mapKidsHeightSize(value, aspect.values, gender);
 }
 
