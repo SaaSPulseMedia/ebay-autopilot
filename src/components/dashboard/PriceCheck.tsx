@@ -410,7 +410,7 @@ function FindOnCj({ title, total }: { title: string; total: number | null }) {
   if (!state.matches.length) {
     return (
       <p className="rounded-xl border border-white/12 bg-white/5 px-3 py-2 text-slate-300">
-        No close match on CJ for &quot;{state.query}&quot;. In your CJ account, post a <span className="text-white">sourcing request</span> with
+        No close match on CJ for &quot;{state.query}&quot;. In your CJ account, post a <span className="text-white">{"sourcing request "}</span>with
         this product&apos;s AliExpress link: CJ usually finds it within a few days, and it then shows up here.
       </p>
     );

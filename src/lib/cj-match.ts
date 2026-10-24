@@ -57,10 +57,10 @@ export async function findOnCj(
   ebayTotal: number | null,
   adRatePct: number,
 ): Promise<CjMatchResult> {
-  // eBay titles are keyword lists; CJ searches best on a few: the first five words, then the first three.
+  // eBay titles are keyword lists; CJ searches best on a few: the first five words, then three, then two.
   const words = keywordWords(ebayTitle).filter((w) => !/^\d+$/.test(w));
   if (!words.length) return { ok: false, error: "The title has no words to search CJ with." };
-  const queries = [...new Set([words.slice(0, 5).join(" "), words.slice(0, 3).join(" ")])];
+  const queries = [...new Set([5, 3, 2].map((n) => words.slice(0, n).join(" ")))];
 
   const found = new Map<string, { pid: string; title: string; imageUrl: string | null; price: number }>();
   let query = queries[0];
