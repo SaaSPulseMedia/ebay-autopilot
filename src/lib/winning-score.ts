@@ -108,7 +108,7 @@ export function winningScore(input: WinningInput, now = Date.now()): WinningBrea
  *   too_low — below break-even (cost + shipping + eBay fees): every sale at
  *             that price loses money, so the product is dropped.
  * The Safety Margin Cap (see marketMatchPrice) also makes a product "low":
- * priced down to the cheapest active listing + 5% it would make under $5, so
+ * priced down to the cheapest active listing + 5% it would make under the profit floor, so
  * it is never listed (`blocked`).
  */
 export type MarketInfo = {
@@ -130,7 +130,7 @@ export type MarketInfo = {
   /** Cheapest active eBay listing (item + shipping), and whether the Safety Margin Cap cut `listAt` to it + 5%. */
   lowest: number | null;
   capped: boolean;
-  /** Why it won't be listed: under $5 profit even at the Safety Margin Cap's price. */
+  /** Why it won't be listed: under the minimum profit even at the Safety Margin Cap's price. */
   blocked: string | null;
   /** The lowest price that doesn't lose money after cost, shipping and eBay fees. */
   breakeven: number;

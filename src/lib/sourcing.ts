@@ -29,7 +29,7 @@ import { screenVero } from "@/lib/vero";
  *     dismissed are left out.
  *  2. Check, best first, while time allows: CJ details and real US shipping
  *     (fetchCjListingData), brand risk (screenVero), the seller's pricing rule
- *     with the $5 floor (resolveListingPrice), the publish-time market guard
+ *     with the profit floor (resolveListingPrice), the publish-time market guard
  *     (marketPriceWarning), and, when an eBay store is connected, a dry run of
  *     eBay's category, variants and sizes (planEbayListing).
  *  3. Each product ends "ready" or "rejected" with its reason, so the seller
@@ -48,9 +48,9 @@ const FIND_LIMIT = 40;
 const MAX_SELLERS = 50;
 /**
  * Pre-filter: estimated profit (Winning Score's shipping estimate) below this
- * is skipped. Lower than the $5 floor on purpose: the real check decides.
+ * is skipped. Lower than the MIN_PROFIT floor on purpose: the real check decides.
  */
-const MIN_ESTIMATED_PROFIT = 3;
+const MIN_ESTIMATED_PROFIT = 2;
 /** One check takes ~6–8 s (5 CJ calls plus eBay); none starts with less time than this left. */
 const CHECK_BUDGET_MS = 10_000;
 /** Ready products are re-checked after this long (CJ cost, shipping and eBay prices move). */

@@ -7,6 +7,7 @@ import { type AddState, SourceProductModal } from "@/components/dashboard/Source
 import { GRID, OriginDot, ProductImage } from "@/components/dashboard/SourceSearch";
 import type { CjCategory, CjProductDetail, WinningProduct } from "@/lib/cj/catalog";
 import { NICHES } from "@/lib/niches";
+import { MIN_PROFIT_LABEL } from "@/lib/pricing";
 
 type Sort = "score" | "margin" | "competition" | "newest";
 
@@ -223,7 +224,7 @@ function MarketLine({ product }: { product: WinningProduct }) {
       ? `Won't be listed: ${market.blocked}.`
       : market.listAt != null
         ? `Match eBay Market Price lists it at ${money(market.listAt)} with free shipping${market.capped ? " (Safety Margin Cap: 5% above the cheapest listing)" : ""}.`
-        : "Match eBay Market Price would use the default price (under $5 profit at the eBay price).",
+        : `Match eBay Market Price would use the default price (under ${MIN_PROFIT_LABEL} profit at the eBay price).`,
     market.status === "low" ? `Winning Score lowered from ${market.scoreBefore}.` : "",
   ]
     .filter(Boolean)

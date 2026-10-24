@@ -1,10 +1,12 @@
+import { MIN_PROFIT_LABEL } from "@/lib/pricing";
+
 /**
  * Why the sourcing checker turned a product down (sourcing_candidates.reason),
  * with the label the seller sees. Shared by the server checker and the page.
  */
 export const REJECT_REASONS = {
   too_expensive: "too expensive vs eBay",
-  low_profit: "under $5 profit",
+  low_profit: `under ${MIN_PROFIT_LABEL} profit`,
   no_shipping: "no US shipping from CJ",
   variants: "sizes or variants eBay won't take",
   brand: "brand risk (VeRO)",

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { cjProductUrl } from "@/lib/cj/urls";
+import { MIN_PROFIT_LABEL } from "@/lib/pricing";
 import { REJECT_REASONS, type RejectReason } from "@/lib/sourcing-reasons";
 
 type ReadyProduct = {
@@ -57,7 +58,7 @@ function ago(iso: string | null) {
   return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`;
 }
 
-/** "12 too expensive vs eBay · 3 under $5 profit", largest first. */
+/** "12 too expensive vs eBay · 3 under $3.00 profit", largest first. */
 function reasonsLine(rejected: Partial<Record<RejectReason, number>>) {
   return (Object.entries(rejected) as Array<[RejectReason, number]>)
     .filter(([, n]) => n > 0)
@@ -241,7 +242,7 @@ export function SourcingBoard({ niches, selected, enabled, lastRunAt, waiting, l
           </div>
         ) : (
           <p className="ap-card rounded-2xl p-8 text-center text-sm text-slate-400">
-            Nothing ready yet. Products appear here once they pass every check: real CJ shipping, at least $5 profit, a price
+            Nothing ready yet. Products appear here once they pass every check: real CJ shipping, at least {MIN_PROFIT_LABEL} profit, a price
             eBay buyers pay, no brand risk, and eBay&apos;s category and size rules.
           </p>
         )}

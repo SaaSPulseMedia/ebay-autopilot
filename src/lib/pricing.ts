@@ -48,7 +48,9 @@ export function netProfitFor(listPrice: number, cost: number, shipping = 0, adRa
 }
 
 /** Every listing must keep at least this much per sale after supplier cost, real shipping and every eBay fee. */
-export const MIN_PROFIT = 5;
+export const MIN_PROFIT = 3;
+/** MIN_PROFIT as shown to sellers, e.g. "$3.00". */
+export const MIN_PROFIT_LABEL = `$${MIN_PROFIT.toFixed(2)}`;
 
 /**
  * The lowest list price that keeps `minProfit` after cost, shipping, the final
@@ -62,7 +64,7 @@ export function priceForMinProfit(cost: number, shipping: number, adRatePct = 0,
   return price;
 }
 
-/** The $5.00 hard floor: `price` if it already keeps MIN_PROFIT, else the price that does. */
+/** The MIN_PROFIT hard floor: `price` if it already keeps MIN_PROFIT, else the price that does. */
 export function withProfitFloor(price: number, cost: number, shipping: number, adRatePct = 0) {
   if (netProfitFor(price, cost, shipping, adRatePct) >= MIN_PROFIT) return { price: cents(price), raised: false };
   return { price: priceForMinProfit(cost, shipping, adRatePct), raised: true };
@@ -84,7 +86,7 @@ export function rulePriceFor(
   return rule.pricingMode === "markup" ? priceFromMarkup(cost + shipping + EBAY_FIXED_FEE, rule.markupPct) : suggested;
 }
 
-/** The seller's pricing rule (rulePriceFor), raised to the $5.00 profit floor when it falls short. */
+/** The seller's pricing rule (rulePriceFor), raised to the MIN_PROFIT floor when it falls short. */
 export function listPriceFor(
   rule: { pricingMode: "suggested" | "markup" | "market"; markupPct: number; adRatePct?: number },
   cost: number,
@@ -148,7 +150,7 @@ export type MarketMatch =
       safety: SafetyCap | null;
     }
   | {
-      /** The Safety Margin Cap left under $5 profit: shown as "Low" and never listed. */
+      /** The Safety Margin Cap left under the minimum profit: shown as "Low" and never listed. */
       rule: "low";
       listPrice: number;
       market: number | null;
@@ -185,7 +187,7 @@ function marketMatchCore(input: {
   const label = source === "sold" ? "eBay sold price" : "eBay market price";
   const fallback = (reason: string, profitAtMarket: number | null): Exclude<MarketMatch, { rule: "low" }> => ({
     rule: "default",
-    // The seller's normal price, raised to the $5.00 floor when the suggested price falls short.
+    // The seller's normal price, raised to the profit floor when the suggested price falls short.
     listPrice: withProfitFloor(input.suggested, input.cost, input.shipping, input.adRatePct ?? 0).price,
     market: input.market,
     source,
@@ -214,7 +216,7 @@ function marketMatchCore(input: {
  * With `lowest`, the cheapest active eBay listing (item + shipping): a price
  * more than 15% above it — the match price, or the suggested price it fell
  * back to — is cut to lowest + 5% with free shipping. If that cut leaves under
- * $5 profit the result is rule "low": shown as Low and never listed.
+ * the minimum profit the result is rule "low": shown as Low and never listed.
  */
 export function marketMatchPrice(
   input: Parameters<typeof marketMatchCore>[0] & {

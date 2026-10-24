@@ -63,7 +63,7 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, step: "pricing", error: `Low: not listed, ${price.reason}.` }, { status: 422 });
   }
   const profit = netProfitFor(listPrice, product.supplierPrice, product.shippingCost, defaults.adRatePct);
-  // Backstop for the $5.00 floor resolveListingPrice already prices to.
+  // Backstop for the profit floor resolveListingPrice already prices to.
   if (profit < MIN_PROFIT) {
     return Response.json(
       {

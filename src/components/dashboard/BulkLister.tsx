@@ -8,7 +8,7 @@ import { BatchSummary, DripToggle, type BatchResponse } from "@/components/dashb
 import { ImageManager } from "@/components/dashboard/ImageManager";
 import { type ProductControlTarget, ProductControlModal } from "@/components/dashboard/ProductControlModal";
 import { PriceBreakdown } from "@/components/dashboard/PriceBreakdown";
-import { MARKET_MATCH_BUFFER, type PriceBreakdown as Breakdown } from "@/lib/pricing";
+import { MARKET_MATCH_BUFFER, MIN_PROFIT_LABEL, type PriceBreakdown as Breakdown } from "@/lib/pricing";
 
 export type BulkProduct = {
   externalId: string;
@@ -39,7 +39,7 @@ export type BulkProduct = {
 
 /**
  * Which pricing rule a product gets under "Match eBay Market Price (Free
- * Shipping)". "low": the Safety Margin Cap left under $5 profit, so it can't be listed.
+ * Shipping)". "low": the Safety Margin Cap left under the minimum profit, so it can't be listed.
  */
 type PricingNote = {
   rule: "market" | "default" | "low";
@@ -48,7 +48,7 @@ type PricingNote = {
   /** Cheapest active eBay listing, and whether the Safety Margin Cap cut the price to it + 5%. */
   lowest?: number | null;
   capped?: boolean;
-  /** The rule's price kept under $5.00 profit, so it was raised to the price that does. */
+  /** The rule's price kept under the minimum profit, so it was raised to the price that does. */
   floorRaised?: boolean;
   reason?: string;
 };
@@ -123,9 +123,9 @@ function PricingRuleNote({ note }: { note?: PricingNote }) {
   if (!note) return <span className="mt-0.5 block text-[11px] text-slate-500">Checking eBay market price…</span>;
   if (note.rule === "low") {
     return (
-      <span className="mt-0.5 block text-[11px] text-amber-300" title="Safety Margin Cap: priced to compete with the cheapest eBay listing it makes under $5, so it won't be listed.">
+      <span className="mt-0.5 block text-[11px] text-amber-300" title={`Safety Margin Cap: priced to compete with the cheapest eBay listing it makes under ${MIN_PROFIT_LABEL}, so it won't be listed.`}>
         <span className="mr-1 rounded-full bg-amber-400/15 px-1.5 py-0.5 font-semibold">Low</span>
-        {note.reason ?? "under $5 profit at a competitive price"}
+        {note.reason ?? `under ${MIN_PROFIT_LABEL} profit at a competitive price`}
       </span>
     );
   }
@@ -153,7 +153,7 @@ function PricingRuleNote({ note }: { note?: PricingNote }) {
   );
 }
 
-/** Under "Suggested" or "Markup" pricing: only shown when the $5.00 floor raised the price or made it Low. */
+/** Under "Suggested" or "Markup" pricing: only shown when the profit floor raised the price or made it Low. */
 function FloorNote({ note }: { note?: PricingNote }) {
   if (!note || (note.rule !== "low" && !note.floorRaised)) return null;
   if (note.rule === "low") return <PricingRuleNote note={note} />;
@@ -200,7 +200,7 @@ export function BulkLister({
   // Market Match needs each product's eBay market price: fetch it in batches
   // after the page renders, so the list never waits on eBay.
   useEffect(() => {
-    // Every rule is checked: the $5.00 floor can raise a price, and a raised price can be Low (eBay lookup).
+    // Every rule is checked: the profit floor can raise a price, and a raised price can be Low (eBay lookup).
     let cancelled = false;
     (async () => {
       const ids = initialProducts.map((p) => p.externalId);
@@ -268,7 +268,7 @@ export function BulkLister({
 
   // Daily batch: the most profitable products by net profit that aren't Low or
   // listed yet, under whatever pricing rule is set. A product only counts once
-  // its price check is in (the $5.00 floor can make it Low).
+  // its price check is in (the profit floor can make it Low).
   const pricesChecked = products.filter((p) => p.pricing).length;
   const pricesPending = pricesChecked < products.length;
   const dailyCount = Math.min(DAILY_WINNERS, perRunCap);

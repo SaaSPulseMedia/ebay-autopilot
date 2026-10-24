@@ -11,7 +11,7 @@ import { getCatalog } from "@/lib/suppliers";
  * would list at under the seller's pricing rule, with the rule used (Market
  * Match, the default, or Low) and the profit breakdown. The Bulk list calls
  * this in small batches for every pricing rule: Market Match needs an eBay
- * lookup per product, and any rule's price raised to the $5.00 floor is
+ * lookup per product, and any rule's price raised to the profit floor is
  * checked against the eBay average (lookups are rate-limited, cached).
  */
 export const dynamic = "force-dynamic";

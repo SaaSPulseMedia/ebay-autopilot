@@ -7,7 +7,7 @@ import { listings } from "@/db/schema";
 import { BulkLister, type BulkProduct } from "@/components/dashboard/BulkLister";
 import { getCurrentUser } from "@/lib/auth";
 import { DRIP_PER_RUN, planLimits } from "@/lib/limits";
-import { listPriceFor, priceBreakdown } from "@/lib/pricing";
+import { MIN_PROFIT_LABEL, listPriceFor, priceBreakdown } from "@/lib/pricing";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { withUserImages } from "@/lib/product-images";
 import { getCatalog } from "@/lib/suppliers";
@@ -88,13 +88,13 @@ export default async function BulkPage() {
           Prices use{" "}
           <span className="text-white">
             {defaults.pricingMode === "market"
-              ? "Match eBay Market Price (Free Shipping) where it leaves $5+ profit, otherwise AutoPilot's suggested price"
+              ? `Match eBay Market Price (Free Shipping) where it leaves ${MIN_PROFIT_LABEL}+ profit, otherwise AutoPilot's suggested price`
               : defaults.pricingMode === "markup"
                 ? `your ${defaults.markupPct}% markup`
                 : "AutoPilot's suggested price"}
           </span>
           {defaults.adRatePct ? <> with a {defaults.adRatePct}% ad rate</> : null}, on CJ cost + CJ&apos;s real shipping,
-          never below <span className="text-white">$5.00 profit</span> per sale.{" "}
+          never below <span className="text-white">{MIN_PROFIT_LABEL} profit</span> per sale.{" "}
           <Link href="/dashboard/settings" className="font-semibold text-brand-400 hover:text-brand-500">
             Change in Settings
           </Link>

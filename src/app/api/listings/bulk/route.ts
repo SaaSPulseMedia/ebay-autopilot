@@ -72,9 +72,9 @@ export async function POST(request: Request) {
     const profit = netProfitFor(price.listPrice, product.supplierPrice, product.shippingCost, defaults.adRatePct);
     priced.push({ product, listPrice: price.listPrice, freeShipping: price.freeShipping, profit, price });
   }
-  // Safety Margin Cap: priced down to the cheapest eBay listing + 5%, it would make under $5.
+  // Safety Margin Cap: priced down to the cheapest eBay listing + 5%, it would make under the profit floor.
   const low = priced.filter((row) => row.price.rule === "low");
-  // Never publish below the $5.00 profit floor (resolveListingPrice raises prices to it; this is the backstop).
+  // Never publish below the profit floor (resolveListingPrice raises prices to it; this is the backstop).
   const losing = priced.filter((row) => row.price.rule !== "low" && row.profit < MIN_PROFIT);
   const selected = priced.filter((row) => row.price.rule !== "low" && row.profit >= MIN_PROFIT);
 

@@ -36,7 +36,7 @@ const START_BEFORE_MS = 45_000;
  * out. Each link is policy-checked, then imported from CJ's API into the
  * catalog (importCjProduct), which also stores CJ's real shipping cost to the
  * US. It is priced at the seller's markup on the true landed cost (CJ cost +
- * real shipping + eBay's $0.40 order fee), raised to the $5.00 profit floor
+ * real shipping + eBay's $0.40 order fee), raised to the profit floor
  * when short, VeRO-screened, and skipped as "Low" when that price is more than
  * 20% above the eBay market average (see resolveListingPrice). Links from
  * other suppliers are skipped: without CJ's freight quote there is no real

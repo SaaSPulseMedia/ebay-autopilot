@@ -16,7 +16,7 @@ export type ListingPrice = {
   /**
    * "market": priced by Market Match (free shipping); "default": the seller's
    * normal rule; "low": must not be listed: the Safety Margin Cap left under
-   * $5 profit, or the price that keeps $5 profit is more than 20% above the
+   * the minimum profit, or the price that keeps the minimum profit is more than 20% above the
    * eBay market average (see resolveListingPrice).
    */
   rule: "market" | "default" | "low";
@@ -28,7 +28,7 @@ export type ListingPrice = {
   /** Cheapest active eBay listing, and whether the Safety Margin Cap cut the price to it + 5%. */
   lowest: number | null;
   capped: boolean;
-  /** The rule's price kept under $5.00 profit, so it was raised to the price that keeps $5.00. */
+  /** The rule's price kept under the minimum profit, so it was raised to the price that keeps the minimum profit. */
   floorRaised: boolean;
   /** Why Market Match fell back to the default rule, why the price was raised, or why it's "low". */
   reason?: string;
@@ -40,8 +40,8 @@ const money = (n: number) => `$${n.toFixed(2)}`;
  * The price (and shipping) a catalog product lists at under the seller's
  * pricing rule, from its true landed cost: supplier cost + its real CJ
  * shipping (product.shippingCost, quoted on import) + eBay's fees.
- *  - Every rule ends at or above the $5.00 profit floor: a price that keeps
- *    less is raised to the one that keeps exactly $5.00 (withProfitFloor).
+ *  - Every rule ends at or above the profit floor: a price that keeps
+ *    less is raised to the one that keeps exactly MIN_PROFIT (withProfitFloor).
  *  - A raised price more than 20% above the eBay market average is "low":
  *    buyers won't pay it (and the Market Guard would block it), so it must
  *    not be listed. The market is only looked up when the price was raised,
@@ -126,7 +126,7 @@ export async function resolveListingPrice(
       reason: match.reason,
     };
   }
-  // The fallback is the suggested price raised to the $5.00 floor (see marketMatchPrice).
+  // The fallback is the suggested price raised to the profit floor (see marketMatchPrice).
   const floorRaised = match.listPrice > product.suggestedPrice;
   const average = market?.average ?? null;
   if (average != null && match.listPrice > average * (1 + MARKET_MATCH_MAX_ABOVE)) {

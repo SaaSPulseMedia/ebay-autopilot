@@ -14,6 +14,7 @@ import {
 import {
   MARKET_MATCH_BUFFER,
   MARKET_MATCH_MIN_PROFIT,
+  MIN_PROFIT_LABEL,
   listPriceFor,
   priceBreakdown,
   priceForEbay,
@@ -90,7 +91,7 @@ export function ListingDefaultsForm({ initial }: { initial: ListingDefaults }) {
           <span>
             <span className="block font-medium text-white">Use AutoPilot&apos;s suggested price</span>
             <span className="block text-xs text-slate-400">
-              Aims for about 23% profit after eBay fees and CJ&apos;s real shipping, never below $5.00 per sale.
+              Aims for about 23% profit after eBay fees and CJ&apos;s real shipping, never below {MIN_PROFIT_LABEL} per sale.
             </span>
           </span>
         </label>
@@ -105,7 +106,7 @@ export function ListingDefaultsForm({ initial }: { initial: ListingDefaults }) {
             <span className="block font-medium text-white">Use my own markup</span>
             <span className="block text-xs text-slate-400">
               Added on top of the true landed cost: CJ cost + CJ&apos;s real shipping + eBay&apos;s $0.40 order fee.
-              Raised if needed to keep $5.00 profit per sale.
+              Raised if needed to keep {MIN_PROFIT_LABEL} profit per sale.
             </span>
             {values.pricingMode === "markup" ? (
               <span className="mt-2 flex items-center gap-2">

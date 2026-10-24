@@ -2,6 +2,7 @@ import { ImportLister } from "@/components/dashboard/ImportLister";
 import { getCurrentUser } from "@/lib/auth";
 import { DRIP_PER_RUN, planLimits } from "@/lib/limits";
 import { activeListingCount } from "@/lib/listing-pipeline";
+import { MIN_PROFIT_LABEL } from "@/lib/pricing";
 import { getListingDefaults } from "@/lib/seller-settings";
 
 export const dynamic = "force-dynamic";
@@ -26,7 +27,7 @@ export default async function ImportPage() {
         </p>
         <p className="mt-3 rounded-xl border border-white/12 bg-white/5 px-3 py-2 text-xs leading-relaxed text-slate-300">
           Prices are your markup on the <span className="text-white">true landed cost</span>: CJ cost + CJ&apos;s real
-          shipping + eBay&apos;s $0.40 order fee, never less than <span className="text-white">$5.00 profit</span> per
+          shipping + eBay&apos;s $0.40 order fee, never less than <span className="text-white">{MIN_PROFIT_LABEL} profit</span> per
           sale. Links from other suppliers are skipped, because only CJ provides the real shipping cost. About 8 links
           go through per run.
         </p>
