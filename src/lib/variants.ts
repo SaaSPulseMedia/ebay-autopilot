@@ -107,7 +107,8 @@ const FALLBACK_OPTION_NAMES = ["Style", "Type", "Model", "Pattern", "Design"];
  * Renames supplier options eBay can't vary by in this category so the
  * variants can still go out as variations: an option the category doesn't
  * allow (e.g. "Size" on towels), or a "Size" whose values aren't sizes at all
- * ("Style18", "10pcs") where the category's Size only takes its own list, is
+ * ("Style18", "10pcs") or is dimensions ("130x180cm") where the category's
+ * Size only takes its own list, is
  * listed under the first allowed free-text name ("Style", "Type", …).
  * `sizeAspect` is the category's standardized size aspect: real sizes keep
  * their "Size" name so standardizeSizes can map them to it. Options with no
@@ -126,7 +127,9 @@ export function relabelVariantOptions(
   const rename = new Map<string, string>();
   for (const name of names) {
     const isSize = /^size$/i.test(name);
-    const realSizes = isSize && looksLikeSizes(variants.map((v) => v.options[name] ?? ""));
+    const values = variants.map((v) => v.options[name] ?? "");
+    // Dimensions ("130x180cm") are sizes, but never on a category's own size list ("Twin", "Queen", "M").
+    const realSizes = isSize && looksLikeSizes(values) && !values.every((v) => DIMENSIONS.test(v.trim()));
     if (isSize && realSizes && sizeAspect) continue;
     const sizeOnlyTakesList = isSize && (listed.has(name.toLowerCase()) || Boolean(sizeAspect));
     if (allowed.has(name.toLowerCase()) && !(isSize && !realSizes && sizeOnlyTakesList)) continue;

@@ -112,22 +112,72 @@ function sizeAspectOf(response: AspectsResponse, path: string): SizeAspect | nul
   };
 }
 
+/** A category's item specifics as a CategorySuggestion (required/optional aspects, variation rules, size list). */
+async function describe(
+  token: string,
+  treeBase: string,
+  category: { categoryId: string; categoryName: string; categoryPath: string },
+): Promise<{ ok: true; suggestion: CategorySuggestion } | { ok: false; error: string }> {
+  const aspectsResponse = await ebayFetch<AspectsResponse>(
+    `${treeBase}/get_item_aspects_for_category?category_id=${encodeURIComponent(category.categoryId)}`,
+    token,
+  );
+  if (aspectsResponse.errors?.length) {
+    return { ok: false, error: ebayErrorMessage(aspectsResponse, "eBay did not return this category's item specifics.") };
+  }
+  const aspects = (aspectsResponse.aspects ?? []).map(toAspect).filter((a) => a.name);
+  const variationAspects = (aspectsResponse.aspects ?? [])
+    .filter((a) => a.aspectConstraint?.aspectEnabledForVariations && a.localizedAspectName)
+    .map((a) => a.localizedAspectName as string);
+  const variationValues = Object.fromEntries(
+    (aspectsResponse.aspects ?? [])
+      .filter(
+        (a) =>
+          a.aspectConstraint?.aspectEnabledForVariations &&
+          a.aspectConstraint.aspectMode === "SELECTION_ONLY" &&
+          a.localizedAspectName &&
+          a.aspectValues?.length,
+      )
+      .map((a) => [
+        a.localizedAspectName as string,
+        (a.aspectValues ?? []).map((v) => v.localizedValue?.trim() ?? "").filter(Boolean),
+      ]),
+  );
+  return {
+    ok: true,
+    suggestion: {
+      ...category,
+      requiredAspects: aspects.filter((a) => a.required),
+      optionalAspects: aspects.filter((a) => !a.required),
+      variationAspects,
+      variationValues,
+      sizeAspect: sizeAspectOf(aspectsResponse, category.categoryPath),
+    },
+  };
+}
+
+/** The eBay US category tree's base path (its id rarely changes; cached per server instance). */
+let treeIdCache: string | null = null;
+async function treeBaseFor(token: string): Promise<{ ok: true; base: string } | { ok: false; error: string }> {
+  if (!treeIdCache) {
+    const tree = await ebayFetch<TreeIdResponse>("/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id=EBAY_US", token);
+    if (tree.errors?.length || !tree.categoryTreeId) {
+      return { ok: false, error: ebayErrorMessage(tree, "eBay did not return a category tree.") };
+    }
+    treeIdCache = tree.categoryTreeId;
+  }
+  return { ok: true, base: `/commerce/taxonomy/v1/category_tree/${encodeURIComponent(treeIdCache)}` };
+}
+
 export async function resolveCategory(userId: number, productTitle: string): Promise<ResolveCategoryResult> {
   try {
     const token = await getAccessTokenForUser(userId);
     if (!token) return { ok: false, error: "No eBay store connected." };
-
-    const tree = await ebayFetch<TreeIdResponse>(
-      "/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id=EBAY_US",
-      token,
-    );
-    if (tree.errors?.length || !tree.categoryTreeId) {
-      return { ok: false, error: ebayErrorMessage(tree, "eBay did not return a category tree.") };
-    }
-    const treeBase = `/commerce/taxonomy/v1/category_tree/${encodeURIComponent(tree.categoryTreeId)}`;
+    const tree = await treeBaseFor(token);
+    if (!tree.ok) return tree;
 
     const suggestions = await ebayFetch<SuggestionsResponse>(
-      `${treeBase}/get_category_suggestions?q=${encodeURIComponent(productTitle)}`,
+      `${tree.base}/get_category_suggestions?q=${encodeURIComponent(productTitle)}`,
       token,
     );
     if (suggestions.errors?.length) {
@@ -138,52 +188,37 @@ export async function resolveCategory(userId: number, productTitle: string): Pro
     if (!top?.category?.categoryId) {
       return { ok: false, error: "eBay could not suggest a category for this product." };
     }
-    const categoryId = top.category.categoryId;
-
-    const aspectsResponse = await ebayFetch<AspectsResponse>(
-      `${treeBase}/get_item_aspects_for_category?category_id=${encodeURIComponent(categoryId)}`,
-      token,
-    );
-    if (aspectsResponse.errors?.length) {
-      return { ok: false, error: ebayErrorMessage(aspectsResponse, "eBay did not return this category's item specifics.") };
-    }
-    const aspects = (aspectsResponse.aspects ?? []).map(toAspect).filter((a) => a.name);
-    const sizeAspect = sizeAspectOf(aspectsResponse, categoryPath(top));
-    const variationAspects = (aspectsResponse.aspects ?? [])
-      .filter((a) => a.aspectConstraint?.aspectEnabledForVariations && a.localizedAspectName)
-      .map((a) => a.localizedAspectName as string);
-    const variationValues = Object.fromEntries(
-      (aspectsResponse.aspects ?? [])
-        .filter(
-          (a) =>
-            a.aspectConstraint?.aspectEnabledForVariations &&
-            a.aspectConstraint.aspectMode === "SELECTION_ONLY" &&
-            a.localizedAspectName &&
-            a.aspectValues?.length,
-        )
-        .map((a) => [
-          a.localizedAspectName as string,
-          (a.aspectValues ?? []).map((v) => v.localizedValue?.trim() ?? "").filter(Boolean),
-        ]),
-    );
-
+    const described = await describe(token, tree.base, {
+      categoryId: top.category.categoryId,
+      categoryName: top.category.categoryName ?? "",
+      categoryPath: categoryPath(top),
+    });
+    if (!described.ok) return described;
     return {
       ok: true,
-      suggestion: {
-        categoryId,
-        categoryName: top.category.categoryName ?? "",
-        categoryPath: categoryPath(top),
-        requiredAspects: aspects.filter((a) => a.required),
-        optionalAspects: aspects.filter((a) => !a.required),
-        variationAspects,
-        variationValues,
-        sizeAspect,
-      },
+      suggestion: described.suggestion,
       alternatives: rest.slice(0, MAX_ALTERNATIVES).map((s) => ({
         categoryId: s.category?.categoryId ?? "",
         categoryPath: categoryPath(s),
       })),
     };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Category lookup failed." };
+  }
+}
+
+/** One of resolveCategory's alternatives, described like its top suggestion (one more Taxonomy call). */
+export async function describeCategory(
+  userId: number,
+  category: { categoryId: string; categoryPath: string },
+): Promise<{ ok: true; suggestion: CategorySuggestion } | { ok: false; error: string }> {
+  try {
+    const token = await getAccessTokenForUser(userId);
+    if (!token) return { ok: false, error: "No eBay store connected." };
+    const tree = await treeBaseFor(token);
+    if (!tree.ok) return tree;
+    const name = category.categoryPath.split(" > ").pop() ?? "";
+    return await describe(token, tree.base, { ...category, categoryName: name });
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Category lookup failed." };
   }

@@ -60,11 +60,12 @@ const RETRY_REJECTED_MS = 30 * 24 * 60 * 60 * 1000;
 /** A second run for the same seller doesn't start while one may still be going. */
 const RUN_LOCK_MS = 55_000;
 /**
- * When the variant rules last changed (kids' sizes by height, non-size
- * options listed as "Style"): products turned down for variants before then
+ * When the variant rules last changed (kids' sizes by height, non-size,
+ * dimension or disallowed options listed as "Style", eBay's alternative
+ * categories): products turned down for variants before then
  * are checked again under the new rules instead of waiting RETRY_REJECTED_MS.
  */
-const VARIANT_RULES_CHANGED = new Date("2026-10-24T17:00:00Z");
+const VARIANT_RULES_CHANGED = new Date("2026-10-24T19:00:00Z");
 
 export type SourcingSettings = { niches: string[]; enabled: boolean; lastRunAt: Date | null };
 

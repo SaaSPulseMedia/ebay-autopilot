@@ -3,7 +3,7 @@ import "server-only";
 import { type PublishVariation, VARIANTS_INVALID, publishListing } from "@/lib/ebay/inventory";
 import type { PromotionResult } from "@/lib/ebay/promoted";
 import { defaultSizeValue, genderFromCategoryPath, standardizeSizes } from "@/lib/ebay/sizes";
-import { type CategoryAspect, resolveCategory } from "@/lib/ebay/taxonomy";
+import { type CategoryAspect, type CategorySuggestion, describeCategory, resolveCategory } from "@/lib/ebay/taxonomy";
 import { type Variant, relabelVariantOptions, variationProblem } from "@/lib/variants";
 
 /**
@@ -106,11 +106,42 @@ export type EbayListingPlan = {
  * eBay variations (see VARIANTS_INVALID). publishWithResolver publishes this
  * plan; the sourcing checker runs it alone as a dry run.
  */
-export async function planEbayListing(
-  input: Pick<CatalogProductForPublish, "userId" | "sku" | "title" | "brand" | "userAspects" | "variations">,
-): Promise<EbayListingPlan | { ok: false; step: "variants"; error: string }> {
-  const resolved = await resolveCategory(input.userId, input.title);
+type PlanInput = Pick<CatalogProductForPublish, "userId" | "sku" | "title" | "brand" | "userAspects" | "variations">;
+type PlanResult = EbayListingPlan | { ok: false; step: "variants"; error: string };
 
+/** eBay's next-best categories tried when the variants don't fit its top one (one Taxonomy call each). */
+const ALTERNATIVES_TRIED = 3;
+
+export async function planEbayListing(input: PlanInput): Promise<PlanResult> {
+  const resolved = await resolveCategory(input.userId, input.title);
+  if (!resolved.ok) {
+    console.warn(
+      `[ebay-publish] category resolution failed for user ${input.userId} ("${input.title}"): ${resolved.error}. Using ${FALLBACK_CATEGORY_ID}.`,
+    );
+  }
+  const first = planInCategory(input, resolved.ok ? resolved.suggestion : null);
+  // The variants don't fit eBay's top category (e.g. it can't vary by Color): try its next suggestions.
+  if (!first.ok && resolved.ok) {
+    for (const alternative of resolved.alternatives.slice(0, ALTERNATIVES_TRIED)) {
+      if (!alternative.categoryId) continue;
+      const described = await describeCategory(input.userId, alternative);
+      if (!described.ok) continue;
+      const plan = planInCategory(input, described.suggestion);
+      if (plan.ok) {
+        console.log(
+          `[ebay-variations] sku ${input.sku}: variants don't fit ${resolved.suggestion.categoryId} (${first.error}); using eBay's alternative ${plan.categoryId} (${plan.categoryPath}).`,
+        );
+        return plan;
+      }
+    }
+  }
+  if (!first.ok) console.warn(`[ebay-variations] sku ${input.sku}: not listed: ${first.error}`);
+  return first;
+}
+
+/** planEbayListing for one category (null: eBay couldn't suggest one, so the fallback category). */
+function planInCategory(input: PlanInput, category: CategorySuggestion | null): PlanResult {
+  const resolved = category ? ({ ok: true, suggestion: category } as const) : ({ ok: false } as const);
   let categoryId = FALLBACK_CATEGORY_ID;
   let categoryPath = FALLBACK_CATEGORY_PATH;
   let aspects = input.userAspects ?? {};
@@ -118,10 +149,6 @@ export async function planEbayListing(
     categoryId = resolved.suggestion.categoryId;
     categoryPath = resolved.suggestion.categoryPath;
     aspects = buildAspects(resolved.suggestion.requiredAspects, input.userAspects, input.brand);
-  } else {
-    console.warn(
-      `[ebay-publish] category resolution failed for user ${input.userId} ("${input.title}"): ${resolved.error}. Using ${FALLBACK_CATEGORY_ID}.`,
-    );
   }
 
   // Size-constrained categories (apparel "Size", footwear "US Shoe Size", …)
@@ -168,7 +195,6 @@ export async function planEbayListing(
         : "the eBay category could not be resolved") ?? undefined;
   }
   if (variantProblem) {
-    console.warn(`[ebay-variations] sku ${input.sku}: not listed in ${categoryId} because ${variantProblem}.`);
     return { ok: false, step: "variants", error: `${VARIANTS_INVALID} Reason: ${variantProblem}.` };
   }
   const variations = hasVariants
