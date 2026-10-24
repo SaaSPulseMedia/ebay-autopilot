@@ -145,6 +145,55 @@ export const seenProducts = pgTable(
   (table) => [primaryKey({ columns: [table.userId, table.pid] })],
 );
 
+/**
+ * The sourcing checker's work list and results, one row per seller per CJ
+ * product (see src/lib/sourcing.ts). A product found in the seller's niches
+ * is "queued"; once checked with the same rules a real listing goes through,
+ * it is "ready" (it will publish) or "rejected" with `reason` (a
+ * RejectReason code) and `detail` (the seller-facing why).
+ */
+export const sourcingCandidates = pgTable(
+  "sourcing_candidates",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    pid: text("pid").notNull(),
+    niche: text("niche").notNull().default(""),
+    status: text("status").notNull().default("queued"), // 'queued' | 'ready' | 'rejected'
+    reason: text("reason"),
+    detail: text("detail"),
+    title: text("title").notNull().default(""),
+    imageUrl: text("image_url"),
+    /** CJ's "listed by N sellers" when found. */
+    listedNum: integer("listed_num").notNull().default(0),
+    /** Winning Score when found: the order the queue is checked in. */
+    score: real("score").notNull().default(0),
+    cost: numeric("cost", { precision: 10, scale: 2 }),
+    shipping: numeric("shipping", { precision: 10, scale: 2 }),
+    listPrice: numeric("list_price", { precision: 10, scale: 2 }),
+    profit: numeric("profit", { precision: 10, scale: 2 }),
+    /** eBay market average the price was compared with, when found. */
+    market: numeric("market", { precision: 10, scale: 2 }),
+    variantCount: integer("variant_count").notNull().default(1),
+    ebayCategory: text("ebay_category"),
+    foundAt: timestamp("found_at", { withTimezone: true }).notNull().defaultNow(),
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.pid] })],
+);
+
+/** A seller's sourcing setup: which niches the checker searches, and its last run. */
+export const sourcingSettings = pgTable("sourcing_settings", {
+  userId: integer("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  niches: jsonb("niches").$type<string[]>().notNull().default([]),
+  enabled: boolean("enabled").notNull().default(true),
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const productImages = pgTable(
   "product_images",
   {

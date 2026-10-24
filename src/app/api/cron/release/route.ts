@@ -1,9 +1,8 @@
-import { timingSafeEqual } from "node:crypto";
-
 import { asc, eq } from "drizzle-orm";
 
 import { db } from "@/db";
 import { listings } from "@/db/schema";
+import { cronAuthorized } from "@/lib/cron-auth";
 import type { ListingDraft } from "@/lib/ebay/types";
 import { DRIP_PER_RUN } from "@/lib/limits";
 import { connectedAccessToken, parseEngine, publishWithFallback, storedStatus } from "@/lib/listing-pipeline";
@@ -14,14 +13,6 @@ export const maxDuration = 60;
 
 /** Most scheduled listings looked at in one run (across all accounts). */
 const SCAN_LIMIT = 1000;
-
-function authorized(request: Request) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-  const given = Buffer.from(request.headers.get("authorization") ?? "");
-  const expected = Buffer.from(`Bearer ${secret}`);
-  return given.length === expected.length && timingSafeEqual(given, expected);
-}
 
 async function releaseScheduled() {
   const due = await db
@@ -96,7 +87,7 @@ export async function GET(request: Request) {
   if (!process.env.CRON_SECRET) {
     return Response.json({ ok: false, error: "Drip posting is not switched on: CRON_SECRET is not set." }, { status: 503 });
   }
-  if (!authorized(request)) {
+  if (!cronAuthorized(request)) {
     return Response.json({ ok: false, error: "Unauthorized." }, { status: 401 });
   }
 

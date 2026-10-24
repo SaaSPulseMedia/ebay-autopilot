@@ -421,14 +421,20 @@ function competitionFromListed(listedNum: number): "low" | "medium" | "high" {
   return "low";
 }
 
+/** A CJ product as it would be imported: its catalog draft and its real US shipping. */
+export type CjListingData = {
+  draft: ReturnType<typeof mapCjProductToDraft>;
+  /** CJ's cheapest real shipping to the US for the cheapest variant (the one supplierPrice is). */
+  shipping: number;
+  suggested: number;
+};
+
 /**
- * Fetches a CJ product with its variants and upserts it into `userId`'s catalog
- * (one row per seller per product; null writes a shared, ownerless row).
+ * Fetches a CJ product with its variants and its real shipping to the US,
+ * without saving anything. Fails (with a message for the seller) when CJ has
+ * no English title or price for it, or can't ship it to the US.
  */
-export async function importCjProduct(
-  pid: string,
-  userId: number | null,
-): Promise<CjResult<{ id: number; externalId: string; created: boolean }>> {
+export async function fetchCjListingData(pid: string): Promise<CjResult<CjListingData>> {
   const detail = await cjGet(`/product/query?pid=${encodeURIComponent(pid)}`);
   if (!detail.ok) return detail;
   const product = detail.data as CjProductFromApi | null;
@@ -449,8 +455,20 @@ export async function importCjProduct(
   const quoteSku = [...draft.variants].sort((a, b) => (a.price || Infinity) - (b.price || Infinity))[0]?.sku ?? null;
   const quote = await cjShippingCost(draft.externalId, quoteSku);
   if (!quote.ok) return quote;
-  const shipping = quote.data;
-  const suggested = priceForEbay(draft.supplierPrice, shipping);
+  return { ok: true, data: { draft, shipping: quote.data, suggested: priceForEbay(draft.supplierPrice, quote.data) } };
+}
+
+/**
+ * Fetches a CJ product with its variants and upserts it into `userId`'s catalog
+ * (one row per seller per product; null writes a shared, ownerless row).
+ */
+export async function importCjProduct(
+  pid: string,
+  userId: number | null,
+): Promise<CjResult<{ id: number; externalId: string; created: boolean }>> {
+  const fetched = await fetchCjListingData(pid);
+  if (!fetched.ok) return fetched;
+  const { draft, shipping, suggested } = fetched.data;
   const externalId = cjExternalId(draft.externalId);
   const values = {
     userId,

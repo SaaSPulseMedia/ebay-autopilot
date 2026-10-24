@@ -1,6 +1,6 @@
 import "server-only";
 
-import { VARIANTS_INVALID, publishListing } from "@/lib/ebay/inventory";
+import { type PublishVariation, VARIANTS_INVALID, publishListing } from "@/lib/ebay/inventory";
 import type { PromotionResult } from "@/lib/ebay/promoted";
 import { defaultSizeValue, genderFromCategoryPath, standardizeSizes } from "@/lib/ebay/sizes";
 import { type CategoryAspect, resolveCategory } from "@/lib/ebay/taxonomy";
@@ -88,7 +88,27 @@ export function buildAspects(
   return aspects;
 }
 
-export async function publishWithResolver(input: CatalogProductForPublish): Promise<PublishWithResolverResult> {
+/** Everything eBay will be sent for a product, worked out before anything is sent (see planEbayListing). */
+export type EbayListingPlan = {
+  ok: true;
+  categoryId: string;
+  categoryPath: string;
+  usedFallbackCategory: boolean;
+  aspects: Record<string, string[]>;
+  variations: PublishVariation[] | undefined;
+  sizes?: SizeReport;
+};
+
+/**
+ * The eBay side of a listing, without publishing: its category (resolved from
+ * the title), item specifics, and its variations with sizes standardized to
+ * the category's values. Fails when the product's variants can't go out as
+ * eBay variations (see VARIANTS_INVALID). publishWithResolver publishes this
+ * plan; the sourcing checker runs it alone as a dry run.
+ */
+export async function planEbayListing(
+  input: Pick<CatalogProductForPublish, "userId" | "sku" | "title" | "brand" | "userAspects" | "variations">,
+): Promise<EbayListingPlan | { ok: false; step: "variants"; error: string }> {
   const resolved = await resolveCategory(input.userId, input.title);
 
   let categoryId = FALLBACK_CATEGORY_ID;
@@ -167,6 +187,14 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     }
   }
 
+  return { ok: true, categoryId, categoryPath, usedFallbackCategory: !resolved.ok, aspects, variations, sizes };
+}
+
+export async function publishWithResolver(input: CatalogProductForPublish): Promise<PublishWithResolverResult> {
+  const plan = await planEbayListing(input);
+  if (!plan.ok) return plan;
+  const { categoryId, categoryPath, aspects, variations, sizes } = plan;
+
   const result = await publishListing({
     userId: input.userId,
     sku: input.sku,
@@ -191,7 +219,7 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     listingId: result.listingId,
     categoryId,
     categoryPath,
-    usedFallbackCategory: !resolved.ok,
+    usedFallbackCategory: plan.usedFallbackCategory,
     variations: result.variations ?? 1,
     sizes,
     promotion: result.promotion,

@@ -83,6 +83,41 @@ const ADDED_TABLES: Array<{ table: string; ddl: string }> = [
       created_at timestamptz NOT NULL DEFAULT now()
     )`,
   },
+  {
+    table: "sourcing_candidates",
+    ddl: `CREATE TABLE IF NOT EXISTS sourcing_candidates (
+      user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      pid text NOT NULL,
+      niche text NOT NULL DEFAULT '',
+      status text NOT NULL DEFAULT 'queued',
+      reason text,
+      detail text,
+      title text NOT NULL DEFAULT '',
+      image_url text,
+      listed_num integer NOT NULL DEFAULT 0,
+      score real NOT NULL DEFAULT 0,
+      cost numeric(10, 2),
+      shipping numeric(10, 2),
+      list_price numeric(10, 2),
+      profit numeric(10, 2),
+      market numeric(10, 2),
+      variant_count integer NOT NULL DEFAULT 1,
+      ebay_category text,
+      found_at timestamptz NOT NULL DEFAULT now(),
+      checked_at timestamptz,
+      PRIMARY KEY (user_id, pid)
+    )`,
+  },
+  {
+    table: "sourcing_settings",
+    ddl: `CREATE TABLE IF NOT EXISTS sourcing_settings (
+      user_id integer PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      niches jsonb NOT NULL DEFAULT '[]'::jsonb,
+      enabled boolean NOT NULL DEFAULT true,
+      last_run_at timestamptz,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
+  },
 ];
 
 export async function ensureAddedColumns(db: NodePgDatabase<Record<string, unknown>>) {
