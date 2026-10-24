@@ -32,8 +32,11 @@ function throttled<T>(task: () => Promise<T>): Promise<T> {
 }
 
 export type ItemStatus =
-  /** `price`: eBay's current price (the lowest variation's on a multi-variation listing), when it says. */
-  | { state: "active"; price: number | null }
+  /**
+   * `price`: eBay's current price (the lowest variation's on a multi-variation listing), when it says.
+   * `shipping`: what the buyer pays for the first (cheapest listed) domestic shipping option; 0 for free.
+   */
+  | { state: "active"; price: number | null; shipping: number | null }
   /** `listingStatus` is eBay's value (Completed, Ended) or "NotFound". */
   | { state: "ended"; listingStatus: string }
   /** eBay couldn't answer (network, auth, rate limit…); the caller leaves the row alone. */
@@ -49,6 +52,7 @@ export function getEbayItemStatus(itemId: string, accessToken: string): Promise<
   <OutputSelector>Item.ItemID</OutputSelector>
   <OutputSelector>Item.SellingStatus.ListingStatus</OutputSelector>
   <OutputSelector>Item.SellingStatus.CurrentPrice</OutputSelector>
+  <OutputSelector>Item.ShippingDetails.ShippingServiceOptions</OutputSelector>
 </GetItemRequest>`;
     let xml: string;
     try {
@@ -73,7 +77,14 @@ export function getEbayItemStatus(itemId: string, accessToken: string): Promise<
     const listingStatus = tag(xml, "ListingStatus");
     if (listingStatus === "Active") {
       const price = Number(xml.match(/<CurrentPrice\b[^>]*>([^<]*)<\/CurrentPrice>/)?.[1]);
-      return { state: "active", price: Number.isFinite(price) && price > 0 ? price : null };
+      const shippingBlock = xml.match(/<ShippingServiceOptions>([\s\S]*?)<\/ShippingServiceOptions>/)?.[1] ?? "";
+      const free = /<FreeShipping>true<\/FreeShipping>/.test(shippingBlock);
+      const cost = Number(shippingBlock.match(/<ShippingServiceCost\b[^>]*>([^<]*)<\/ShippingServiceCost>/)?.[1]);
+      return {
+        state: "active",
+        price: Number.isFinite(price) && price > 0 ? price : null,
+        shipping: free ? 0 : Number.isFinite(cost) && cost >= 0 ? cost : null,
+      };
     }
     if (listingStatus) return { state: "ended", listingStatus };
 

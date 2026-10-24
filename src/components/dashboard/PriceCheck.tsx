@@ -1,0 +1,323 @@
+"use client";
+
+import { useMemo, useRef, useState } from "react";
+
+type Verdict = "overpriced" | "high" | "competitive" | "no_data" | "ended" | "error";
+
+type Result = {
+  itemId: string;
+  title: string;
+  verdict: Verdict;
+  price: number | null;
+  shipping: number | null;
+  total: number | null;
+  market: { average: number; reference: number; lowest: number; source: "sold" | "active"; count: number } | null;
+  suggestedPrice: number | null;
+  note: string;
+};
+
+type Listing = { itemId: string; title: string; views: number | null; sold: number | null };
+
+/** Listings sent per request (the API takes up to 6). */
+const BATCH = 5;
+
+const VERDICTS: Record<Verdict, { label: string; tone: string; order: number }> = {
+  overpriced: { label: "Overpriced", tone: "border-red-400/40 bg-red-400/10 text-red-200", order: 0 },
+  high: { label: "A bit high", tone: "border-amber-300/40 bg-amber-300/10 text-amber-200", order: 1 },
+  competitive: { label: "Price is fine", tone: "border-lime-brand/40 bg-lime-brand/10 text-lime-brand", order: 2 },
+  no_data: { label: "Not enough to compare", tone: "border-white/15 bg-white/5 text-slate-300", order: 3 },
+  ended: { label: "Ended", tone: "border-white/15 bg-white/5 text-slate-400", order: 4 },
+  error: { label: "Couldn't check", tone: "border-white/15 bg-white/5 text-slate-400", order: 5 },
+};
+
+const money = (n: number | null) => (n == null ? "—" : `$${n.toFixed(2)}`);
+
+/** RFC 4180-ish CSV: quoted fields, doubled quotes, commas and newlines inside quotes. */
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (c === '"') quoted = false;
+      else field += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ",") {
+      row.push(field);
+      field = "";
+    } else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else field += c;
+  }
+  if (field || row.length) rows.push([...row, field]);
+  return rows;
+}
+
+const num = (value: string | undefined) => {
+  const n = Number((value ?? "").replace(/[,%$\s]/g, ""));
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * Listings from either eBay report: the Listings traffic report (Performance
+ * → Traffic: "eBay item ID", "Total page views", "Quantity sold") or the All
+ * active listings report (Reports → Downloads: "Item number", "Sold quantity").
+ */
+function readReport(text: string): { listings: Listing[]; kind: "traffic" | "active" } | { error: string } {
+  const rows = parseCsv(text.replace(/^﻿/, ""));
+  const headerAt = rows.findIndex((r) => r.some((c) => /^(eBay item ID|Item number)$/i.test(c.trim())));
+  if (headerAt < 0) return { error: "This doesn't look like an eBay listings report. Use the Listings traffic report or the All active listings report." };
+  const header = rows[headerAt].map((c) => c.trim().toLowerCase());
+  const col = (...names: string[]) => header.findIndex((h) => names.some((n) => h === n || h.startsWith(n)));
+  const kind = header.includes("ebay item id") ? "traffic" : "active";
+  const idCol = col("ebay item id", "item number");
+  const titleCol = col("listing title", "title");
+  const viewsCol = col("total page views");
+  const soldCol = col("quantity sold", "sold quantity");
+  const seen = new Map<string, Listing>();
+  for (const r of rows.slice(headerAt + 1)) {
+    const itemId = (r[idCol] ?? "").replace(/\D/g, "");
+    const title = (r[titleCol] ?? "").trim();
+    if (!itemId || !title || seen.has(itemId)) continue;
+    seen.set(itemId, {
+      itemId,
+      title,
+      views: viewsCol >= 0 ? num(r[viewsCol]) : null,
+      sold: soldCol >= 0 ? num(r[soldCol]) : null,
+    });
+  }
+  if (!seen.size) return { error: "No listings found in this file." };
+  return { listings: [...seen.values()], kind };
+}
+
+export function PriceCheck({ ebayConnected }: { ebayConnected: boolean }) {
+  const [listings, setListings] = useState<Listing[]>([]);
+  const [kind, setKind] = useState<"traffic" | "active" | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [onlyUnsold, setOnlyUnsold] = useState(true);
+  const [results, setResults] = useState<Result[]>([]);
+  const [running, setRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+  const stopRef = useRef(false);
+
+  /** Traffic report: clicked (10+ views) but not bought. Active report: no sales. */
+  const toCheck = useMemo(() => {
+    if (!onlyUnsold) return listings;
+    return listings.filter((l) => (l.sold ?? 0) === 0 && (kind !== "traffic" || (l.views ?? 0) >= 10));
+  }, [listings, onlyUnsold, kind]);
+
+  async function onFile(file: File | undefined) {
+    setFileError(null);
+    setResults([]);
+    setListings([]);
+    if (!file) return;
+    const read = readReport(await file.text());
+    if ("error" in read) {
+      setFileError(read.error);
+      return;
+    }
+    setListings(read.listings);
+    setKind(read.kind);
+  }
+
+  async function run() {
+    setRunning(true);
+    setRunError(null);
+    setResults([]);
+    stopRef.current = false;
+    // Most-viewed first, so the listings losing the most buyers are checked first.
+    const queue = [...toCheck].sort((a, b) => (b.views ?? 0) - (a.views ?? 0));
+    try {
+      for (let i = 0; i < queue.length && !stopRef.current; i += BATCH) {
+        const res = await fetch("/api/price-check", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ items: queue.slice(i, i + BATCH).map(({ itemId, title }) => ({ itemId, title })) }),
+        });
+        const json = (await res.json()) as { ok: boolean; results?: Result[]; error?: string };
+        if (!json.ok || !json.results) {
+          setRunError(json.error ?? "The check stopped. Try again.");
+          break;
+        }
+        setResults((current) => [...current, ...(json.results ?? [])]);
+      }
+    } catch {
+      setRunError("The connection dropped. Press Check prices again to finish.");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  const sorted = useMemo(
+    () => [...results].sort((a, b) => VERDICTS[a.verdict].order - VERDICTS[b.verdict].order),
+    [results],
+  );
+  const counts = useMemo(() => {
+    const c: Partial<Record<Verdict, number>> = {};
+    for (const r of results) c[r.verdict] = (c[r.verdict] ?? 0) + 1;
+    return c;
+  }, [results]);
+
+  function download() {
+    const head = ["Verdict", "Item number", "Title", "Your price", "Your shipping", "Your total", "eBay average", "Typical price", "Suggested item price", "What to do", "eBay link"];
+    const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    const lines = sorted.map((r) =>
+      [
+        VERDICTS[r.verdict].label,
+        r.itemId,
+        r.title,
+        r.price?.toFixed(2) ?? "",
+        r.shipping?.toFixed(2) ?? "",
+        r.total?.toFixed(2) ?? "",
+        r.market?.average.toFixed(2) ?? "",
+        r.market?.reference.toFixed(2) ?? "",
+        r.suggestedPrice?.toFixed(2) ?? "",
+        r.note,
+        `https://www.ebay.com/itm/${r.itemId}`,
+      ]
+        .map(String)
+        .map(esc)
+        .join(","),
+    );
+    const blob = new Blob([[head.map(esc).join(","), ...lines].join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "price-check.csv";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  return (
+    <div className="space-y-5">
+      {!ebayConnected ? (
+        <p className="rounded-xl border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
+          Connect your eBay store in Settings first: the price check reads each listing&apos;s live price from eBay.
+        </p>
+      ) : null}
+
+      <section className="ap-card space-y-3 rounded-2xl p-5">
+        <h2 className="text-sm font-semibold text-white">Step 1 · Upload your eBay report</h2>
+        <p className="text-xs leading-relaxed text-slate-400">
+          Best: the <span className="text-slate-200">Listings traffic report</span> (Seller Hub → Performance → Traffic → download the
+          per-listing table). It also works with the <span className="text-slate-200">All active listings</span> report (Seller Hub →
+          Reports → Downloads). The file stays on your computer; only item numbers and titles are sent for checking.
+        </p>
+        <input
+          type="file"
+          accept=".csv,text/csv"
+          onChange={(e) => onFile(e.target.files?.[0])}
+          className="block w-full text-sm text-slate-300 file:mr-3 file:rounded-full file:border-0 file:bg-brand-500 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-brand-400"
+        />
+        {fileError ? <p className="text-xs text-red-300">{fileError}</p> : null}
+        {listings.length ? (
+          <div className="space-y-2 text-sm text-slate-300">
+            <p>
+              Found <span className="text-white">{listings.length}</span> listings in your{" "}
+              {kind === "traffic" ? "traffic report" : "active listings report"}.
+            </p>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={onlyUnsold} onChange={(e) => setOnlyUnsold(e.target.checked)} className="h-4 w-4 accent-brand-500" />
+              {kind === "traffic"
+                ? "Only listings people opened but didn't buy (10+ views, no sales)"
+                : "Only listings with no sales"}
+            </label>
+          </div>
+        ) : null}
+      </section>
+
+      {listings.length ? (
+        <section className="ap-card space-y-3 rounded-2xl p-5">
+          <h2 className="text-sm font-semibold text-white">Step 2 · Check prices</h2>
+          <p className="text-xs text-slate-400">
+            {toCheck.length} listing{toCheck.length === 1 ? "" : "s"} to check, about {Math.max(1, Math.ceil((toCheck.length * 2.5) / 60))}{" "}
+            minute{toCheck.length * 2.5 > 60 ? "s" : ""}. Keep this page open while it runs. Nothing on eBay is changed.
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={run}
+              disabled={running || !toCheck.length || !ebayConnected}
+              className="rounded-full bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-400 disabled:opacity-50"
+            >
+              {running ? `Checking… ${results.length} of ${toCheck.length}` : results.length ? "Check again" : "Check prices"}
+            </button>
+            {running ? (
+              <button
+                type="button"
+                onClick={() => (stopRef.current = true)}
+                className="rounded-full border border-white/15 px-4 py-2 text-sm text-slate-200 hover:bg-white/5"
+              >
+                Stop
+              </button>
+            ) : null}
+            {results.length && !running ? (
+              <button type="button" onClick={download} className="rounded-full border border-white/15 px-4 py-2 text-sm text-slate-200 hover:bg-white/5">
+                Download results
+              </button>
+            ) : null}
+          </div>
+          {runError ? <p className="text-xs text-red-300">{runError}</p> : null}
+        </section>
+      ) : null}
+
+      {results.length ? (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-white">Step 3 · Results</h2>
+          <div className="flex flex-wrap gap-2 text-xs">
+            {(Object.keys(VERDICTS) as Verdict[])
+              .filter((v) => counts[v])
+              .map((v) => (
+                <span key={v} className={`rounded-full border px-3 py-1 ${VERDICTS[v].tone}`}>
+                  {counts[v]} {VERDICTS[v].label.toLowerCase()}
+                </span>
+              ))}
+          </div>
+          <ul className="space-y-2">
+            {sorted.map((r) => (
+              <li key={r.itemId} className="ap-card min-w-0 space-y-1.5 rounded-2xl p-3 text-xs">
+                <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                  <a
+                    href={`https://www.ebay.com/itm/${r.itemId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="min-w-0 flex-1 text-sm text-white hover:underline"
+                  >
+                    {r.title}
+                  </a>
+                  <span className={`flex-none rounded-full border px-2.5 py-0.5 ${VERDICTS[r.verdict].tone}`}>{VERDICTS[r.verdict].label}</span>
+                </div>
+                <p className="text-slate-400">
+                  You: <span className="text-white">{money(r.total)}</span>
+                  {r.shipping ? ` (${money(r.price)} + ${money(r.shipping)} shipping)` : r.total != null ? " (free shipping)" : ""}
+                  {r.market ? (
+                    <>
+                      {" "}
+                      · eBay average {money(r.market.average)} · typical {money(r.market.reference)}
+                      {r.market.source === "sold" ? " (sold)" : ""}
+                    </>
+                  ) : null}
+                  {r.suggestedPrice != null ? (
+                    <>
+                      {" "}
+                      · suggested item price <span className="font-semibold text-lime-brand">{money(r.suggestedPrice)}</span>
+                    </>
+                  ) : null}
+                </p>
+                <p className="text-slate-500">{r.note}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+    </div>
+  );
+}
