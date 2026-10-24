@@ -2,6 +2,8 @@
 
 import { useMemo, useRef, useState } from "react";
 
+import { MIN_PROFIT, MIN_PROFIT_LABEL } from "@/lib/pricing";
+
 type Verdict = "overpriced" | "high" | "competitive" | "no_data" | "ended" | "error";
 
 type Result = {
@@ -17,6 +19,9 @@ type Result = {
 };
 
 type Listing = { itemId: string; title: string; views: number | null; sold: number | null };
+
+/** Which listings from the report get checked. */
+type Scope = "unsold" | "sellers" | "all";
 
 /** Listings sent per request (the API takes up to 6). */
 const BATCH = 5;
@@ -103,17 +108,18 @@ export function PriceCheck({ ebayConnected }: { ebayConnected: boolean }) {
   const [listings, setListings] = useState<Listing[]>([]);
   const [kind, setKind] = useState<"traffic" | "active" | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
-  const [onlyUnsold, setOnlyUnsold] = useState(true);
+  const [scope, setScope] = useState<Scope>("unsold");
   const [results, setResults] = useState<Result[]>([]);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const stopRef = useRef(false);
 
-  /** Traffic report: clicked (10+ views) but not bought. Active report: no sales. */
+  /** "unsold": opened (10+ views, traffic report) but not bought. "sellers": sold at least once. */
   const toCheck = useMemo(() => {
-    if (!onlyUnsold) return listings;
-    return listings.filter((l) => (l.sold ?? 0) === 0 && (kind !== "traffic" || (l.views ?? 0) >= 10));
-  }, [listings, onlyUnsold, kind]);
+    if (scope === "sellers") return listings.filter((l) => (l.sold ?? 0) > 0);
+    if (scope === "unsold") return listings.filter((l) => (l.sold ?? 0) === 0 && (kind !== "traffic" || (l.views ?? 0) >= 10));
+    return listings;
+  }, [listings, scope, kind]);
 
   async function onFile(file: File | undefined) {
     setFileError(null);
@@ -134,8 +140,10 @@ export function PriceCheck({ ebayConnected }: { ebayConnected: boolean }) {
     setRunError(null);
     setResults([]);
     stopRef.current = false;
-    // Most-viewed first, so the listings losing the most buyers are checked first.
-    const queue = [...toCheck].sort((a, b) => (b.views ?? 0) - (a.views ?? 0));
+    // Best sellers by sales; otherwise most-viewed first, so the listings losing the most buyers come first.
+    const queue = [...toCheck].sort((a, b) =>
+      scope === "sellers" ? (b.sold ?? 0) - (a.sold ?? 0) || (b.views ?? 0) - (a.views ?? 0) : (b.views ?? 0) - (a.views ?? 0),
+    );
     try {
       for (let i = 0; i < queue.length && !stopRef.current; i += BATCH) {
         const res = await fetch("/api/price-check", {
@@ -224,12 +232,27 @@ export function PriceCheck({ ebayConnected }: { ebayConnected: boolean }) {
               Found <span className="text-white">{listings.length}</span> listings in your{" "}
               {kind === "traffic" ? "traffic report" : "active listings report"}.
             </p>
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={onlyUnsold} onChange={(e) => setOnlyUnsold(e.target.checked)} className="h-4 w-4 accent-brand-500" />
-              {kind === "traffic"
-                ? "Only listings people opened but didn't buy (10+ views, no sales)"
-                : "Only listings with no sales"}
-            </label>
+            <div className="flex flex-wrap gap-2">
+              {(
+                [
+                  ["unsold", kind === "traffic" ? "Opened but not bought (10+ views, no sales)" : "No sales"],
+                  ["sellers", "Best sellers (to move to CJ)"],
+                  ["all", "All listings"],
+                ] as Array<[Scope, string]>
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => (setScope(value), setResults([]))}
+                  aria-pressed={scope === value}
+                  className={`rounded-full border px-3 py-1.5 text-xs transition ${
+                    scope === value ? "border-brand-500 bg-brand-500/20 text-white" : "border-white/15 text-slate-300 hover:bg-white/5"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
         ) : null}
       </section>
@@ -313,11 +336,119 @@ export function PriceCheck({ ebayConnected }: { ebayConnected: boolean }) {
                   ) : null}
                 </p>
                 <p className="text-slate-500">{r.note}</p>
+                {r.verdict !== "ended" ? <FindOnCj title={r.title} total={r.total} /> : null}
               </li>
             ))}
           </ul>
         </section>
       ) : null}
+    </div>
+  );
+}
+
+type CjMatch = {
+  pid: string;
+  title: string;
+  imageUrl: string | null;
+  url: string;
+  score: number;
+  cost: number;
+  shipping: number | null;
+  days: string;
+  from: "CN" | "US" | null;
+  usOption: { price: number; days: string } | null;
+  profit: number | null;
+  shippingError?: string;
+};
+
+/**
+ * "Find on CJ" for one listing: CJ products matching its title, with CJ's
+ * real cost, shipping, delivery time and the profit at the listing's current
+ * eBay price. The seller confirms it's the same item by comparing photos.
+ */
+function FindOnCj({ title, total }: { title: string; total: number | null }) {
+  const [state, setState] = useState<
+    | { status: "idle" }
+    | { status: "loading" }
+    | { status: "done"; query: string; matches: CjMatch[] }
+    | { status: "error"; error: string }
+  >({ status: "idle" });
+
+  async function search() {
+    setState({ status: "loading" });
+    try {
+      const res = await fetch("/api/cj-match", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title, total }),
+      });
+      const json = (await res.json()) as { ok: boolean; query?: string; matches?: CjMatch[]; error?: string };
+      setState(json.ok ? { status: "done", query: json.query ?? "", matches: json.matches ?? [] } : { status: "error", error: json.error ?? "CJ search failed." });
+    } catch {
+      setState({ status: "error", error: "CJ search didn't finish. Try again." });
+    }
+  }
+
+  if (state.status === "idle") {
+    return (
+      <button type="button" onClick={search} className="mt-1 rounded-full border border-white/15 px-3 py-1 text-xs text-slate-200 hover:bg-white/5">
+        Find on CJ
+      </button>
+    );
+  }
+  if (state.status === "loading") return <p className="text-slate-400">Searching CJ and getting real shipping… (up to 20 s)</p>;
+  if (state.status === "error") {
+    return (
+      <p className="text-red-300">
+        {state.error}{" "}
+        <button type="button" onClick={search} className="underline">
+          Try again
+        </button>
+      </p>
+    );
+  }
+  if (!state.matches.length) {
+    return (
+      <p className="rounded-xl border border-white/12 bg-white/5 px-3 py-2 text-slate-300">
+        No close match on CJ for &quot;{state.query}&quot;. In your CJ account, post a <span className="text-white">sourcing request</span> with
+        this product&apos;s AliExpress link: CJ usually finds it within a few days, and it then shows up here.
+      </p>
+    );
+  }
+  return (
+    <div className="mt-1 space-y-2 rounded-xl border border-white/12 bg-white/5 p-2.5">
+      <p className="text-slate-400">
+        CJ matches for &quot;{state.query}&quot;. Compare the photos: only switch if it&apos;s the same item.
+      </p>
+      {state.matches.map((m) => (
+        <div key={m.pid} className="flex min-w-0 gap-2.5">
+          {m.imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={m.imageUrl} alt="" className="h-14 w-14 flex-none rounded-lg object-cover" />
+          ) : (
+            <div className="h-14 w-14 flex-none rounded-lg bg-white/5" />
+          )}
+          <div className="min-w-0 flex-1 space-y-0.5">
+            <a href={m.url} target="_blank" rel="noreferrer" className="line-clamp-2 text-white hover:underline">
+              {m.title}
+            </a>
+            <p className="text-slate-400">
+              CJ {money(m.cost)} + shipping {m.shipping == null ? "—" : m.shipping === 0 ? "free" : money(m.shipping)}
+              {m.days ? ` · ${m.days} days` : ""}
+              {m.from ? ` from ${m.from === "US" ? "US warehouse 🇺🇸" : "China"}` : ""}
+              {m.usOption && m.from !== "US" ? ` · US warehouse: ${money(m.usOption.price)}, ${m.usOption.days} days` : ""}
+            </p>
+            {m.profit != null ? (
+              <p className={m.profit >= MIN_PROFIT ? "text-lime-brand" : "text-amber-200"}>
+                Profit at your current eBay price: {money(m.profit)}
+                {m.profit < MIN_PROFIT ? ` (under ${MIN_PROFIT_LABEL}: the price would need to go up)` : ""}
+              </p>
+            ) : null}
+            {m.shippingError ? <p className="text-amber-200">{m.shippingError}</p> : null}
+            <p className="text-slate-500">Title match {Math.round(m.score * 100)}%</p>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
