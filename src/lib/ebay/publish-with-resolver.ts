@@ -176,7 +176,11 @@ function planInCategory(input: PlanInput, category: CategorySuggestion | null): 
     const plan = standardizeSizes(variants, sizeRule, genderFromCategoryPath(categoryPath));
     sizes = { aspect: sizeRule.name, published: plan.mapped, dropped: plan.skipped };
     if (plan.skipped.length) {
-      variantProblem = `no eBay ${sizeRule.name} matches the supplier's size${plan.skipped.length === 1 ? "" : "s"} ${plan.skipped.join(", ")}`;
+      // eBay's own values, so the seller (and we) can see why nothing matched.
+      const accepted = sizeRule.values.length
+        ? ` (eBay's ${sizeRule.name} values here include ${sizeRule.values.slice(0, 12).join(", ")}${sizeRule.values.length > 12 ? ", …" : ""})`
+        : "";
+      variantProblem = `no eBay ${sizeRule.name} matches the supplier's size${plan.skipped.length === 1 ? "" : "s"} ${plan.skipped.join(", ")}${accepted}`;
     } else if (plan.variants.length < 2) {
       variantProblem = plan.variants.length
         ? `only one of the supplier's sizes matches an eBay ${sizeRule.name}`

@@ -50,8 +50,37 @@ export function parseShoeSize(raw: string): ParsedSize | null {
   return { system: marker ? (marker.startsWith("EU") ? "EU" : (marker as "US" | "UK")) : null, value };
 }
 
+/**
+ * Kids' shoes sized by foot length ("13cm"): [cm, US kids' size] points of a
+ * common infant/toddler/youth chart, read between points (approximate).
+ */
+const KIDS_FOOT_CM_TO_US: Array<[number, number]> = [
+  [9, 1], [10, 2], [10.5, 3], [11.5, 4], [12, 5], [13, 6], [13.5, 7], [14.5, 8], [15.5, 9],
+  [16, 10], [16.5, 10.5], [17, 11], [18, 12], [18.5, 13], [19.5, 1.5], [20.5, 2.5], [21.5, 3.5],
+];
+
+/** A kids' foot length ("13cm", "13.5 CM") as a US kids' size, to the half size; null outside the chart. */
+function kidsFootCmToUs(raw: string): number | null {
+  const match = raw.trim().match(/^(\d{1,2}(?:\.\d)?)\s*cm$/i);
+  if (!match) return null;
+  const cm = Number(match[1]);
+  // Past 18.5 cm the chart restarts at youth sizes (1.5Y, 2.5Y…): read those segments on their own.
+  for (let i = 0; i < KIDS_FOOT_CM_TO_US.length - 1; i++) {
+    const [c0, u0] = KIDS_FOOT_CM_TO_US[i];
+    const [c1, u1] = KIDS_FOOT_CM_TO_US[i + 1];
+    if (cm < c0 || cm > c1 || u1 < u0) continue;
+    return Math.round((u0 + ((cm - c0) / (c1 - c0)) * (u1 - u0)) * 2) / 2;
+  }
+  const exact = KIDS_FOOT_CM_TO_US.find(([c]) => c === cm);
+  return exact ? exact[1] : null;
+}
+
 /** The supplier size as a US size number, or null when it can't be converted. */
 export function toUsSize(raw: string, gender: ShoeGender): number | null {
+  if (gender === "kids") {
+    const fromCm = kidsFootCmToUs(raw);
+    if (fromCm != null) return fromCm;
+  }
   const parsed = parseShoeSize(raw);
   if (!parsed) return null;
   const { value } = parsed;
@@ -97,8 +126,12 @@ export function mapToEbayShoeSize(raw: string, allowed: string[], gender: ShoeGe
 
   let best: { value: string; distance: number } | null = null;
   for (const value of allowed) {
-    // Only plain numeric values ("9", "9.5", "US 9"); width or kids' variants ("9 Wide", "9C") are skipped.
-    const match = value.trim().match(/^(?:US\s*)?(\d+(?:\.\d+)?)$/i);
+    // Adults: only plain numeric values ("9", "9.5", "US 9"); width or kids' variants ("9 Wide", "9C") are skipped.
+    // Kids: those kids' spellings are the right ones ("6C", "6 Toddler", "6 M US Toddler").
+    const match =
+      gender === "kids"
+        ? value.trim().match(/^(?:US\s*)?(\d+(?:\.\d+)?)\s*(?:C|K|T|M|US|Toddler|Infant|Baby|Little Kid|Big Kid|Youth|\s)*$/i)
+        : value.trim().match(/^(?:US\s*)?(\d+(?:\.\d+)?)$/i);
     if (!match) continue;
     const distance = Math.abs(Number(match[1]) - us);
     if (distance <= 0.5 && (!best || distance < best.distance)) best = { value, distance };
@@ -184,12 +217,26 @@ export function mapKidsHeightSize(raw: string, allowed: string[], gender: ShoeGe
   const cm = kidsHeightCm(raw, gender);
   if (cm == null) return null;
   const labels = KIDS_BY_HEIGHT.find(([max]) => cm <= max)?.[1] ?? [];
-  const norm = (v: string) => v.toLowerCase().replace(/\s+/g, "");
   for (const label of labels) {
-    const hit = allowed.find((v) => norm(v) === norm(label));
+    const hit = allowed.find((v) => kidsSizeKey(v) === kidsSizeKey(label));
     if (hit) return hit;
   }
   return null;
+}
+
+/**
+ * One spelling per kids' size, so eBay's many ways of writing it compare
+ * equal: "4", "4Y", "4 Years", "Size 4", "4 (XS)" → "4"; "4T" → "4t";
+ * "12-18 Months", "12-18M" → "12-18m".
+ */
+export function kidsSizeKey(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/\(.*?\)/g, "")
+    .replace(/\b(size|us|kids?|girls?|boys?|baby|toddler|infant|little|big)\b/g, "")
+    .replace(/\s*months?\b/g, "m")
+    .replace(/(\d)\s*(years?|yrs?|y)\b/g, "$1")
+    .replace(/[\s']+/g, "");
 }
 
 /** The value a single listing uses when the supplier gives no usable size: eBay's "One Size" if offered, else its first value. */
