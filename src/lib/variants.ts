@@ -89,6 +89,61 @@ export function listingVariants(args: {
   return rows.length >= 2 ? rows : single;
 }
 
+/** "70x140cm", "30*40 cm": a dimension, which is a size too. */
+const DIMENSIONS = /^\d+(?:\.\d+)?\s*(?:cm|mm|in|inch|")?\s*[x×*]\s*\d+/i;
+
+/** True when every value reads like a size (letters, numbers with units, dimensions, "EU 42"). */
+export function looksLikeSizes(values: string[]) {
+  return values.every((raw) => {
+    const v = raw.trim();
+    return SIZE_LIKE.test(v) || DIMENSIONS.test(v) || /^(?:EUR?|US|UK)\s*\d/i.test(v) || /^\d+(?:\.\d+)?\s*(?:EUR?|US|UK)$/i.test(v);
+  });
+}
+
+/** Free-text eBay variation names a supplier option can go out under when its own name can't, best first. */
+const FALLBACK_OPTION_NAMES = ["Style", "Type", "Model", "Pattern", "Design"];
+
+/**
+ * Renames supplier options eBay can't vary by in this category so the
+ * variants can still go out as variations: an option the category doesn't
+ * allow (e.g. "Size" on towels), or a "Size" whose values aren't sizes at all
+ * ("Style18", "10pcs") where the category's Size only takes its own list, is
+ * listed under the first allowed free-text name ("Style", "Type", …).
+ * `sizeAspect` is the category's standardized size aspect: real sizes keep
+ * their "Size" name so standardizeSizes can map them to it. Options with no
+ * allowed name left are kept as they are (variationProblem then says why).
+ */
+export function relabelVariantOptions(
+  variants: Variant[],
+  allowedAspects: string[],
+  selectionOnly: Record<string, string[]> = {},
+  sizeAspect: string | null = null,
+): Variant[] {
+  const allowed = new Map(allowedAspects.map((name) => [name.toLowerCase(), name]));
+  const listed = new Set(Object.keys(selectionOnly).map((name) => name.toLowerCase()));
+  const names = Object.keys(variants[0]?.options ?? {});
+  const used = new Set(names.map((name) => name.toLowerCase()));
+  const rename = new Map<string, string>();
+  for (const name of names) {
+    const isSize = /^size$/i.test(name);
+    const realSizes = isSize && looksLikeSizes(variants.map((v) => v.options[name] ?? ""));
+    if (isSize && realSizes && sizeAspect) continue;
+    const sizeOnlyTakesList = isSize && (listed.has(name.toLowerCase()) || Boolean(sizeAspect));
+    if (allowed.has(name.toLowerCase()) && !(isSize && !realSizes && sizeOnlyTakesList)) continue;
+    const target = FALLBACK_OPTION_NAMES.map((n) => n.toLowerCase()).find(
+      (n) => allowed.has(n) && !listed.has(n) && !used.has(n),
+    );
+    if (!target) continue;
+    rename.set(name, allowed.get(target) as string);
+    used.add(target);
+  }
+  if (!rename.size) return variants;
+  return variants.map((v) => ({
+    ...v,
+    options: Object.fromEntries(Object.entries(v.options).map(([key, value]) => [rename.get(key) ?? key, value])),
+  }));
+}
+
 /** eBay's limits on a variation's aspect name and value. */
 const MAX_VARIATION_NAME = 40;
 const MAX_VARIATION_VALUE = 65;

@@ -59,6 +59,12 @@ const RECHECK_READY_MS = 3 * 24 * 60 * 60 * 1000;
 const RETRY_REJECTED_MS = 30 * 24 * 60 * 60 * 1000;
 /** A second run for the same seller doesn't start while one may still be going. */
 const RUN_LOCK_MS = 55_000;
+/**
+ * When the variant rules last changed (kids' sizes by height, non-size
+ * options listed as "Style"): products turned down for variants before then
+ * are checked again under the new rules instead of waiting RETRY_REJECTED_MS.
+ */
+const VARIANT_RULES_CHANGED = new Date("2026-10-24T17:00:00Z");
 
 export type SourcingSettings = { niches: string[]; enabled: boolean; lastRunAt: Date | null };
 
@@ -296,6 +302,18 @@ export async function runSourcing(userId: number, deadline: number): Promise<Sou
       // Stale ready products first (keep the list honest), then the best new ones.
       .orderBy(sql`(${sourcingCandidates.status} = 'ready') desc`, desc(sourcingCandidates.score))
       .limit(20);
+
+  await db
+    .update(sourcingCandidates)
+    .set({ status: "queued", reason: null, detail: null, checkedAt: null })
+    .where(
+      and(
+        eq(sourcingCandidates.userId, userId),
+        eq(sourcingCandidates.status, "rejected"),
+        eq(sourcingCandidates.reason, "variants"),
+        lt(sourcingCandidates.checkedAt, VARIANT_RULES_CHANGED),
+      ),
+    );
 
   let queue = await waiting();
   if (queue.length < QUEUE_MIN) {

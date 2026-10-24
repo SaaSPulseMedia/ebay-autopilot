@@ -4,7 +4,7 @@ import { type PublishVariation, VARIANTS_INVALID, publishListing } from "@/lib/e
 import type { PromotionResult } from "@/lib/ebay/promoted";
 import { defaultSizeValue, genderFromCategoryPath, standardizeSizes } from "@/lib/ebay/sizes";
 import { type CategoryAspect, resolveCategory } from "@/lib/ebay/taxonomy";
-import { type Variant, variationProblem } from "@/lib/variants";
+import { type Variant, relabelVariantOptions, variationProblem } from "@/lib/variants";
 
 /**
  * Publishes a catalog product with its eBay category resolved from the title
@@ -135,6 +135,15 @@ export async function planEbayListing(
   const sizeAspect = resolved.ok ? resolved.suggestion.sizeAspect : null;
   // Enforced when eBay gives a list to check against; shoe sizes are also converted to US without one.
   const sizeRule = sizeAspect && (sizeAspect.values.length || sizeAspect.kind === "shoe") ? sizeAspect : null;
+  // Options eBay can't vary by here (or a "Size" that isn't sizes) go out under a name it allows, e.g. "Style".
+  if (hasVariants && resolved.ok) {
+    variants = relabelVariantOptions(
+      variants,
+      resolved.suggestion.variationAspects,
+      resolved.suggestion.variationValues,
+      sizeRule?.enabledForVariations ? sizeRule.name : null,
+    );
+  }
   let sizes: SizeReport | undefined;
   if (sizeRule && hasVariants) {
     const plan = standardizeSizes(variants, sizeRule, genderFromCategoryPath(categoryPath));

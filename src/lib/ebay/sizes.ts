@@ -129,7 +129,8 @@ export function canonicalApparelSize(raw: string) {
 /**
  * The eBay value for one supplier size, or null when the category's list has
  * no match: exact (case-insensitive) first, then the same size spelled
- * differently, then — for shoe sizes — the EU/UK → US conversion.
+ * differently, then — for shoe sizes — the EU/UK → US conversion, or — for
+ * clothing — a child's height in cm to the US kids' size ("110cm" → "4T").
  * An empty allowed list (free-text aspect) only happens for shoes here, where
  * the converted US size is used.
  */
@@ -145,7 +146,50 @@ export function mapSizeValue(
   const canonical = canonicalApparelSize(value);
   const alias = aspect.values.find((v) => canonicalApparelSize(v) === canonical);
   if (alias) return alias;
-  return aspect.kind === "shoe" ? mapToEbayShoeSize(value, aspect.values, gender) : null;
+  if (aspect.kind === "shoe") return mapToEbayShoeSize(value, aspect.values, gender);
+  return mapKidsHeightSize(value, aspect.values, gender);
+}
+
+/**
+ * Chinese suppliers size kids' clothes by the child's height ("110cm"). The
+ * US kids' sizes eBay lists for each height, best first, as common supplier
+ * size charts give them (approximate by nature).
+ */
+const KIDS_BY_HEIGHT: Array<[maxCm: number, labels: string[]]> = [
+  [59, ["0-3 Months", "Newborn", "3 Months"]],
+  [66, ["3-6 Months", "6 Months"]],
+  [73, ["6-9 Months", "6-12 Months", "9 Months"]],
+  [80, ["12-18 Months", "12 Months", "18 Months"]],
+  [90, ["2T", "18-24 Months", "24 Months"]],
+  [100, ["3T", "3"]],
+  [110, ["4T", "4"]],
+  [120, ["5T", "6", "5"]],
+  [130, ["7", "6X", "6"]],
+  [140, ["8", "8-9"]],
+  [150, ["10", "10-12"]],
+  [160, ["12", "14"]],
+  [170, ["14", "16"]],
+];
+
+/** "110cm", "110 cm" (or a bare "110" for a kids' category): the child's height in cm, else null. */
+function kidsHeightCm(raw: string, gender: ShoeGender): number | null {
+  const match = raw.trim().match(/^(\d{2,3})\s*(cm)?$/i);
+  if (!match || (!match[2] && gender !== "kids")) return null;
+  const cm = Number(match[1]);
+  return cm >= 45 && cm <= 175 ? cm : null;
+}
+
+/** The eBay kids' size for a height-sized supplier size ("110cm" → "4T"), from the category's list, else null. */
+export function mapKidsHeightSize(raw: string, allowed: string[], gender: ShoeGender): string | null {
+  const cm = kidsHeightCm(raw, gender);
+  if (cm == null) return null;
+  const labels = KIDS_BY_HEIGHT.find(([max]) => cm <= max)?.[1] ?? [];
+  const norm = (v: string) => v.toLowerCase().replace(/\s+/g, "");
+  for (const label of labels) {
+    const hit = allowed.find((v) => norm(v) === norm(label));
+    if (hit) return hit;
+  }
+  return null;
 }
 
 /** The value a single listing uses when the supplier gives no usable size: eBay's "One Size" if offered, else its first value. */
