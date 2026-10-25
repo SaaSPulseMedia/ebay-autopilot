@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { MIN_PROFIT, MIN_PROFIT_LABEL } from "@/lib/pricing";
+import { MIN_PROFIT, MIN_PROFIT_LABEL, netProfitFor, priceForMinProfit } from "@/lib/pricing";
 
 type Verdict = "overpriced" | "high" | "competitive" | "no_data" | "ended" | "error";
 
@@ -36,6 +36,66 @@ const VERDICTS: Record<Verdict, { label: string; tone: string; order: number }> 
 };
 
 const money = (n: number | null) => (n == null ? "—" : `$${n.toFixed(2)}`);
+const cents = (n: number) => Math.round(n * 100) / 100;
+
+/** The seller's cost per listing (what they pay their supplier, delivery included), kept in this browser. */
+const COSTS_KEY = "price-check-costs";
+
+type CostAdvice = {
+  /** Profit per sale at the current price, after eBay fees and the ad rate. */
+  profitNow: number;
+  /** The suggested item price, never below the one that keeps MIN_PROFIT; null when the market can't be matched. */
+  suggestedItem: number | null;
+  tone: "ok" | "warn" | "bad";
+  message: string;
+};
+
+/**
+ * What the seller's own cost changes: eBay prices alone can suggest an item
+ * price below what the item costs. With the cost known, the suggestion never
+ * goes under the price that keeps MIN_PROFIT, and says so plainly when the
+ * market price is out of reach with this supplier.
+ */
+function costAdvice(r: Result, cost: number, adRatePct: number): CostAdvice | null {
+  if (r.total == null) return null;
+  const shipping = r.shipping ?? 0;
+  const profitNow = netProfitFor(r.total, cost, 0, adRatePct);
+  const floorTotal = priceForMinProfit(cost, 0, adRatePct);
+  const floorItem = cents(Math.max(0.99, floorTotal - shipping));
+  const now = `Now you keep ${money(profitNow)} per sale after eBay fees${adRatePct ? " and ads" : ""}.`;
+  const floor = `the lowest price that keeps ${MIN_PROFIT_LABEL} is ${money(floorTotal)}${shipping ? ` (item price ${money(floorItem)} + ${money(shipping)} shipping)` : ""}`;
+  const m = r.market;
+  if (!m) {
+    return { profitNow, suggestedItem: null, tone: profitNow >= MIN_PROFIT ? "ok" : "warn", message: `${now} For you, ${floor}.` };
+  }
+  if (floorTotal <= m.reference) {
+    const suggestedItem = r.suggestedPrice != null ? Math.max(r.suggestedPrice, floorItem) : null;
+    const kept = suggestedItem != null ? netProfitFor(suggestedItem + shipping, cost, 0, adRatePct) : null;
+    return {
+      profitNow,
+      suggestedItem,
+      tone: "ok",
+      message:
+        suggestedItem != null && kept != null
+          ? `${now} You can match the typical ${money(m.reference)}: at an item price of ${money(suggestedItem)} you'd keep ${money(kept)}.`
+          : `${now} Your price is in line with eBay.`,
+    };
+  }
+  if (floorTotal <= m.average) {
+    return {
+      profitNow,
+      suggestedItem: r.suggestedPrice != null ? floorItem : null,
+      tone: "warn",
+      message: `${now} You can't reach the typical ${money(m.reference)} with this supplier: ${floor}, still under the eBay average (${money(m.average)}).`,
+    };
+  }
+  return {
+    profitNow,
+    suggestedItem: null,
+    tone: "bad",
+    message: `${now} You can't match this price with your current supplier: ${floor}, above the eBay average (${money(m.average)}). Look for a cheaper source (Find on CJ), or end it if it doesn't sell.`,
+  };
+}
 
 /** RFC 4180-ish CSV: quoted fields, doubled quotes, commas and newlines inside quotes. */
 function parseCsv(text: string): string[][] {
@@ -104,7 +164,30 @@ function readReport(text: string): { listings: Listing[]; kind: "traffic" | "act
   return { listings: [...seen.values()], kind };
 }
 
-export function PriceCheck({ ebayConnected }: { ebayConnected: boolean }) {
+export function PriceCheck({ ebayConnected, adRatePct }: { ebayConnected: boolean; adRatePct: number }) {
+  const [costs, setCosts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(COSTS_KEY) ?? "{}") as unknown;
+      if (saved && typeof saved === "object") setCosts(saved as Record<string, number>);
+    } catch {
+      // No saved costs (private window, blocked storage): the boxes start empty.
+    }
+  }, []);
+  function setCost(itemId: string, value: number | null) {
+    setCosts((current) => {
+      const next = { ...current };
+      if (value == null) delete next[itemId];
+      else next[itemId] = value;
+      try {
+        localStorage.setItem(COSTS_KEY, JSON.stringify(next));
+      } catch {
+        // Not saved for next time; still used on this page.
+      }
+      return next;
+    });
+  }
+
   const [listings, setListings] = useState<Listing[]>([]);
   const [kind, setKind] = useState<"traffic" | "active" | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -176,10 +259,12 @@ export function PriceCheck({ ebayConnected }: { ebayConnected: boolean }) {
   }, [results]);
 
   function download() {
-    const head = ["Verdict", "Item number", "Title", "Your price", "Your shipping", "Your total", "eBay average", "Typical price", "Suggested item price", "What to do", "eBay link"];
+    const head = ["Verdict", "Item number", "Title", "Your price", "Your shipping", "Your total", "eBay average", "Typical price", "Suggested item price", "My cost", "Profit now", "What to do", "eBay link"];
     const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
-    const lines = sorted.map((r) =>
-      [
+    const lines = sorted.map((r) => {
+      const cost = costs[r.itemId];
+      const advice = cost != null ? costAdvice(r, cost, adRatePct) : null;
+      return [
         VERDICTS[r.verdict].label,
         r.itemId,
         r.title,
@@ -188,14 +273,16 @@ export function PriceCheck({ ebayConnected }: { ebayConnected: boolean }) {
         r.total?.toFixed(2) ?? "",
         r.market?.average.toFixed(2) ?? "",
         r.market?.reference.toFixed(2) ?? "",
-        r.suggestedPrice?.toFixed(2) ?? "",
-        r.note,
+        (advice ? advice.suggestedItem : r.suggestedPrice)?.toFixed(2) ?? "",
+        cost?.toFixed(2) ?? "",
+        advice?.profitNow.toFixed(2) ?? "",
+        advice ? `${advice.message} ${r.note}` : r.note,
         `https://www.ebay.com/itm/${r.itemId}`,
       ]
         .map(String)
         .map(esc)
-        .join(","),
-    );
+        .join(",");
+    });
     const blob = new Blob([[head.map(esc).join(","), ...lines].join("\n")], { type: "text/csv" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -305,44 +392,91 @@ export function PriceCheck({ ebayConnected }: { ebayConnected: boolean }) {
               ))}
           </div>
           <ul className="space-y-2">
-            {sorted.map((r) => (
-              <li key={r.itemId} className="ap-card min-w-0 space-y-1.5 rounded-2xl p-3 text-xs">
-                <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                  <a
-                    href={`https://www.ebay.com/itm/${r.itemId}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="min-w-0 flex-1 text-sm text-white hover:underline"
-                  >
-                    {r.title}
-                  </a>
-                  <span className={`flex-none rounded-full border px-2.5 py-0.5 ${VERDICTS[r.verdict].tone}`}>{VERDICTS[r.verdict].label}</span>
-                </div>
-                <p className="text-slate-400">
-                  You: <span className="text-white">{money(r.total)}</span>
-                  {r.shipping ? ` (${money(r.price)} + ${money(r.shipping)} shipping)` : r.total != null ? " (free shipping)" : ""}
-                  {r.market ? (
-                    <>
-                      {" "}
-                      · eBay average {money(r.market.average)} · typical {money(r.market.reference)}
-                      {r.market.source === "sold" ? " (sold)" : ""}
-                    </>
+            {sorted.map((r) => {
+              const cost = costs[r.itemId];
+              const advice = cost != null ? costAdvice(r, cost, adRatePct) : null;
+              const suggested = advice ? advice.suggestedItem : r.suggestedPrice;
+              return (
+                <li key={r.itemId} className="ap-card min-w-0 space-y-1.5 rounded-2xl p-3 text-xs">
+                  <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                    <a
+                      href={`https://www.ebay.com/itm/${r.itemId}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="min-w-0 flex-1 text-sm text-white hover:underline"
+                    >
+                      {r.title}
+                    </a>
+                    <span className={`flex-none rounded-full border px-2.5 py-0.5 ${VERDICTS[r.verdict].tone}`}>{VERDICTS[r.verdict].label}</span>
+                  </div>
+                  <p className="text-slate-400">
+                    You: <span className="text-white">{money(r.total)}</span>
+                    {r.shipping ? ` (${money(r.price)} + ${money(r.shipping)} shipping)` : r.total != null ? " (free shipping)" : ""}
+                    {r.market ? (
+                      <>
+                        {" "}
+                        · eBay average {money(r.market.average)} · typical {money(r.market.reference)}
+                        {r.market.source === "sold" ? " (sold)" : ""}
+                      </>
+                    ) : null}
+                    {suggested != null ? (
+                      <>
+                        {" "}
+                        · suggested item price <span className="font-semibold text-lime-brand">{money(suggested)}</span>
+                      </>
+                    ) : null}
+                  </p>
+                  <p className="text-slate-500">{r.note}</p>
+                  {r.total != null ? (
+                    <MyCost key={`${r.itemId}:${cost ?? ""}`} value={cost} onChange={(value) => setCost(r.itemId, value)} />
                   ) : null}
-                  {r.suggestedPrice != null ? (
-                    <>
-                      {" "}
-                      · suggested item price <span className="font-semibold text-lime-brand">{money(r.suggestedPrice)}</span>
-                    </>
+                  {advice ? (
+                    <p
+                      className={`rounded-xl border px-3 py-2 ${
+                        advice.tone === "ok"
+                          ? "border-lime-brand/30 bg-lime-brand/10 text-lime-brand"
+                          : advice.tone === "warn"
+                            ? "border-amber-300/30 bg-amber-300/10 text-amber-100"
+                            : "border-red-400/30 bg-red-400/10 text-red-200"
+                      }`}
+                    >
+                      {advice.message}
+                    </p>
                   ) : null}
-                </p>
-                <p className="text-slate-500">{r.note}</p>
-                {r.verdict !== "ended" ? <FindOnCj title={r.title} total={r.total} /> : null}
-              </li>
-            ))}
+                  {r.verdict !== "ended" ? <FindOnCj title={r.title} total={r.total} /> : null}
+                </li>
+              );
+            })}
           </ul>
         </section>
       ) : null}
     </div>
+  );
+}
+
+/** "My cost" box: what the seller pays their supplier for one, delivery to the buyer included. */
+function MyCost({ value, onChange }: { value: number | undefined; onChange: (value: number | null) => void }) {
+  const [text, setText] = useState(value != null ? value.toFixed(2) : "");
+  function save() {
+    const n = Number(text.replace(/[$,\s]/g, ""));
+    if (!text.trim()) onChange(null);
+    else if (Number.isFinite(n) && n > 0 && n !== value) onChange(cents(n));
+  }
+  return (
+    <label className="flex flex-wrap items-center gap-2 text-slate-400">
+      {"My cost (what you pay your supplier, delivery included): $"}
+      <input
+        inputMode="decimal"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") save();
+        }}
+        placeholder="e.g. 10.99"
+        className="w-24 rounded-lg border border-white/15 bg-white/5 px-2 py-1 text-white placeholder:text-slate-600 focus:border-brand-500 focus:outline-none"
+      />
+    </label>
   );
 }
 
