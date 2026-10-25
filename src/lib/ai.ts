@@ -338,9 +338,18 @@ let client: Anthropic | null = null;
 
 /** Claude wrapper. Falls back to the template when no key is configured or the call fails. */
 export async function generateListingCopy(input: ListingCopyInput): Promise<ListingCopy> {
-  if (!process.env.ANTHROPIC_API_KEY) return templateCopy(input);
-  client ??= new Anthropic({ timeout: 45_000, maxRetries: 1 });
+  return (await listingCopyWithReason(input)).copy;
+}
+
+/**
+ * The listing copy plus, when the backup template was used, why (no key,
+ * Claude's error, a refusal). Settings' "Test AI writer" shows the reason.
+ */
+export async function listingCopyWithReason(input: ListingCopyInput): Promise<{ copy: ListingCopy; failure: string | null }> {
   const fallback = templateCopy(input);
+  if (!process.env.ANTHROPIC_API_KEY) return { copy: fallback, failure: "ANTHROPIC_API_KEY is not set." };
+  client ??= new Anthropic({ timeout: 45_000, maxRetries: 1 });
+  const failed = (failure: string) => ({ copy: fallback, failure });
 
   try {
     const response = await client.beta.messages.create({
@@ -354,10 +363,10 @@ export async function generateListingCopy(input: ListingCopyInput): Promise<List
     });
     if (response.stop_reason !== "end_turn") {
       console.warn(`[listing-copy] Claude stopped with ${response.stop_reason}; using the template.`);
-      return fallback;
+      return failed(`Claude stopped with "${response.stop_reason}"${response.stop_reason === "refusal" && response.stop_details?.category ? ` (${response.stop_details.category})` : ""}.`);
     }
     const text = response.content.find((block) => block.type === "text");
-    if (!text || text.type !== "text") return fallback;
+    if (!text || text.type !== "text") return failed("Claude's reply had no text.");
     const parsed = JSON.parse(text.text) as ClaudeCopy;
 
     const bullets = [...parsed.bullets.filter((b) => b.trim()), ...fallback.bullets].slice(0, 4);
@@ -372,7 +381,7 @@ export async function generateListingCopy(input: ListingCopyInput): Promise<List
     if (words < MIN_DESCRIPTION_WORDS) {
       console.warn(`[listing-copy] description for "${input.title}" is ${words} words (target ${MIN_DESCRIPTION_WORDS}).`);
     }
-    return {
+    const copy: ListingCopy = {
       title: (parsed.title.trim() || fallback.title).slice(0, 80),
       subtitle: parsed.subtitle.trim() || fallback.subtitle,
       bullets,
@@ -383,9 +392,11 @@ export async function generateListingCopy(input: ListingCopyInput): Promise<List
       },
       source: "claude",
     };
+    return { copy, failure: null };
   } catch (error) {
-    console.warn("[listing-copy] Claude call failed; using the template:", error instanceof Error ? error.message : error);
-    return fallback;
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn("[listing-copy] Claude call failed; using the template:", message);
+    return failed(message);
   }
 }
 
