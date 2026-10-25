@@ -5,7 +5,7 @@ const faqs = [
   },
   {
     q: "Does it handle variants, or only single-quantity listings?",
-    a: "It builds variants. Size, color, and style options from the supplier are expanded into a proper multi-variant eBay listing, with its own SKU, price, and quantity on every row. Variants are the reason a single product can take half an hour to list by hand, so this is the part we automate hardest. Every plan covers up to 20 variants per product.",
+    a: "It builds variants. Size, color, and style options from the supplier are expanded into a proper multi-variant eBay listing, with its own SKU, price, and quantity on every row. Variants are the reason a single product can take half an hour to list by hand, so this is the part we automate hardest. Every plan covers up to 100 variants per product.",
   },
   {
     q: "I am not technical at all. Can I still use this?",

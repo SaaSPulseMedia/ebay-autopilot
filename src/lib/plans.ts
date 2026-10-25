@@ -17,7 +17,7 @@ export type Plan = {
 
 /**
  * LOCKED pricing: $19.99 / $49.99 / $89.99 for 50 / 200 / 1,000 active listings
- * and 1 / 3 / 10 stores. Bulk publishing (50 per run) and up to 20 variants per
+ * and 1 / 3 / 10 stores. Bulk publishing (50 per run) and up to 100 variants per
  * product are included in every plan — plans differ by listing capacity.
  */
 export const PLANS: Plan[] = [
@@ -32,7 +32,7 @@ export const PLANS: Plan[] = [
       { label: "1 eBay store" },
       { label: "50 active listings" },
       { label: "Bulk list up to 50 products per run" },
-      { label: "Up to 20 variants per product" },
+      { label: "Up to 100 variants per product" },
       { label: "AI listing copy (title, specifics, description)" },
       { label: "Brand-name (VeRO) screening on every listing" },
       { label: "Product research with profit after eBay fees" },
@@ -50,7 +50,7 @@ export const PLANS: Plan[] = [
       { label: "3 eBay stores" },
       { label: "200 active listings" },
       { label: "Bulk list up to 50 products per run" },
-      { label: "Up to 20 variants per product" },
+      { label: "Up to 100 variants per product" },
       { label: "Everything in Starter" },
       { label: "Priority support" },
       { label: "Drip posting — batches released up to 10 per hour" },
@@ -71,7 +71,7 @@ export const PLANS: Plan[] = [
       { label: "10 eBay stores" },
       { label: "1,000 active listings" },
       { label: "Bulk list up to 50 products per run" },
-      { label: "Up to 20 variants per product" },
+      { label: "Up to 100 variants per product" },
       { label: "Everything in Pro" },
       { label: "Same-business-day support" },
       { label: "Bulk CSV import", inProgress: true },

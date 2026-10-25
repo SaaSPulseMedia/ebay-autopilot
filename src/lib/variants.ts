@@ -68,7 +68,7 @@ export function listingVariants(args: {
   maxVariants: number;
 }): Variant[] {
   const single: Variant[] = [{ sku: args.sku, options: {}, price: args.listPrice, quantity: args.quantity }];
-  const supplied = (args.supplierVariants ?? []).slice(0, Math.max(1, args.maxVariants));
+  const supplied = withinVariantLimit(args.supplierVariants ?? [], Math.max(1, args.maxVariants));
   if (supplied.length < 2) return single;
 
   const seen = new Set<string>();
@@ -87,6 +87,27 @@ export function listingVariants(args: {
     });
   }
   return rows.length >= 2 ? rows : single;
+}
+
+/**
+ * At most `max` variants, cut at whole colors: a color is kept with all its
+ * sizes or not at all, so buyers never find a color missing some sizes.
+ * Products without colors (or whose first color alone has more than `max`
+ * sizes) keep the first `max`.
+ */
+export function withinVariantLimit(variants: CatalogVariant[], max: number): CatalogVariant[] {
+  if (variants.length <= max) return variants;
+  const byColor = new Map<string, CatalogVariant[]>();
+  for (const variant of variants) {
+    const color = variant.color?.trim().toLowerCase() ?? "";
+    byColor.set(color, [...(byColor.get(color) ?? []), variant]);
+  }
+  if (byColor.size < 2) return variants.slice(0, max);
+  const kept: CatalogVariant[] = [];
+  for (const group of byColor.values()) {
+    if (kept.length + group.length <= max) kept.push(...group);
+  }
+  return kept.length >= 2 ? kept : variants.slice(0, max);
 }
 
 /** "70x140cm", "30*40 cm": a dimension, which is a size too. */

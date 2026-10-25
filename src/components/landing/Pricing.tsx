@@ -12,7 +12,7 @@ export function Pricing() {
             Launch pricing, billed monthly
           </h2>
           <p className="mt-4 text-base leading-relaxed text-slate-300">
-            Every plan includes bulk listing of 50 products per run with up to 20 variants each. Plans differ by how
+            Every plan includes bulk listing of 50 products per run with up to 100 variants each. Plans differ by how
             many listings you can keep live: 50, 200, or 1,000. Three days free, no card required to start, cancel any
             time. Features marked &ldquo;In progress&rdquo; are not available yet.
           </p>

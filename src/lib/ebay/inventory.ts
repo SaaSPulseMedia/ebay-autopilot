@@ -380,6 +380,11 @@ async function publishOnly(original: PublishInput): Promise<PublishResult> {
 }
 
 /** Runs `work` over `items` a few at a time; stops at the first failure. */
+/** eBay's limit per bulk_create_or_replace_inventory_item / bulk_create_offer request. */
+const BULK = 25;
+
+type BulkResponse = { responses?: Array<{ statusCode?: number; sku?: string; offerId?: string; errors?: EbayError[] }> };
+
 async function eachInChunks<T, R extends { ok: boolean }>(items: T[], work: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = [];
   for (let i = 0; i < items.length; i += 5) {
@@ -411,30 +416,37 @@ async function publishVariationListing(input: PublishInput, variations: PublishV
   const shared = Object.fromEntries(Object.entries(input.aspects ?? {}).filter(([name]) => !isVaried(name)));
   const productPictures = pictureList(input.imageUrls);
 
-  // 1. One inventory item per variant.
-  const items = await eachInChunks(variations, async (variant) => {
-    const item = await ebayFetch(`/sell/inventory/v1/inventory_item/${encodeURIComponent(variant.sku)}`, token, {
-      method: "PUT",
+  // 1. One inventory item per variant, 25 per request (eBay's bulk limit), so 100 variants take 4 calls.
+  for (let i = 0; i < variations.length; i += BULK) {
+    const chunk = variations.slice(i, i + BULK);
+    const res = await ebayFetch<BulkResponse>("/sell/inventory/v1/bulk_create_or_replace_inventory_item", token, {
+      method: "POST",
       body: JSON.stringify({
-        availability: { shipToLocationAvailability: { quantity: variant.quantity } },
-        condition: input.condition ?? "NEW",
-        product: {
-          title: input.title.slice(0, 80),
-          description: input.description,
-          // The variant's own photo first, so picking it on eBay shows that photo.
-          imageUrls: pictureList([variant.imageUrl, ...productPictures]),
-          aspects: { ...shared, ...Object.fromEntries(Object.entries(variant.aspects).map(([k, v]) => [k, [v]])) },
-          ...(input.brand ? { brand: input.brand } : {}),
-          ...(input.mpn ? { mpn: input.mpn } : {}),
-        },
+        requests: chunk.map((variant) => ({
+          sku: variant.sku,
+          locale: "en_US",
+          availability: { shipToLocationAvailability: { quantity: variant.quantity } },
+          condition: input.condition ?? "NEW",
+          product: {
+            title: input.title.slice(0, 80),
+            description: input.description,
+            // The variant's own photo first, so picking it on eBay shows that photo.
+            imageUrls: pictureList([variant.imageUrl, ...productPictures]),
+            aspects: { ...shared, ...Object.fromEntries(Object.entries(variant.aspects).map(([k, v]) => [k, [v]])) },
+            ...(input.brand ? { brand: input.brand } : {}),
+            ...(input.mpn ? { mpn: input.mpn } : {}),
+          },
+        })),
       }),
     });
-    return item.errors?.length
-      ? { ok: false as const, error: `Variant ${variant.sku}: ${ebayErrorMessage(item, "eBay rejected the inventory item.")}` }
-      : { ok: true as const };
-  });
-  const badItem = items.find((r) => !r.ok);
-  if (badItem && !badItem.ok) return { ok: false, step: "item", error: badItem.error };
+    // Each SKU has its own result; eBay answers 207 (or 400 when all fail) with them.
+    const failed = res.responses?.find((r) => (r.statusCode ?? 0) >= 300 || r.errors?.length);
+    if (!res.responses?.length || failed) {
+      console.error(`[ebay-variations] group ${groupKey}: inventory items failed:`, JSON.stringify(res.errors ?? failed?.errors ?? res));
+      const error = failed ? `Variant ${failed.sku}: ${ebayErrorMessage(failed, "eBay rejected the inventory item.")}` : ebayErrorMessage(res, "eBay rejected the inventory items.");
+      return { ok: false, step: "item", error };
+    }
+  }
 
   // 2. The group that ties the variants into one listing.
   const variantImages = new Set(variations.map((v) => v.imageUrl).filter(Boolean));
@@ -464,17 +476,40 @@ async function publishVariationListing(input: PublishInput, variations: PublishV
     return { ok: false, step: "item", error: ebayErrorMessage(group, "eBay rejected the variation group.") };
   }
 
-  // 3. One offer per variant.
-  const offers = await eachInChunks(variations, (variant) =>
-    upsertOffer(
-      token,
-      variant.sku,
-      offerBody(seller, { sku: variant.sku, quantity: variant.quantity, price: variant.price, categoryId: input.categoryId }),
-    ),
-  );
-  const badOffer = offers.find((r) => !r.ok);
+  // 3. One offer per variant, 25 per request. A variant listed before already has one: it is updated (upsertOffer).
+  const bodyFor = (variant: PublishVariation) =>
+    offerBody(seller, { sku: variant.sku, quantity: variant.quantity, price: variant.price, categoryId: input.categoryId });
+  const offerIds = new Map<string, string>();
+  const existing: PublishVariation[] = [];
+  for (let i = 0; i < variations.length; i += BULK) {
+    const chunk = variations.slice(i, i + BULK);
+    const res = await ebayFetch<BulkResponse>("/sell/inventory/v1/bulk_create_offer", token, {
+      method: "POST",
+      body: JSON.stringify({ requests: chunk.map((variant) => JSON.parse(bodyFor(variant))) }),
+    });
+    // A variant listed before answers "offer already exists" (eBay's 207, or 400 when every one does): handled below.
+    if (!res.responses?.length) {
+      console.error(`[ebay-variations] group ${groupKey}: bulk offers failed:`, JSON.stringify(res.errors ?? res));
+      return { ok: false, step: "offer", error: ebayErrorMessage(res, "eBay rejected the offers.") };
+    }
+    for (const variant of chunk) {
+      const reply = res.responses.find((r) => r.sku === variant.sku);
+      if (reply?.offerId) offerIds.set(variant.sku, reply.offerId);
+      else if (isOfferAlreadyExists(reply?.errors)) existing.push(variant);
+      else {
+        console.error(`[ebay-offer] sku ${variant.sku}: create offer failed:`, JSON.stringify(reply?.errors ?? null));
+        return { ok: false, step: "offer", error: `Variant ${variant.sku}: ${ebayErrorMessage(reply ?? {}, "eBay did not return an offer ID.")}` };
+      }
+    }
+  }
+  const updated = await eachInChunks(existing, async (variant) => {
+    const result = await upsertOffer(token, variant.sku, bodyFor(variant));
+    if (result.ok) offerIds.set(variant.sku, result.offerId);
+    return result;
+  });
+  const badOffer = updated.find((r) => !r.ok);
   if (badOffer && !badOffer.ok) return badOffer;
-  const firstOfferId = offers[0]?.ok ? offers[0].offerId : "";
+  const firstOfferId = offerIds.get(variations[0].sku) ?? "";
 
   // 4. Publish the group. If it is already live, the existing listing is the result we wanted.
   const published = await ebayFetch<{ listingId?: string }>("/sell/inventory/v1/offer/publish_by_inventory_item_group", token, {

@@ -16,11 +16,11 @@ export type PlanLimits = {
 };
 
 /**
- * Locked product rules: bulk publishing of 50 per run and up to 20 variants per
+ * Locked product rules: bulk publishing of 50 per run and up to 100 variants per
  * product are included in EVERY plan. Plans differ only by active listings and stores.
  */
 export const BATCH_SIZE = 50;
-export const MAX_VARIANTS = 20;
+export const MAX_VARIANTS = 100;
 /** Drip posting releases at most this many scheduled listings per account per hourly run. */
 export const DRIP_PER_RUN = 10;
 
