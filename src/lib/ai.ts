@@ -31,7 +31,60 @@ const FALLBACK_MODELS = new Set(["claude-opus-5-5", "claude-opus-5", "claude-fab
 export const MIN_DESCRIPTION_WORDS = 150;
 
 function titleCase(value: string) {
-  return value.replace(/\b\w/g, (c) => c.toUpperCase());
+  // Not after an apostrophe: "Women's", never "Women'S".
+  return value.replace(/(^|[^\w'’])(\w)/g, (_, before: string, c: string) => before + c.toUpperCase());
+}
+
+/** Supplier filler that tells buyers nothing and wastes title space. */
+const TITLE_FILLER = [
+  /\b20\d\d\b/g,
+  /\bnew (?:style|arrivals?|fashion|design|product)\b/gi,
+  /\b(?:european and american|europe and america|euro-american|cross[- ]border|foreign trade|hot[- ]sell(?:ing|er)?|hot sale|explosive(?: models?)?|best[- ]sellers?|factory (?:direct|wholesale)|wholesale|dropshipping|amazon|aliexpress|wish|ebay|tiktok|ins style|spot goods?)\b/gi,
+];
+
+/** "Women's Clothing / Tops & Sets / Sweaters" → "Sweaters"; "Home > Kitchen" → "Kitchen". */
+function categoryLeaf(category: string | undefined) {
+  return (category ?? "").split(/\s*[/>|]\s*/).filter(Boolean).pop()?.trim() ?? "";
+}
+
+/** True when `title` already has `word` (plural-insensitive: "Sweater" covers "Sweaters"). */
+function hasWord(title: string, word: string) {
+  const stem = word.toLowerCase().replace(/(?:es|s)$/, "");
+  return stem.length > 2 && title.toLowerCase().includes(stem);
+}
+
+/**
+ * The backup title (no AI): the supplier's own title without filler words,
+ * plus who it's for, what it is and the material when the title lacks them,
+ * cut at a word under eBay's 80 characters. Never the category path.
+ */
+export function templateTitle(input: Pick<ListingCopyInput, "title" | "category" | "facts">) {
+  let name = productName(input.title);
+  for (const filler of TITLE_FILLER) name = name.replace(filler, " ");
+  name = name
+    .replace(/\s*[|,;]+\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const path = input.category ?? "";
+  const forWho =
+    /\bwom[ae]n|ladies|lady\b/i.test(path) && !/\bwom[ae]n|ladies|lady|girl|unisex/i.test(name)
+      ? "Women's"
+      : /\bmen\b|\bmen's/i.test(path) && !/\bmen|boy|unisex/i.test(name)
+        ? "Men's"
+        : "";
+  // Short supplier titles get the material and the kind of product; long ones already say enough.
+  const short = name.length < 45;
+  const material = input.facts?.material?.split(/[,/;]/)[0]?.trim() ?? "";
+  const leaf = categoryLeaf(path).replace(/^(?:lady|ladies|women'?s|men'?s)\s+/i, "");
+  const parts = [
+    forWho,
+    short && material.length <= 20 && !hasWord(name, material) ? material : "",
+    name,
+    short && leaf && !/general|other|misc/i.test(leaf) && !leaf.split(/\s+/).some((w) => hasWord(name, w)) ? leaf : "",
+  ];
+  let title = titleCase(parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim());
+  if (title.length > 80) title = title.slice(0, 81).replace(/\s+\S*$/, "");
+  return title || productName(input.title).slice(0, 80);
 }
 
 type Spec = { name: string; value: string };
@@ -175,7 +228,7 @@ export function templateCopy(input: ListingCopyInput): ListingCopy {
   });
 
   return {
-    title: `${keyword} | ${category} | New`.slice(0, 80),
+    title: templateTitle(input),
     subtitle: `${category} · New`,
     bullets,
     description,

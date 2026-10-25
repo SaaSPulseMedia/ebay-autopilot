@@ -48,6 +48,19 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         </p>
       </div>
 
+      {process.env.ANTHROPIC_API_KEY ? (
+        <p className="ap-card rounded-2xl p-4 text-sm text-slate-300">
+          <span className="font-semibold text-lime-brand">AI listing writer: on.</span> Titles and descriptions are written by Claude
+          from the supplier&apos;s data.
+        </p>
+      ) : (
+        <p className="rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm text-amber-100">
+          <span className="font-semibold">AI listing writer: off.</span> Listings get a simple backup title and description built from
+          the supplier&apos;s title. To turn it on, add an <span className="font-mono">ANTHROPIC_API_KEY</span> in Vercel (Project →
+          Settings → Environment Variables), then redeploy.
+        </p>
+      )}
+
       {params.ebay && messages[params.ebay] ? (
         <p className="ap-card rounded-2xl p-4 text-sm text-slate-200">{messages[params.ebay]}</p>
       ) : null}
