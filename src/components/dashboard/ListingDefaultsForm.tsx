@@ -136,7 +136,7 @@ export function ListingDefaultsForm({ initial }: { initial: ListingDefaults }) {
               Looks up what the item actually sold for on eBay in the last 90 days (or, without sold data, the
               cheaper end of current listings). If you&apos;d still make at least $
               {MARKET_MATCH_MIN_PROFIT.toFixed(2)} at that price after eBay fees, supplier cost and shipping, it lists at
-              that price + {`${MARKET_MATCH_BUFFER.toFixed(2)} `}(never more than 20% above the current listings&apos;
+              that price + {`$${MARKET_MATCH_BUFFER.toFixed(2)} `}(never more than 20% above the current listings&apos;
               average) with free shipping,
               using a free-shipping policy AutoPilot sets up on your eBay account. Otherwise it uses the suggested price
               (about 23% margin) and your normal shipping.
