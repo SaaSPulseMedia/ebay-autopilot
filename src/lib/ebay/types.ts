@@ -20,6 +20,8 @@ export type ListingDraft = {
   sizeChartImages?: string[];
   /** Clothing and shoes: CJ's sizing warnings, shown under the size chart in the description. */
   sizeNotes?: string[];
+  /** CJ's product video URL, uploaded to eBay with the listing (never fatal when eBay won't take it). */
+  videoUrl?: string | null;
 };
 
 export type ListingResult = {

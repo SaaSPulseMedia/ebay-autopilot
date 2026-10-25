@@ -3,7 +3,7 @@ import "server-only";
 import { ensureFreeShippingPolicy, ensureMerchantLocation, fetchBusinessPolicies } from "@/lib/ebay/account";
 import { type EbayError, ebayErrorMessage, ebayFetch, getAccessTokenForUser } from "@/lib/ebay/client";
 import { marketPriceWarning } from "@/lib/ebay/market-price";
-import { hostAllOnEbay } from "@/lib/ebay/media";
+import { hostAllOnEbay, hostVideoOnEbay } from "@/lib/ebay/media";
 import { type PromotionResult, promoteListing } from "@/lib/ebay/promoted";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { descriptionImageSources } from "@/lib/size-chart";
@@ -32,6 +32,10 @@ export type PublishInput = {
    * item group keyed by `sku`). The caller checks the category allows them.
    */
   variations?: PublishVariation[];
+  /** Supplier video URL: copied to eBay's video hosting and attached (skipped, with a log line, when eBay won't take it). */
+  videoUrl?: string;
+  /** Set by withEbayHostedImages: the eBay video ID for `videoUrl`. */
+  videoIds?: string[];
 };
 
 /** One variant of a multi-variation listing; `aspects` are what it varies by, e.g. { Color: "Black" }. */
@@ -214,7 +218,10 @@ async function withEbayHostedImages(input: PublishInput): Promise<PublishInput> 
   const gallery = pictureList(input.imageUrls);
   const variantPictures = (input.variations ?? []).map((v) => v.imageUrl).filter((u): u is string => Boolean(u));
   const inDescription = descriptionImageSources(input.description);
-  const hosted = await hostAllOnEbay(token, [...gallery, ...variantPictures, ...inDescription]);
+  const [hosted, videoId] = await Promise.all([
+    hostAllOnEbay(token, [...gallery, ...variantPictures, ...inDescription]),
+    input.videoUrl ? hostVideoOnEbay(token, input.videoUrl, input.title) : Promise.resolve(null),
+  ]);
 
   const hostedGallery = gallery.map((url) => hosted.get(url)).filter((url): url is string => Boolean(url));
   const allEps = hostedGallery.length > 0;
@@ -231,6 +238,7 @@ async function withEbayHostedImages(input: PublishInput): Promise<PublishInput> 
   return {
     ...input,
     imageUrls: allEps ? hostedGallery : gallery,
+    ...(videoId ? { videoIds: [videoId] } : {}),
     description: input.description.replace(/(<img\b[^>]*?\bsrc=")([^"]+)(")/gi, (whole, open: string, src: string, close: string) => {
       const copy = hosted.get(unescapeAttr(src));
       return copy ? `${open}${escapeAttr(copy)}${close}` : whole;
@@ -301,21 +309,29 @@ async function publishOnly(original: PublishInput): Promise<PublishResult> {
   const sku = encodeURIComponent(input.sku);
 
   // 1. Inventory item (PUT is an upsert keyed by SKU).
-  const item = await ebayFetch(`/sell/inventory/v1/inventory_item/${sku}`, token, {
-    method: "PUT",
-    body: JSON.stringify({
-      availability: { shipToLocationAvailability: { quantity: input.quantity } },
-      condition: input.condition ?? "NEW",
-      product: {
-        title: input.title.slice(0, 80),
-        description: input.description,
-        imageUrls: pictureList(input.imageUrls),
-        ...(input.aspects ? { aspects: input.aspects } : {}),
-        ...(input.brand ? { brand: input.brand } : {}),
-        ...(input.mpn ? { mpn: input.mpn } : {}),
-      },
-    }),
-  });
+  const putItem = (videoIds?: string[]) =>
+    ebayFetch(`/sell/inventory/v1/inventory_item/${sku}`, token, {
+      method: "PUT",
+      body: JSON.stringify({
+        availability: { shipToLocationAvailability: { quantity: input.quantity } },
+        condition: input.condition ?? "NEW",
+        product: {
+          title: input.title.slice(0, 80),
+          description: input.description,
+          imageUrls: pictureList(input.imageUrls),
+          ...(input.aspects ? { aspects: input.aspects } : {}),
+          ...(input.brand ? { brand: input.brand } : {}),
+          ...(input.mpn ? { mpn: input.mpn } : {}),
+          ...(videoIds?.length ? { videoIds } : {}),
+        },
+      }),
+    });
+  let item = await putItem(input.videoIds);
+  // The video is a bonus: if eBay won't take it on the item, list without it.
+  if (item.errors?.length && input.videoIds?.length) {
+    console.warn(`[ebay-video] sku ${input.sku}: eBay rejected the item with its video (${ebayErrorMessage(item, "")}); listing without it.`);
+    item = await putItem();
+  }
   if (item.errors?.length) {
     return { ok: false, step: "item", error: ebayErrorMessage(item, "eBay rejected the inventory item.") };
   }
@@ -422,20 +438,27 @@ async function publishVariationListing(input: PublishInput, variations: PublishV
 
   // 2. The group that ties the variants into one listing.
   const variantImages = new Set(variations.map((v) => v.imageUrl).filter(Boolean));
-  const group = await ebayFetch(`/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`, token, {
-    method: "PUT",
-    body: JSON.stringify({
-      title: input.title.slice(0, 80),
-      description: input.description,
-      imageUrls: productPictures,
-      aspects: shared,
-      variantSKUs: variations.map((v) => v.sku),
-      variesBy: {
-        aspectsImageVariesBy: varyBy.includes("Color") && variantImages.size > 1 ? ["Color"] : [],
-        specifications: varyBy.map((name) => ({ name, values: [...new Set(variations.map((v) => v.aspects[name]))] })),
-      },
-    }),
-  });
+  const putGroup = (videoIds?: string[]) =>
+    ebayFetch(`/sell/inventory/v1/inventory_item_group/${encodeURIComponent(groupKey)}`, token, {
+      method: "PUT",
+      body: JSON.stringify({
+        title: input.title.slice(0, 80),
+        description: input.description,
+        imageUrls: productPictures,
+        aspects: shared,
+        ...(videoIds?.length ? { videoIds } : {}),
+        variantSKUs: variations.map((v) => v.sku),
+        variesBy: {
+          aspectsImageVariesBy: varyBy.includes("Color") && variantImages.size > 1 ? ["Color"] : [],
+          specifications: varyBy.map((name) => ({ name, values: [...new Set(variations.map((v) => v.aspects[name]))] })),
+        },
+      }),
+    });
+  let group = await putGroup(input.videoIds);
+  if (group.errors?.length && input.videoIds?.length) {
+    console.warn(`[ebay-video] group ${groupKey}: eBay rejected the group with its video (${ebayErrorMessage(group, "")}); listing without it.`);
+    group = await putGroup();
+  }
   if (group.errors?.length) {
     console.error(`[ebay-variations] group ${groupKey}: create failed:`, JSON.stringify(group.errors));
     return { ok: false, step: "item", error: ebayErrorMessage(group, "eBay rejected the variation group.") };

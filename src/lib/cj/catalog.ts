@@ -435,7 +435,13 @@ export type CjListingData = {
  * no English title or price for it, or can't ship it to the US.
  */
 export async function fetchCjListingData(pid: string): Promise<CjResult<CjListingData>> {
-  const detail = await cjGet(`/product/query?pid=${encodeURIComponent(pid)}`);
+  // `features=enable_video` asks CJ to include the product video (its search API takes the same flag);
+  // if CJ won't take the flag here, the plain request is made so imports never depend on it.
+  let detail = await cjGet(`/product/query?pid=${encodeURIComponent(pid)}&features=enable_video`);
+  if (!detail.ok) {
+    console.warn(`[cj-video] pid=${pid}: CJ refused features=enable_video (${detail.error}); fetching without it.`);
+    detail = await cjGet(`/product/query?pid=${encodeURIComponent(pid)}`);
+  }
   if (!detail.ok) return detail;
   const product = detail.data as CjProductFromApi | null;
   if (!product || typeof product !== "object" || !str(product.pid)) {
@@ -447,6 +453,9 @@ export async function fetchCjListingData(pid: string): Promise<CjResult<CjListin
   }
 
   const draft = mapCjProductToDraft(product);
+  if (!Object.keys(product).some((key) => /video/i.test(key))) {
+    console.info(`[cj-video] pid=${pid}: no video field from CJ (fields: ${Object.keys(product).join(",")})`);
+  }
   if (!draft.title) return { ok: false, error: "CJ returned this product without an English title.", status: 422 };
   if (draft.supplierPrice <= 0) return { ok: false, error: "CJ returned this product without a price.", status: 422 };
 

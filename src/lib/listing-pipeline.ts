@@ -245,6 +245,7 @@ export async function createListing(args: {
     ...(source.freeShipping ? { freeShipping: true } : {}),
     ...(chart.length ? { sizeChartImages: chart } : {}),
     ...(notes.length ? { sizeNotes: notes } : {}),
+    ...(source.details?.videoUrl ? { videoUrl: source.details.videoUrl } : {}),
   };
 
   const outcome = args.drip

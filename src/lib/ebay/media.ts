@@ -61,3 +61,65 @@ export async function hostAllOnEbay(token: string, urls: string[]): Promise<Map<
   }
   return hosted;
 }
+
+/** eBay's video limits: 150 MB per file. */
+const MAX_VIDEO_BYTES = 150 * 1024 * 1024;
+const videoCache = new Map<string, { at: number; id: string }>();
+
+/**
+ * Copies a supplier video to eBay's video hosting (Media API: createVideo,
+ * then uploadVideo with the file's bytes) and returns its video ID for the
+ * listing's `videoIds`, or null (with a logged reason) when it can't. eBay
+ * takes the ID straight away; the video shows on the listing once eBay has
+ * processed it (usually a few minutes). Never fails the listing.
+ */
+export async function hostVideoOnEbay(token: string, url: string, title: string): Promise<string | null> {
+  if (!/^https?:\/\//i.test(url)) return null;
+  const hit = videoCache.get(url);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.id;
+  const skip = (why: string) => {
+    console.warn(`[ebay-video] skipped ${url.slice(0, 120)}: ${why}`);
+    return null;
+  };
+
+  let bytes: ArrayBuffer;
+  try {
+    const file = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(20_000) });
+    if (!file.ok) return skip(`the supplier's server returned HTTP ${file.status}`);
+    const declared = Number(file.headers.get("content-length") ?? 0);
+    if (declared > MAX_VIDEO_BYTES) return skip(`it is ${Math.round(declared / 1048576)} MB (eBay allows 150 MB)`);
+    bytes = await file.arrayBuffer();
+  } catch (error) {
+    return skip(`couldn't download it (${error instanceof Error ? error.message : "network error"})`);
+  }
+  if (!bytes.byteLength) return skip("the file is empty");
+  if (bytes.byteLength > MAX_VIDEO_BYTES) return skip(`it is ${Math.round(bytes.byteLength / 1048576)} MB (eBay allows 150 MB)`);
+
+  const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
+  try {
+    const created = await fetch(`${mediaBase()}/commerce/media/v1_beta/video`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ title: title.slice(0, 80) || "Product video", size: bytes.byteLength, classification: ["ITEM"] }),
+      cache: "no-store",
+    });
+    const id = created.headers.get("location")?.split("/").filter(Boolean).pop();
+    if (!created.ok || !id) return skip(`eBay wouldn't create it (HTTP ${created.status}: ${(await created.text()).slice(0, 300)})`);
+
+    const uploaded = await fetch(`${mediaBase()}/commerce/media/v1_beta/video/${encodeURIComponent(id)}/upload`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/octet-stream" },
+      body: bytes,
+      cache: "no-store",
+      // Listing requests have about a minute in all; a slow upload is dropped rather than failing the listing.
+      signal: AbortSignal.timeout(25_000),
+    });
+    if (!uploaded.ok) return skip(`eBay refused the upload (HTTP ${uploaded.status}: ${(await uploaded.text()).slice(0, 300)})`);
+
+    console.info(`[ebay-video] uploaded ${url.slice(0, 120)} (${Math.round(bytes.byteLength / 1024)} KB) as video ${id}`);
+    videoCache.set(url, { at: Date.now(), id });
+    return id;
+  } catch (error) {
+    return skip(`couldn't reach eBay (${error instanceof Error ? error.message : "network error"})`);
+  }
+}

@@ -29,6 +29,11 @@ export type ProductFacts = {
    * imported before it was kept lack it (they fall back to `description`).
    */
   sizeNotes?: string[];
+  /**
+   * CJ's product video (an .mp4 URL), copied to eBay with the listing.
+   * Optional: rows imported before it was kept lack it.
+   */
+  videoUrl?: string | null;
 };
 
 const MAX_DESCRIPTION = 3000;
@@ -98,6 +103,7 @@ export function extractFacts(input: {
   weightGrams?: number;
   material?: unknown;
   dimensionsMm?: ProductFacts["dimensionsMm"];
+  videoUrl?: string | null;
 }): ProductFacts {
   const text = htmlToText(input.descriptionHtml);
   const specs: ProductFacts["specs"] = [];
@@ -136,5 +142,6 @@ export function extractFacts(input: {
     material: listText(input.material) || specMaterial,
     descriptionImages: descriptionImages(input.descriptionHtml),
     sizeNotes: sizeNotes(text),
+    videoUrl: input.videoUrl ?? null,
   };
 }

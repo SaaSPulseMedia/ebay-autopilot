@@ -167,7 +167,39 @@ export function mapCjProductToDraft(product: CjProductFromApi): CatalogProductDr
       weightGrams: maxOf(product.productWeight),
       material: product.materialNameEn,
       dimensionsMm: sized ?? null,
+      videoUrl: videoUrlOf(product),
     }),
     variants,
   };
+}
+
+const VIDEO_FILE = /\.(?:mp4|mov|m4v|webm)(?:[?#]|$)/i;
+
+/**
+ * CJ's product video, when it sends one. The field isn't documented, so every
+ * key with "video" in its name is read (a URL, a list of URLs, or objects
+ * holding one) and what was found is logged, to see what CJ actually sends.
+ */
+function videoUrlOf(product: CjProductFromApi): string | null {
+  const keys = Object.keys(product).filter((key) => /video/i.test(key));
+  if (!keys.length) return null;
+  const urls: string[] = [];
+  const collect = (value: unknown, depth: number) => {
+    if (depth > 3 || value == null) return;
+    if (typeof value === "string") {
+      for (const part of value.split(/[,;\s]+/)) {
+        const url = part.trim().replace(/^\/\//, "https://");
+        if (/^https?:\/\//i.test(url)) urls.push(url);
+      }
+    } else if (Array.isArray(value)) {
+      for (const item of value) collect(item, depth + 1);
+    } else if (typeof value === "object") {
+      for (const item of Object.values(value as Record<string, unknown>)) collect(item, depth + 1);
+    }
+  };
+  for (const key of keys) collect(product[key], 0);
+  const found = urls.find((url) => VIDEO_FILE.test(url)) ?? urls[0] ?? null;
+  const summary = keys.map((key) => `${key}=${JSON.stringify(product[key])?.slice(0, 160)}`).join(" ");
+  console.info(`[cj-video] pid=${text(product.pid)} ${summary} -> ${found ?? "no video URL"}`);
+  return found;
 }

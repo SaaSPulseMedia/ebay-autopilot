@@ -29,6 +29,8 @@ export type CatalogProductForPublish = {
   variations?: Variant[];
   /** Use the seller's free-shipping policy (market-match pricing). */
   freeShipping?: boolean;
+  /** Supplier product video, uploaded to eBay with the listing. */
+  videoUrl?: string;
 };
 
 export type PublishWithResolverResult =
@@ -249,6 +251,7 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     condition: input.condition,
     variations,
     freeShipping: input.freeShipping,
+    videoUrl: input.videoUrl,
   });
   if (!result.ok) return { ok: false, step: result.step, error: result.error };
 
