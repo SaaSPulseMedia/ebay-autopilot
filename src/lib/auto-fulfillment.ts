@@ -5,7 +5,7 @@ import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { cjOrders } from "@/db/schema";
 import { type CjShippingOption, getCjShipping } from "@/lib/cj/catalog";
-import { createCjOrder, getCjOrder } from "@/lib/cj/orders";
+import { createCjOrder, getCjOrder, submitCjOrder } from "@/lib/cj/orders";
 import { ebayCarrierCode, type EbayOrder, fetchEbayOrder, markEbayShipped } from "@/lib/ebay/orders";
 import { type CjMatch, matchSkusToCj } from "@/lib/order-fulfillment";
 
@@ -137,6 +137,16 @@ export async function placeCjOrder(userId: number, input: PlaceInput): Promise<{
     remark: `eBay order ${input.ebayOrderId}`,
   });
 
+  // On to "Awaiting Payment" in CJ, so paying is the seller's only step there.
+  let submitted: string | null = null;
+  if (created.ok) {
+    const submit = await submitCjOrder(created.data.cjOrderId);
+    if (!submit.ok) {
+      submitted = `Created, but CJ didn't move it to Awaiting Payment (${submit.error}). Pay it from CJ → Imported Orders → Add to cart.`;
+      created.data.warnings.push(submitted);
+    }
+  }
+
   const values = {
     userId,
     ebayOrderId: input.ebayOrderId,
@@ -152,9 +162,9 @@ export async function placeCjOrder(userId: number, input: PlaceInput): Promise<{
       ? {
           cjOrderId: created.data.cjOrderId,
           status: "created",
-          cjStatus: created.data.status,
+          cjStatus: submitted ? created.data.status : "UNPAID",
           amount: created.data.amount != null ? created.data.amount.toFixed(2) : null,
-          error: null,
+          error: submitted,
         }
       : { cjOrderId: null, status: "error", cjStatus: null, amount: null, error: created.error }),
   };
@@ -185,8 +195,15 @@ async function syncOne(row: CjOrderRecord): Promise<CjOrderRecord> {
   // Tracking found earlier but eBay refused it then: retry the eBay step only.
   if (row.status === "shipped" && row.trackingNumber) return sendTracking(row, update);
 
-  const cj = await getCjOrder(row.cjOrderId ?? row.cjOrderNumber);
+  let cj = await getCjOrder(row.cjOrderId ?? row.cjOrderNumber);
   if (!cj.ok) return update({ error: `Couldn't read the order on CJ: ${cj.error}` });
+  // Created but never added to the cart (orders made before AutoPilot did this, or a failed try): do it now.
+  if ((cj.data.status === "CREATED" || cj.data.status === "IN_CART") && row.cjOrderId) {
+    const submit = await submitCjOrder(row.cjOrderId);
+    if (!submit.ok) return update({ cjStatus: cj.data.status, error: `Not yet in CJ's Awaiting Payment: ${submit.error}` });
+    cj = await getCjOrder(row.cjOrderId);
+    if (!cj.ok) return update({ error: `Couldn't read the order on CJ: ${cj.error}` });
+  }
   const { status, trackNumber } = cj.data;
   if (status === "CANCELLED") return update({ status: "cancelled", cjStatus: status, error: null });
   if (trackNumber) {

@@ -100,6 +100,34 @@ export async function createCjOrder(input: CjOrderInput): Promise<CjResult<CjCre
   };
 }
 
+/**
+ * Moves a created CJ order on to "Awaiting Payment" in the seller's CJ account,
+ * the steps CJ's site calls Add to cart → Submit → Order confirmation:
+ * addCart, addCartConfirm, then saveGenerateParentOrder (the payable order).
+ * Nothing is paid. An order created with payType 3 otherwise waits under
+ * "Imported Orders" for the seller to do these steps by hand.
+ */
+export async function submitCjOrder(cjOrderId: string): Promise<CjResult<{ shipmentOrderId: string }>> {
+  const list = JSON.stringify({ cjOrderIdList: [cjOrderId] });
+  const cart = await cjGet("/shopping/order/addCart", { method: "POST", body: list });
+  if (!cart.ok) return cart;
+  const cartData = (cart.data ?? {}) as Record<string, unknown>;
+  // Already in the cart (a retry) counts as done; an intercepted order doesn't.
+  const intercepted = Array.isArray(cartData.interceptOrders) && cartData.interceptOrders.length > 0;
+  if (intercepted) return { ok: false, error: `CJ held the order: ${JSON.stringify(cartData.interceptOrders).slice(0, 200)}`, status: 422 };
+
+  const confirm = await cjGet("/shopping/order/addCartConfirm", { method: "POST", body: list });
+  if (!confirm.ok) return confirm;
+  const confirmData = (confirm.data ?? {}) as Record<string, unknown>;
+  const shipmentOrderId = str(confirmData.shipmentsId);
+  if (confirmData.submitSuccess === false) return { ok: false, error: "CJ didn't confirm the order.", status: 422 };
+  if (shipmentOrderId) {
+    const parent = await cjGet("/shopping/order/saveGenerateParentOrder", { method: "POST", body: JSON.stringify({ shipmentOrderId }) });
+    if (!parent.ok) console.warn(`[cj-order] ${cjOrderId}: payable order not generated (${parent.error}); it can still be paid in CJ.`);
+  }
+  return { ok: true, data: { shipmentOrderId } };
+}
+
 /** Status and tracking of a CJ order, by CJ order id or the orderNumber AutoPilot sent. */
 export async function getCjOrder(orderId: string): Promise<CjResult<CjOrderStatus>> {
   const res = await cjGet(`/shopping/order/getOrderDetail?orderId=${encodeURIComponent(orderId)}`);

@@ -14,7 +14,25 @@ type Record = {
   amount: string | null;
   trackingNumber: string | null;
   carrier: string | null;
+  cjStatus: string | null;
+  updatedAt: string;
   error: string | null;
+};
+
+/** CJ's site, where the seller pays (Orders → Awaiting Payment). */
+const CJ_SITE = "https://cjdropshipping.com/";
+
+/** CJ's own order states, in the seller's words. */
+const CJ_STATES: { [status: string]: string } = {
+  CREATED: "created, not yet in Awaiting Payment",
+  IN_CART: "in your CJ cart",
+  UNPAID: "waiting for your payment",
+  UNSHIPPED: "paid, being prepared",
+  PENDING: "paid, being prepared",
+  PROCESSING: "paid, being packed",
+  SHIPPED: "shipped",
+  DELIVERED: "delivered",
+  CANCELLED: "cancelled",
 };
 
 type Loaded = { lines: Line[]; shipping: Shipping[]; shippingError: string | null; record: Record | null };
@@ -26,7 +44,7 @@ function statusText(r: Record) {
   const test = r.sandbox ? "Test order (CJ won't charge or ship it). " : "";
   switch (r.status) {
     case "created":
-      return `${test}Created on CJ${r.amount ? ` (${"$"}${r.amount})` : ""}. Next: pay it in CJ → My CJ → Orders. AutoPilot then adds the tracking to eBay by itself.`;
+      return `${test}Created on CJ${r.amount ? ` (${"$"}${r.amount})` : ""}. Next: pay it on CJ's website → Orders → Awaiting Payment. AutoPilot then adds the tracking to eBay by itself.`;
     case "paid":
       return `${test}Paid on CJ, waiting for CJ to ship. Tracking goes to eBay automatically (checked every hour).`;
     case "shipped":
@@ -107,8 +125,18 @@ export function AutoOrderOnCj({ orderId, onChanged }: { orderId: string; onChang
     setMessage(null);
     try {
       await fetch("/api/fulfillment/sync", { method: "POST" });
-      await load();
+      const res = await fetch(`/api/fulfillment?orderId=${encodeURIComponent(orderId)}`);
+      const json = (await res.json()) as Loaded & { ok: boolean };
+      if (json.ok) setData(json);
+      const r = json.ok ? json.record : null;
+      setMessage(
+        r?.cjStatus
+          ? { tone: "ok", text: `Checked CJ just now: the order is ${CJ_STATES[r.cjStatus] ?? r.cjStatus.toLowerCase()}.` }
+          : { tone: "bad", text: r?.error ?? "Couldn't read the order on CJ. Try again in a minute." },
+      );
       onChanged();
+    } catch {
+      setMessage({ tone: "bad", text: "The check didn't finish. Try again." });
     } finally {
       setBusy(null);
     }
@@ -144,6 +172,16 @@ export function AutoOrderOnCj({ orderId, onChanged }: { orderId: string; onChang
           <p>{record.status === "error" ? `Last try failed: ${record.error}` : statusText(record)}</p>
           {record.status !== "error" && record.error ? <p className="mt-1 text-amber-200">{record.error}</p> : null}
           {record.cjOrderId ? <p className="mt-1 text-xs opacity-80">{`CJ order ${record.cjOrderId}${record.logisticName ? ` · ${record.logisticName}` : ""}`}</p> : null}
+          {record.status === "created" && !record.sandbox ? (
+            <a
+              href={CJ_SITE}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mr-2 mt-2 inline-block rounded-full bg-brand-500 px-3 py-1 text-xs font-semibold text-white hover:bg-brand-400"
+            >
+              Open CJ to pay ↗
+            </a>
+          ) : null}
           {["created", "paid", "shipped"].includes(record.status) ? (
             <button
               type="button"
