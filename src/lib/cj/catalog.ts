@@ -41,9 +41,9 @@ function throttled<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
-type CjResult<T> = { ok: true; data: T } | { ok: false; error: string; status: number };
+export type CjResult<T> = { ok: true; data: T } | { ok: false; error: string; status: number };
 
-async function cjGet(path: string, init?: RequestInit): Promise<CjResult<unknown>> {
+export async function cjGet(path: string, init?: RequestInit): Promise<CjResult<unknown>> {
   const apiKey = process.env.CJ_API_KEY?.trim();
   if (!apiKey) return { ok: false, error: "CJ sourcing is not configured (CJ_API_KEY is missing).", status: 503 };
   // Token lookups are cached (and CJ limits that endpoint separately), so only data calls are queued.

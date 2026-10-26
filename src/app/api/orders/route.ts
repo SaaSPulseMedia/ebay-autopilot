@@ -1,5 +1,6 @@
 import "server-only";
 
+import { getCjOrderRecords } from "@/lib/auto-fulfillment";
 import { getCurrentUser } from "@/lib/auth";
 import { fetchEbayOrders } from "@/lib/ebay/orders";
 import { matchSkusToCj } from "@/lib/order-fulfillment";
@@ -30,5 +31,14 @@ export async function GET(request: Request) {
     // Orders still show; only the CJ matches are missing.
     console.error("[orders] CJ matching failed:", error instanceof Error ? error.message : error);
   }
-  return Response.json({ ok: true, orders: result.orders, total: result.total, cj });
+  // The CJ orders AutoPilot created for these eBay orders (status and tracking).
+  const fulfillment: Record<string, { status: string; trackingNumber: string | null; sandbox: boolean; error: string | null }> = {};
+  try {
+    for (const r of await getCjOrderRecords(user.id, result.orders.map((o) => o.orderId))) {
+      fulfillment[r.ebayOrderId] = { status: r.status, trackingNumber: r.trackingNumber, sandbox: r.sandbox, error: r.error };
+    }
+  } catch (error) {
+    console.error("[orders] CJ order records failed:", error instanceof Error ? error.message : error);
+  }
+  return Response.json({ ok: true, orders: result.orders, total: result.total, cj, fulfillment });
 }

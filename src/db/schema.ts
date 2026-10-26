@@ -194,6 +194,39 @@ export const sourcingSettings = pgTable("sourcing_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * CJ orders AutoPilot created for eBay orders (one per eBay order). Holds no
+ * buyer details: the address goes straight from eBay to CJ.
+ * status: created (awaiting payment in CJ) → paid → shipped (tracking on CJ)
+ * → tracking_sent (on eBay, order marked shipped); error / cancelled.
+ */
+export const cjOrders = pgTable(
+  "cj_orders",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    ebayOrderId: text("ebay_order_id").notNull(),
+    cjOrderId: text("cj_order_id"),
+    /** The orderNumber sent to CJ (the eBay order id; test orders get a suffix). */
+    cjOrderNumber: text("cj_order_number").notNull(),
+    sandbox: boolean("sandbox").notNull().default(false),
+    status: text("status").notNull().default("created"),
+    /** CJ's own status: CREATED, UNPAID, UNSHIPPED, SHIPPED, DELIVERED, CANCELLED… */
+    cjStatus: text("cj_status"),
+    logisticName: text("logistic_name"),
+    fromCountry: text("from_country"),
+    amount: numeric("amount", { precision: 10, scale: 2 }),
+    trackingNumber: text("tracking_number"),
+    carrier: text("carrier"),
+    ebayShippedAt: timestamp("ebay_shipped_at", { withTimezone: true }),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.ebayOrderId] })],
+);
+
 export const productImages = pgTable(
   "product_images",
   {

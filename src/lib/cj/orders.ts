@@ -1,0 +1,120 @@
+import "server-only";
+
+import { type CjResult, cjGet } from "@/lib/cj/catalog";
+
+/**
+ * CJ's order API (Shopping): create an order for a buyer, and read its status
+ * and tracking. Orders are created with payType 3 ("create only"): nothing is
+ * paid from here, the seller pays each order in their CJ account. A sandbox
+ * order (isSandbox 1) is a test CJ never charges, ships or fulfils.
+ * Docs: developers.cjdropshipping.cn/en/api/api2/api/shopping.html
+ */
+
+export type CjOrderAddress = {
+  name: string;
+  line1: string;
+  line2: string;
+  city: string;
+  province: string;
+  zip: string;
+  countryCode: string;
+  phone: string;
+};
+
+export type CjOrderInput = {
+  /** Unique per CJ account: the eBay order id (a test order gets a suffix). */
+  orderNumber: string;
+  address: CjOrderAddress;
+  /** CJ's name for the shipping method, as freightCalculate returns it, e.g. "CJPacket Ordinary". */
+  logisticName: string;
+  /** Warehouse country: "CN" or "US". */
+  fromCountryCode: string;
+  products: Array<{ sku: string; quantity: number; storeLineItemId: string }>;
+  sandbox: boolean;
+  remark?: string;
+};
+
+export type CjCreatedOrder = { cjOrderId: string; status: string; amount: number | null; warnings: string[] };
+
+export type CjOrderStatus = {
+  cjOrderId: string;
+  /** CREATED, IN_CART, UNPAID, UNSHIPPED, SHIPPED, DELIVERED, CANCELLED… */
+  status: string;
+  trackNumber: string | null;
+  logisticName: string | null;
+  trackingProvider: string | null;
+  amount: number | null;
+};
+
+const str = (value: unknown) => (typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : "");
+const amountOf = (value: unknown) => {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
+};
+const clip = (value: string, max: number) => value.slice(0, max);
+
+function countryName(code: string) {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
+export async function createCjOrder(input: CjOrderInput): Promise<CjResult<CjCreatedOrder>> {
+  const a = input.address;
+  const res = await cjGet("/shopping/order/createOrderV2", {
+    method: "POST",
+    body: JSON.stringify({
+      orderNumber: clip(input.orderNumber, 50),
+      shippingZip: clip(a.zip, 20),
+      shippingCountryCode: a.countryCode,
+      shippingCountry: clip(countryName(a.countryCode), 50),
+      shippingProvince: clip(a.province, 50),
+      shippingCity: clip(a.city, 50),
+      shippingPhone: clip(a.phone.replace(/[^\d+]/g, ""), 20),
+      shippingCustomerName: clip(a.name, 50),
+      shippingAddress: clip(a.line1, 500),
+      shippingAddress2: clip(a.line2, 500),
+      remark: clip(input.remark ?? "", 500),
+      logisticName: input.logisticName,
+      fromCountryCode: input.fromCountryCode,
+      payType: 3,
+      isSandbox: input.sandbox ? 1 : 0,
+      products: input.products.map((p) => ({ sku: p.sku, quantity: p.quantity, storeLineItemId: p.storeLineItemId })),
+    }),
+  });
+  if (!res.ok) return res;
+  const data = (res.data ?? {}) as Record<string, unknown>;
+  const cjOrderId = str(data.orderId);
+  const warnings = (Array.isArray(data.interceptOrderReasons) ? data.interceptOrderReasons : [])
+    .map((r) => str((r as Record<string, unknown>)?.message))
+    .filter(Boolean);
+  if (!cjOrderId) {
+    console.warn(`[cj-order] ${input.orderNumber}: CJ returned no order id: ${JSON.stringify(data).slice(0, 500)}`);
+    return { ok: false, error: warnings[0] ?? "CJ didn't return an order id.", status: 502 };
+  }
+  return {
+    ok: true,
+    data: { cjOrderId, status: str(data.orderStatus) || "CREATED", amount: amountOf(data.orderAmount ?? data.actualPayment), warnings },
+  };
+}
+
+/** Status and tracking of a CJ order, by CJ order id or the orderNumber AutoPilot sent. */
+export async function getCjOrder(orderId: string): Promise<CjResult<CjOrderStatus>> {
+  const res = await cjGet(`/shopping/order/getOrderDetail?orderId=${encodeURIComponent(orderId)}`);
+  if (!res.ok) return res;
+  const data = (res.data ?? null) as Record<string, unknown> | null;
+  if (!data) return { ok: false, error: "CJ has no such order.", status: 404 };
+  return {
+    ok: true,
+    data: {
+      cjOrderId: str(data.orderId) || orderId,
+      status: str(data.orderStatus).toUpperCase(),
+      trackNumber: str(data.trackNumber) || null,
+      logisticName: str(data.logisticName) || null,
+      trackingProvider: str(data.trackingProvider) || null,
+      amount: amountOf(data.orderAmount),
+    },
+  };
+}

@@ -118,6 +118,28 @@ const ADDED_TABLES: Array<{ table: string; ddl: string }> = [
       updated_at timestamptz NOT NULL DEFAULT now()
     )`,
   },
+  {
+    table: "cj_orders",
+    ddl: `CREATE TABLE IF NOT EXISTS cj_orders (
+      user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      ebay_order_id text NOT NULL,
+      cj_order_id text,
+      cj_order_number text NOT NULL,
+      sandbox boolean NOT NULL DEFAULT false,
+      status text NOT NULL DEFAULT 'created',
+      cj_status text,
+      logistic_name text,
+      from_country text,
+      amount numeric(10, 2),
+      tracking_number text,
+      carrier text,
+      ebay_shipped_at timestamptz,
+      error text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, ebay_order_id)
+    )`,
+  },
 ];
 
 export async function ensureAddedColumns(db: NodePgDatabase<Record<string, unknown>>) {

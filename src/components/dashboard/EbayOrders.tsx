@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { AutoOrderOnCj } from "@/components/dashboard/AutoOrderOnCj";
 import type { EbayOrder, ShipTo } from "@/lib/ebay/orders";
 import type { CjMatch } from "@/lib/order-fulfillment";
 
@@ -11,7 +12,19 @@ type Show = "awaiting" | "all";
 type LoadState =
   | { status: "loading" }
   | { status: "error"; message: string; notConnected?: boolean }
-  | { status: "done"; orders: EbayOrder[]; total: number; cj: Record<string, CjMatch | null> };
+  | { status: "done"; orders: EbayOrder[]; total: number; cj: Record<string, CjMatch | null>; fulfillment: Record<string, Fulfillment> };
+
+/** The CJ order AutoPilot created for an eBay order. */
+type Fulfillment = { status: string; trackingNumber: string | null; sandbox: boolean; error: string | null };
+
+const CJ_STATUS: Record<string, { label: string; tone: string }> = {
+  created: { label: "CJ: to pay", tone: "bg-amber-300/15 text-amber-200" },
+  paid: { label: "CJ: paid", tone: "bg-brand-500/20 text-brand-300" },
+  shipped: { label: "CJ: shipped", tone: "bg-brand-500/20 text-brand-300" },
+  tracking_sent: { label: "Tracking on eBay ✓", tone: "bg-lime-brand/15 text-lime-brand" },
+  cancelled: { label: "CJ: cancelled", tone: "bg-white/10 text-slate-300" },
+  error: { label: "CJ order failed", tone: "bg-red-400/15 text-red-200" },
+};
 
 const STATUS_LABEL: Record<string, string> = {
   NOT_STARTED: "To ship",
@@ -81,10 +94,12 @@ function FulfillModal({
   order,
   cj,
   onClose,
+  onChanged,
 }: {
   order: EbayOrder;
   cj: Record<string, CjMatch | null>;
   onClose: () => void;
+  onChanged: () => void;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -142,6 +157,13 @@ function FulfillModal({
         </div>
 
         <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+          <section>
+            <h3 className="mb-2 text-sm font-semibold text-white">Order automatically on CJ</h3>
+            <AutoOrderOnCj orderId={order.orderId} onChanged={onChanged} />
+          </section>
+
+          <p className="border-t border-white/10 pt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">Or order by hand</p>
+
           <section>
             <div className="mb-2 flex items-center justify-between gap-3">
               <h3 className="text-sm font-semibold text-white">Ship to</h3>
@@ -232,8 +254,8 @@ function FulfillModal({
           </section>
 
           <p className="text-xs text-slate-500">
-            Place the order on CJ with this address, then add the tracking number to the order in eBay Seller Hub.
-            AutoPilot does not place CJ orders or mark eBay orders shipped yet.
+            By hand: place the order on CJ with this address, then add the tracking number to the order in eBay Seller
+            Hub. Orders created automatically above get their tracking added to eBay by AutoPilot.
           </p>
         </div>
       </div>
@@ -241,18 +263,20 @@ function FulfillModal({
   );
 }
 
-/** Live eBay orders with a manual "Fulfill on CJ" assist for each. */
+/** Live eBay orders, each with "Fulfill on CJ": an automatic CJ order, or the manual steps. */
 export function EbayOrders() {
   const [show, setShow] = useState<Show>("awaiting");
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [open, setOpen] = useState<EbayOrder | null>(null);
 
-  const load = useCallback(async (which: Show) => {
-    setState({ status: "loading" });
+  /** `quiet`: refresh in place (the open Fulfill window stays open), no loading state. */
+  const load = useCallback(async (which: Show, quiet = false) => {
+    if (!quiet) setState({ status: "loading" });
     try {
       const res = await fetch(`/api/orders?show=${which}`);
       const body = await res.json().catch(() => null);
       if (!res.ok || !body?.ok) {
+        if (quiet) return;
         setState({
           status: "error",
           message: body?.error ?? `Couldn't load orders (HTTP ${res.status}).`,
@@ -260,9 +284,9 @@ export function EbayOrders() {
         });
         return;
       }
-      setState({ status: "done", orders: body.orders, total: body.total, cj: body.cj ?? {} });
+      setState({ status: "done", orders: body.orders, total: body.total, cj: body.cj ?? {}, fulfillment: body.fulfillment ?? {} });
     } catch {
-      setState({ status: "error", message: "Couldn't reach AutoPilot. Check your connection and try again." });
+      if (!quiet) setState({ status: "error", message: "Couldn't reach AutoPilot. Check your connection and try again." });
     }
   }, []);
 
@@ -380,6 +404,15 @@ export function EbayOrders() {
                       >
                         {STATUS_LABEL[order.fulfillmentStatus] ?? order.fulfillmentStatus}
                       </span>
+                      {(() => {
+                        const f = state.fulfillment[order.orderId];
+                        const look = f ? CJ_STATUS[f.status] : null;
+                        return f && look && !f.sandbox ? (
+                          <span className={`mt-1 block w-fit rounded-full px-2 py-0.5 text-[11px] font-semibold ${look.tone}`} title={f.error ?? undefined}>
+                            {look.label}
+                          </span>
+                        ) : null;
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button
@@ -403,7 +436,9 @@ export function EbayOrders() {
         </p>
       ) : null}
 
-      {open && state.status === "done" ? <FulfillModal order={open} cj={state.cj} onClose={closeModal} /> : null}
+      {open && state.status === "done" ? (
+        <FulfillModal order={open} cj={state.cj} onClose={closeModal} onChanged={() => void load(show, true)} />
+      ) : null}
     </section>
   );
 }
