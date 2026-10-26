@@ -5,7 +5,7 @@ import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { cjOrders } from "@/db/schema";
 import { type CjShippingOption, getCjShipping } from "@/lib/cj/catalog";
-import { createCjOrder, getCjOrder, submitCjOrder } from "@/lib/cj/orders";
+import { createCjOrder, getCjOrder, setCjOrderLogistics, submitCjOrder } from "@/lib/cj/orders";
 import { ebayCarrierCode, type EbayOrder, fetchEbayOrder, markEbayShipped } from "@/lib/ebay/orders";
 import { type CjMatch, matchSkusToCj } from "@/lib/order-fulfillment";
 
@@ -140,9 +140,10 @@ export async function placeCjOrder(userId: number, input: PlaceInput): Promise<{
   // On to "Awaiting Payment" in CJ, so paying is the seller's only step there.
   let submitted: string | null = null;
   if (created.ok) {
-    const submit = await submitCjOrder(created.data.cjOrderId);
-    if (!submit.ok) {
-      submitted = `Created, but CJ didn't move it to Awaiting Payment (${submit.error}). Pay it from CJ → Orders → Store Orders → Add to Orders Picking.`;
+    const ready = await readyForPayment(created.data.cjOrderId, method.method, method.from);
+    if (ready.note) created.data.warnings.push(ready.note);
+    if (!ready.ok) {
+      submitted = `Created, but CJ didn't move it to Awaiting Payment (${ready.error}). In CJ → Orders → Store Orders, choose the shipping method on the order, then Add to Orders Picking and pay.`;
       created.data.warnings.push(submitted);
     }
   }
@@ -180,6 +181,20 @@ export async function placeCjOrder(userId: number, input: PlaceInput): Promise<{
   return { ok: true, record, warnings: created.data.warnings };
 }
 
+/**
+ * A created CJ order made ready to pay: its shipping method set (CJ doesn't
+ * always keep the one sent with the order), then added to the cart and confirmed.
+ */
+async function readyForPayment(cjOrderId: string, logisticName: string, from: string): Promise<{ ok: true; note: string | null } | { ok: false; error: string; note: string | null }> {
+  const shipping = await setCjOrderLogistics(cjOrderId, logisticName, from);
+  // Not fatal on its own: the order may already have a method; the cart step says if it hasn't.
+  if (!shipping.ok) console.warn(`[cj-fulfill] ${cjOrderId}: shipping method not set: ${shipping.error}`);
+  const note = shipping.ok ? shipping.data.note : null;
+  const submit = await submitCjOrder(cjOrderId);
+  if (!submit.ok) return { ok: false, error: shipping.ok ? submit.error : `${shipping.error} (${submit.error})`, note };
+  return { ok: true, note };
+}
+
 /** One open CJ order: reads its status on CJ and, once it has tracking, puts it on the eBay order. */
 async function syncOne(row: CjOrderRecord): Promise<CjOrderRecord> {
   const now = new Date();
@@ -199,8 +214,8 @@ async function syncOne(row: CjOrderRecord): Promise<CjOrderRecord> {
   if (!cj.ok) return update({ error: `Couldn't read the order on CJ: ${cj.error}` });
   // Created but never added to the cart (orders made before AutoPilot did this, or a failed try): do it now.
   if ((cj.data.status === "CREATED" || cj.data.status === "IN_CART") && row.cjOrderId) {
-    const submit = await submitCjOrder(row.cjOrderId);
-    if (!submit.ok) return update({ cjStatus: cj.data.status, error: `Not yet in CJ's Awaiting Payment: ${submit.error}` });
+    const ready = await readyForPayment(row.cjOrderId, row.logisticName ?? "", row.fromCountry ?? "US");
+    if (!ready.ok) return update({ cjStatus: cj.data.status, error: `Not yet in CJ's Awaiting Payment: ${ready.error}` });
     cj = await getCjOrder(row.cjOrderId);
     if (!cj.ok) return update({ error: `Couldn't read the order on CJ: ${cj.error}` });
   }

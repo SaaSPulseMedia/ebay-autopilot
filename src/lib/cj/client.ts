@@ -40,7 +40,9 @@ async function readJson(res: Response): Promise<unknown> {
   const text = await res.text();
   if (!text) return {};
   try {
-    return JSON.parse(text);
+    // CJ sends some ids (e.g. a shipping method's logistics id) as 19-digit numbers, past what a
+    // JavaScript number holds exactly: integers of 16+ digits are read as strings instead.
+    return JSON.parse(text.replace(/([:[,]\s*)(-?\d{16,})(?=\s*[,\]}])/g, '$1"$2"'));
   } catch {
     return { nonJsonBody: text.slice(0, 2000) };
   }

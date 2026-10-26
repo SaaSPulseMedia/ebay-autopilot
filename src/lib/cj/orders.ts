@@ -100,6 +100,54 @@ export async function createCjOrder(input: CjOrderInput): Promise<CjResult<CjCre
   };
 }
 
+const squash = (name: string) => name.toLowerCase().replace(/[^a-z0-9+]/g, "");
+
+/**
+ * Sets the shipping method on a created CJ order (Get Order Optional
+ * Logistics, then Modify Order Logistics): createOrderV2's logisticName
+ * doesn't always stick, and CJ won't take an order to the cart without one.
+ * Picks the method named `wanted`; when CJ doesn't offer it for this order,
+ * the cheapest one from the same warehouse country, said in `note`.
+ */
+export async function setCjOrderLogistics(
+  cjOrderId: string,
+  wanted: string,
+  fromCountryCode: string,
+): Promise<CjResult<{ logisticsName: string; postage: number | null; note: string | null }>> {
+  const info = await cjGet(`/shopping/order/getOrderLogisticsInfo?orderCode=${encodeURIComponent(cjOrderId)}`);
+  if (!info.ok) return info;
+  type Option = { id?: unknown; logisticsName?: unknown; logisticsNameAlias?: unknown; postage?: unknown; startCountry?: unknown; hasStock?: unknown };
+  const options = (Array.isArray(info.data) ? info.data : []) as Option[];
+  const id = (o: Option) => str(o.id);
+  if (!options.some(id)) return { ok: false, error: "CJ offers no shipping method for this order yet; choose one on the order in CJ.", status: 422 };
+
+  const fromUs = fromCountryCode === "US";
+  const sameOrigin = (o: Option) => (/united states|usa|\bus\b/i.test(str(o.startCountry)) ? fromUs : !fromUs);
+  const named = options.find((o) => id(o) && [str(o.logisticsName), str(o.logisticsNameAlias)].some((n) => n && squash(n) === squash(wanted)));
+  const fallback = options
+    .filter((o) => id(o) && sameOrigin(o) && o.hasStock !== false)
+    .sort((a, b) => (amountOf(a.postage) ?? 9999) - (amountOf(b.postage) ?? 9999))[0];
+  const pick = named ?? fallback;
+  if (!pick) return { ok: false, error: `CJ doesn't offer ${wanted} for this order; choose a shipping method on the order in CJ.`, status: 422 };
+
+  const logisticsName = str(pick.logisticsName);
+  // The id is sent as a bare number, digit for digit (see readJson in client.ts).
+  const body = JSON.stringify({ id: "__ID__", orderCode: cjOrderId, logisticsName, from: 1 }).replace('"__ID__"', /^\d+$/.test(id(pick)) ? id(pick) : JSON.stringify(id(pick)));
+  const res = await cjGet("/shopping/order/updateLogistics", { method: "POST", body });
+  if (!res.ok) return res;
+  const data = (res.data ?? {}) as Record<string, unknown>;
+  const blocked = Array.isArray(data.interceptAbnormalReasons) && data.interceptAbnormalReasons.length > 0;
+  if (blocked) return { ok: false, error: `CJ refused ${logisticsName}: ${JSON.stringify(data.interceptAbnormalReasons).slice(0, 200)}`, status: 422 };
+  return {
+    ok: true,
+    data: {
+      logisticsName,
+      postage: amountOf(pick.postage),
+      note: named ? null : `CJ doesn't offer ${wanted} for this order, so the cheapest similar method was used: ${logisticsName}.`,
+    },
+  };
+}
+
 /**
  * Moves a created CJ order on to "Awaiting Payment" in the seller's CJ account,
  * the steps CJ's site calls Add to cart → Submit → Order confirmation:
