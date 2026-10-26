@@ -142,7 +142,7 @@ export async function placeCjOrder(userId: number, input: PlaceInput): Promise<{
   if (created.ok) {
     const submit = await submitCjOrder(created.data.cjOrderId);
     if (!submit.ok) {
-      submitted = `Created, but CJ didn't move it to Awaiting Payment (${submit.error}). Pay it from CJ → Imported Orders → Add to cart.`;
+      submitted = `Created, but CJ didn't move it to Awaiting Payment (${submit.error}). Pay it from CJ → Orders → Store Orders → Add to Orders Picking.`;
       created.data.warnings.push(submitted);
     }
   }

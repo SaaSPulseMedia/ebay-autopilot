@@ -19,12 +19,12 @@ type Record = {
   error: string | null;
 };
 
-/** CJ's site, where the seller pays (Orders → Awaiting Payment). */
-const CJ_SITE = "https://cjdropshipping.com/";
+/** CJ's Orders → Store Orders page, where API orders are listed and paid. */
+const CJ_SITE = "https://cjdropshipping.com/mine/dropshipping/orderList?orderType=3&childType=1";
 
 /** CJ's own order states, in the seller's words. */
 const CJ_STATES: { [status: string]: string } = {
-  CREATED: "created, not yet in Awaiting Payment",
+  CREATED: "created, not yet added to CJ's Orders Picking",
   IN_CART: "in your CJ cart",
   UNPAID: "waiting for your payment",
   UNSHIPPED: "paid, being prepared",
@@ -44,7 +44,7 @@ function statusText(r: Record) {
   const test = r.sandbox ? "Test order (CJ won't charge or ship it). " : "";
   switch (r.status) {
     case "created":
-      return `${test}Created on CJ${r.amount ? ` (${"$"}${r.amount})` : ""}. Next: pay it on CJ's website → Orders → Awaiting Payment. AutoPilot then adds the tracking to eBay by itself.`;
+      return `${test}Created on CJ${r.amount ? ` (${"$"}${r.amount})` : ""}. Next: pay it in CJ (Orders → Store Orders; if it isn't in your cart yet, tick it → Add to Orders Picking → Cart → Pay). AutoPilot then adds the tracking to eBay by itself.`;
     case "paid":
       return `${test}Paid on CJ, waiting for CJ to ship. Tracking goes to eBay automatically (checked every hour).`;
     case "shipped":
