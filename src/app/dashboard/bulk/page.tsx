@@ -7,7 +7,8 @@ import { listings } from "@/db/schema";
 import { BulkLister, type BulkProduct } from "@/components/dashboard/BulkLister";
 import { getCurrentUser } from "@/lib/auth";
 import { DRIP_PER_RUN, planLimits } from "@/lib/limits";
-import { MIN_PROFIT_LABEL, listPriceFor, priceBreakdown } from "@/lib/pricing";
+import { landedCost, realBreakdown, saleFeePct } from "@/lib/listing-defaults";
+import { MIN_PROFIT_LABEL, listPriceFor } from "@/lib/pricing";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { withUserImages } from "@/lib/product-images";
 import { getCatalog } from "@/lib/suppliers";
@@ -41,14 +42,19 @@ export default async function BulkPage() {
 
   const withImages = await withUserImages(user.id, catalog);
   const products: BulkProduct[] = withImages.map((product) => {
-    const listPrice = listPriceFor(defaults, product.supplierPrice, product.shippingCost, product.suggestedPrice);
+    const listPrice = listPriceFor(
+      { ...defaults, adRatePct: saleFeePct(defaults) },
+      landedCost(defaults, product.supplierPrice),
+      landedCost(defaults, product.shippingCost),
+      product.suggestedPrice,
+    );
     return {
     externalId: product.externalId,
     title: product.title,
     category: product.category,
     supplierPrice: product.supplierPrice,
     listPrice,
-    breakdown: priceBreakdown(listPrice, product.supplierPrice, product.shippingCost, defaults.adRatePct),
+    breakdown: realBreakdown(defaults, listPrice, product.supplierPrice, product.shippingCost),
     // Real supplier variants only; a product without them lists as one item.
     variants: listingVariants({
       sku: product.externalId,

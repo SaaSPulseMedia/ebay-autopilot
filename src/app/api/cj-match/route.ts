@@ -18,7 +18,6 @@ export async function POST(request: Request) {
   const title = typeof body?.title === "string" ? body.title.trim().slice(0, 200) : "";
   if (!title) return Response.json({ ok: false, error: "No title to search for." }, { status: 400 });
   const total = typeof body?.total === "number" && Number.isFinite(body.total) && body.total > 0 ? body.total : null;
-  const { adRatePct } = await getListingDefaults(user.id);
-  const result = await findOnCj(user.id, title, total, adRatePct);
+  const result = await findOnCj(user.id, title, total, await getListingDefaults(user.id));
   return Response.json(result, { status: result.ok ? 200 : 502 });
 }

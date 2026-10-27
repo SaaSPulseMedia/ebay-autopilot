@@ -19,6 +19,8 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: "catalog_products", column: "details", definition: "jsonb" },
   { table: "catalog_products", column: "user_id", definition: "integer REFERENCES users(id) ON DELETE CASCADE" },
   { table: "catalog_products", column: "shipping_quoted_at", definition: "timestamptz" },
+  { table: "seller_settings", column: "ebay_fee_pct", definition: "real NOT NULL DEFAULT 13.55" },
+  { table: "seller_settings", column: "fx_pct", definition: "real NOT NULL DEFAULT 0" },
 ];
 
 /**

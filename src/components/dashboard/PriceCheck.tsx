@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { MIN_PROFIT, MIN_PROFIT_LABEL, netProfitFor, priceForMinProfit } from "@/lib/pricing";
+import { landedCost, realProfit, saleFeePct } from "@/lib/listing-defaults";
+import { MIN_PROFIT, MIN_PROFIT_LABEL, priceForMinProfit } from "@/lib/pricing";
 
 type Verdict = "overpriced" | "high" | "competitive" | "no_data" | "ended" | "error";
 
@@ -56,13 +57,16 @@ type CostAdvice = {
  * goes under the price that keeps MIN_PROFIT, and says so plainly when the
  * market price is out of reach with this supplier.
  */
-function costAdvice(r: Result, cost: number, adRatePct: number): CostAdvice | null {
+/** The seller's fee settings (Settings → Listing defaults). */
+type Fees = { adRatePct: number; ebayFeePct: number; fxPct: number };
+
+function costAdvice(r: Result, cost: number, fees: Fees): CostAdvice | null {
   if (r.total == null) return null;
   const shipping = r.shipping ?? 0;
-  const profitNow = netProfitFor(r.total, cost, 0, adRatePct);
-  const floorTotal = priceForMinProfit(cost, 0, adRatePct);
+  const profitNow = realProfit(fees, r.total, cost, 0);
+  const floorTotal = priceForMinProfit(landedCost(fees, cost), 0, saleFeePct(fees));
   const floorItem = cents(Math.max(0.99, floorTotal - shipping));
-  const now = `Now you keep ${money(profitNow)} per sale after eBay fees${adRatePct ? " and ads" : ""}.`;
+  const now = `Now you keep ${money(profitNow)} per sale after eBay fees${fees.adRatePct ? " and ads" : ""}${fees.fxPct ? " and currency conversion" : ""}.`;
   const floor = `the lowest price that keeps ${MIN_PROFIT_LABEL} is ${money(floorTotal)}${shipping ? ` (item price ${money(floorItem)} + ${money(shipping)} shipping)` : ""}`;
   const m = r.market;
   if (!m) {
@@ -70,7 +74,7 @@ function costAdvice(r: Result, cost: number, adRatePct: number): CostAdvice | nu
   }
   if (floorTotal <= m.reference) {
     const suggestedItem = r.suggestedPrice != null ? Math.max(r.suggestedPrice, floorItem) : null;
-    const kept = suggestedItem != null ? netProfitFor(suggestedItem + shipping, cost, 0, adRatePct) : null;
+    const kept = suggestedItem != null ? realProfit(fees, suggestedItem + shipping, cost, 0) : null;
     return {
       profitNow,
       suggestedItem,
@@ -164,7 +168,7 @@ function readReport(text: string): { listings: Listing[]; kind: "traffic" | "act
   return { listings: [...seen.values()], kind };
 }
 
-export function PriceCheck({ ebayConnected, adRatePct }: { ebayConnected: boolean; adRatePct: number }) {
+export function PriceCheck({ ebayConnected, fees }: { ebayConnected: boolean; fees: Fees }) {
   const [costs, setCosts] = useState<Record<string, number>>({});
   useEffect(() => {
     try {
@@ -263,7 +267,7 @@ export function PriceCheck({ ebayConnected, adRatePct }: { ebayConnected: boolea
     const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
     const lines = sorted.map((r) => {
       const cost = costs[r.itemId];
-      const advice = cost != null ? costAdvice(r, cost, adRatePct) : null;
+      const advice = cost != null ? costAdvice(r, cost, fees) : null;
       return [
         VERDICTS[r.verdict].label,
         r.itemId,
@@ -394,7 +398,7 @@ export function PriceCheck({ ebayConnected, adRatePct }: { ebayConnected: boolea
           <ul className="space-y-2">
             {sorted.map((r) => {
               const cost = costs[r.itemId];
-              const advice = cost != null ? costAdvice(r, cost, adRatePct) : null;
+              const advice = cost != null ? costAdvice(r, cost, fees) : null;
               const suggested = advice ? advice.suggestedItem : r.suggestedPrice;
               return (
                 <li key={r.itemId} className="ap-card min-w-0 space-y-1.5 rounded-2xl p-3 text-xs">

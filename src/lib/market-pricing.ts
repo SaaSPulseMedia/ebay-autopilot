@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getMarketPrice } from "@/lib/ebay/market-price";
-import type { ListingDefaults } from "@/lib/listing-defaults";
+import { type ListingDefaults, landedCost, saleFeePct } from "@/lib/listing-defaults";
 import {
   MARKET_MATCH_MAX_ABOVE,
   MIN_PROFIT,
@@ -39,7 +39,8 @@ const money = (n: number) => `$${n.toFixed(2)}`;
 /**
  * The price (and shipping) a catalog product lists at under the seller's
  * pricing rule, from its true landed cost: supplier cost + its real CJ
- * shipping (product.shippingCost, quoted on import) + eBay's fees.
+ * shipping (product.shippingCost, quoted on import), both plus the seller's
+ * currency conversion (fxPct), + eBay's fees at the seller's real rate (saleFeePct).
  *  - Every rule ends at or above the profit floor: a price that keeps
  *    less is raised to the one that keeps exactly MIN_PROFIT (withProfitFloor).
  *  - A raised price more than 20% above the eBay market average is "low":
@@ -53,13 +54,15 @@ export async function resolveListingPrice(
   defaults: ListingDefaults,
   product: { title: string; supplierPrice: number; shippingCost: number; suggestedPrice: number },
 ): Promise<ListingPrice> {
-  const cost = product.supplierPrice;
-  const shipping = product.shippingCost;
+  // The seller's real costs: supplier prices plus their currency conversion, and their real eBay fee rate.
+  const cost = landedCost(defaults, product.supplierPrice);
+  const shipping = landedCost(defaults, product.shippingCost);
+  const feePct = saleFeePct(defaults);
   const base = { market: null, marketSource: null, lowest: null, capped: false } as const;
 
   if (defaults.pricingMode !== "market") {
     const rulePrice = rulePriceFor(defaults, cost, shipping, product.suggestedPrice);
-    const floored = withProfitFloor(rulePrice, cost, shipping, defaults.adRatePct);
+    const floored = withProfitFloor(rulePrice, cost, shipping, feePct);
     if (!floored.raised) {
       return { ...base, listPrice: floored.price, rule: "default", freeShipping: false, floorRaised: false };
     }
@@ -100,7 +103,7 @@ export async function resolveListingPrice(
     source: market?.referenceSource,
     guardAverage: market?.average,
     lowest: market?.lowest,
-    adRatePct: defaults.adRatePct,
+    adRatePct: feePct,
   });
   const safety = { lowest: match.safety?.lowest ?? null, capped: match.safety?.capped ?? false };
   if (match.rule === "market") {

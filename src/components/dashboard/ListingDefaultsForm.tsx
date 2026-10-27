@@ -7,8 +7,12 @@ import { PriceBreakdown } from "@/components/dashboard/PriceBreakdown";
 import {
   FOOTER_MAX,
   HANDLING_OPTIONS,
+  STANDARD_EBAY_FEE_PCT,
   handlingLabel,
+  landedCost,
   normalizeDefaults,
+  realBreakdown,
+  saleFeePct,
   type ListingDefaults,
 } from "@/lib/listing-defaults";
 import {
@@ -16,7 +20,6 @@ import {
   MARKET_MATCH_MIN_PROFIT,
   MIN_PROFIT_LABEL,
   listPriceFor,
-  priceBreakdown,
   priceForEbay,
 } from "@/lib/pricing";
 
@@ -44,7 +47,13 @@ export function ListingDefaultsForm({ initial }: { initial: ListingDefaults }) {
   // $5.00 stands in for the real CJ shipping quote each product is priced with.
   const shipping = 5;
   const suggested = priceForEbay(20, shipping);
-  const exampleBreakdown = priceBreakdown(listPriceFor(example, 20, shipping, suggested), 20, shipping, example.adRatePct);
+  const examplePrice = listPriceFor(
+    { ...example, adRatePct: saleFeePct(example) },
+    landedCost(example, 20),
+    landedCost(example, shipping),
+    suggested,
+  );
+  const exampleBreakdown = realBreakdown(example, examplePrice, 20, shipping);
 
   async function save() {
     setBusy(true);
@@ -187,6 +196,39 @@ export function ListingDefaultsForm({ initial }: { initial: ListingDefaults }) {
             ))}
           </select>
           <span className="mt-1 block text-[11px] text-slate-500">Saved now, sent to eBay once your store is connected.</span>
+        </label>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className="block">
+          <span className={label}>Your real eBay fee per sale (%)</span>
+          <input
+            type="number"
+            min={STANDARD_EBAY_FEE_PCT}
+            max={35}
+            step={0.1}
+            value={values.ebayFeePct}
+            onChange={(e) => set("ebayFeePct", Number(e.target.value))}
+            className={field}
+          />
+          <span className="mt-1 block text-[11px] text-slate-500">
+            {`${STANDARD_EBAY_FEE_PCT}% is eBay's standard fee. Selling from outside the US adds international and currency fees: on an eBay order, divide "Transaction fees" by the order total (about 20% for many UK sellers).`}
+          </span>
+        </label>
+        <label className="block">
+          <span className={label}>Currency conversion when paying suppliers (%)</span>
+          <input
+            type="number"
+            min={0}
+            max={20}
+            step={0.5}
+            value={values.fxPct}
+            onChange={(e) => set("fxPct", Number(e.target.value))}
+            className={field}
+          />
+          <span className="mt-1 block text-[11px] text-slate-500">
+            Extra you pay when your card or PayPal converts CJ&apos;s dollar prices (often 3–7%). 0 if you pay in US dollars.
+          </span>
         </label>
       </div>
 

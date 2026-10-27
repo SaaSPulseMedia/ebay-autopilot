@@ -299,6 +299,10 @@ export const sellerSettings = pgTable("seller_settings", {
   pricingMode: text("pricing_mode").notNull().default("suggested"), // 'suggested' | 'markup'
   markupPct: integer("markup_pct").notNull().default(40),
   adRatePct: real("ad_rate_pct").notNull().default(4),
+  /** The seller's real eBay fee per sale, %: 13.55 standard; more for sellers outside the US (international, currency fees). */
+  ebayFeePct: real("ebay_fee_pct").notNull().default(13.55),
+  /** What paying suppliers in USD costs the seller in currency conversion, %. */
+  fxPct: real("fx_pct").notNull().default(0),
   quantityPerVariant: integer("quantity_per_variant").notNull().default(10),
   handlingDays: integer("handling_days").notNull().default(2),
   descriptionFooter: text("description_footer").notNull().default(""),

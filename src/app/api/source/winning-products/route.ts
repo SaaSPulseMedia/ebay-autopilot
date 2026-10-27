@@ -2,6 +2,7 @@ import "server-only";
 
 import { getCurrentUser } from "@/lib/auth";
 import { getWinningProducts } from "@/lib/cj/catalog";
+import { saleFeePct } from "@/lib/listing-defaults";
 import { applyMarketCheck } from "@/lib/market-check";
 import { dismissedPids } from "@/lib/seen-products";
 import { getListingDefaults } from "@/lib/seller-settings";
@@ -53,8 +54,12 @@ export async function GET(request: Request) {
       limit,
     });
     if (!result.ok) return Response.json({ ok: false, error: result.error }, { status: result.status });
-    const { adRatePct } = await getListingDefaults(user.id);
-    const checked = await applyMarketCheck(result.data, { deadline: started + MARKET_DEADLINE_MS, adRatePct });
+    const defaults = await getListingDefaults(user.id);
+    const checked = await applyMarketCheck(result.data, {
+      deadline: started + MARKET_DEADLINE_MS,
+      adRatePct: saleFeePct(defaults),
+      fxPct: defaults.fxPct,
+    });
     return Response.json({ ok: true, products: checked.products, market: checked.summary });
   } catch (error) {
     console.error("[source] winning products failed:", error instanceof Error ? error.message : error);

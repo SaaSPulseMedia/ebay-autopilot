@@ -12,7 +12,8 @@ import {
   type ItemResult,
 } from "@/lib/listing-pipeline";
 import { resolveListingPrice } from "@/lib/market-pricing";
-import { MIN_PROFIT, netProfitFor } from "@/lib/pricing";
+import { realProfit } from "@/lib/listing-defaults";
+import { MIN_PROFIT } from "@/lib/pricing";
 import { withRealShipping } from "@/lib/real-shipping";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { withUserImages } from "@/lib/product-images";
@@ -69,7 +70,7 @@ export async function POST(request: Request) {
     }
     const product = shipped.product;
     const price = await resolveListingPrice(defaults, product);
-    const profit = netProfitFor(price.listPrice, product.supplierPrice, product.shippingCost, defaults.adRatePct);
+    const profit = realProfit(defaults, price.listPrice, product.supplierPrice, product.shippingCost);
     priced.push({ product, listPrice: price.listPrice, freeShipping: price.freeShipping, profit, price });
   }
   // Safety Margin Cap: priced down to the cheapest eBay listing + 5%, it would make under the profit floor.

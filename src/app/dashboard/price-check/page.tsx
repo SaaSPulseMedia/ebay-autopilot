@@ -1,3 +1,4 @@
+import { CjListingCheck } from "@/components/dashboard/CjListingCheck";
 import { PriceCheck } from "@/components/dashboard/PriceCheck";
 import { getCurrentUser } from "@/lib/auth";
 import { connectedAccessToken } from "@/lib/listing-pipeline";
@@ -11,7 +12,7 @@ export default async function PriceCheckPage() {
   const user = await getCurrentUser();
   if (!user) return null;
   const token = await connectedAccessToken(user.id);
-  const { adRatePct } = await getListingDefaults(user.id);
+  const defaults = await getListingDefaults(user.id);
 
   return (
     <div className="space-y-6">
@@ -23,7 +24,11 @@ export default async function PriceCheckPage() {
           including ones not made in AutoPilot. Nothing on eBay is changed: you decide what to reprice.
         </p>
       </div>
-      <PriceCheck ebayConnected={Boolean(token)} adRatePct={adRatePct} />
+      <CjListingCheck ebayConnected={Boolean(token)} />
+      <PriceCheck
+        ebayConnected={Boolean(token)}
+        fees={{ adRatePct: defaults.adRatePct, ebayFeePct: defaults.ebayFeePct, fxPct: defaults.fxPct }}
+      />
     </div>
   );
 }

@@ -3,7 +3,7 @@ import "server-only";
 import { cjProductUrl } from "@/lib/cj/urls";
 import { getCjShipping, searchCjProducts } from "@/lib/cj/catalog";
 import { keywordWords } from "@/lib/cj/relevance";
-import { netProfitFor } from "@/lib/pricing";
+import { type ListingDefaults, realProfit } from "@/lib/listing-defaults";
 
 /**
  * "Find on CJ" for a listing sourced elsewhere (e.g. AliExpress): searches CJ
@@ -55,7 +55,7 @@ export async function findOnCj(
   userId: number,
   ebayTitle: string,
   ebayTotal: number | null,
-  adRatePct: number,
+  defaults: ListingDefaults,
 ): Promise<CjMatchResult> {
   // eBay titles are keyword lists; CJ searches best on a few: the first five words, then three, then two.
   const words = keywordWords(ebayTitle).filter((w) => !/^\d+$/.test(w));
@@ -109,7 +109,7 @@ export async function findOnCj(
       days: cheapest.days,
       from: cheapest.from,
       usOption: us ? { price: us.price, days: us.days } : null,
-      profit: ebayTotal != null ? cents(netProfitFor(ebayTotal, item.price, cheapest.price, adRatePct)) : null,
+      profit: ebayTotal != null ? cents(realProfit(defaults, ebayTotal, item.price, cheapest.price)) : null,
     });
   }
   return { ok: true, query, matches };

@@ -11,7 +11,8 @@ import { planLimits } from "@/lib/limits";
 import { connectedAccessToken } from "@/lib/listing-pipeline";
 import { resolveListingPrice } from "@/lib/market-pricing";
 import { findNiche } from "@/lib/niches";
-import { MIN_PROFIT, netProfitFor } from "@/lib/pricing";
+import { realProfit } from "@/lib/listing-defaults";
+import { MIN_PROFIT } from "@/lib/pricing";
 import { dismissProduct, dismissedPids } from "@/lib/seen-products";
 import { getListingDefaults } from "@/lib/seller-settings";
 import type { RejectReason } from "@/lib/sourcing-reasons";
@@ -130,7 +131,7 @@ async function checkProduct(ctx: CheckContext, pid: string): Promise<CheckOutcom
     shippingCost: shipping,
     suggestedPrice: suggested,
   });
-  const profit = netProfitFor(price.listPrice, draft.supplierPrice, shipping, ctx.defaults.adRatePct);
+  const profit = realProfit(ctx.defaults, price.listPrice, draft.supplierPrice, shipping);
   const priced = { ...seen, listPrice: money(price.listPrice), profit: money(profit), market: price.market != null ? money(price.market) : null };
   if (profit < MIN_PROFIT) {
     return {

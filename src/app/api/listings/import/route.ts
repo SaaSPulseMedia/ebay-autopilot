@@ -14,7 +14,8 @@ import {
 import { cjExternalId, importCjProduct } from "@/lib/cj/catalog";
 import { cjPidFromUrl } from "@/lib/cj/urls";
 import { resolveListingPrice } from "@/lib/market-pricing";
-import { MIN_PROFIT, netProfitFor } from "@/lib/pricing";
+import { realProfit } from "@/lib/listing-defaults";
+import { MIN_PROFIT } from "@/lib/pricing";
 import { withUserImages } from "@/lib/product-images";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { checkSupplierUrl } from "@/lib/supplier-policy";
@@ -108,7 +109,7 @@ export async function POST(request: Request) {
 
     const price = await resolveListingPrice({ ...defaults, pricingMode: "markup", markupPct, adRatePct }, product);
     if (price.rule === "low") return skip(product.title, `Low: not listed, ${price.reason}.`);
-    const profit = netProfitFor(price.listPrice, product.supplierPrice, product.shippingCost, adRatePct);
+    const profit = realProfit({ ...defaults, adRatePct }, price.listPrice, product.supplierPrice, product.shippingCost);
     if (profit < MIN_PROFIT) {
       return skip(
         product.title,

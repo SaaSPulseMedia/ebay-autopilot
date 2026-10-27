@@ -30,7 +30,7 @@ export type MarketCheckSummary = {
  */
 export async function applyMarketCheck(
   products: WinningProduct[],
-  options: { deadline?: number; top?: number; adRatePct?: number } = {},
+  options: { deadline?: number; top?: number; adRatePct?: number; fxPct?: number } = {},
 ): Promise<{ products: WinningProduct[]; summary: MarketCheckSummary; droppedPids: string[] }> {
   const top = options.top ?? MARKET_CHECK_TOP;
   const summary: MarketCheckSummary = { checked: 0, dropped: 0, penalized: 0, skipped: 0 };
@@ -58,7 +58,13 @@ export async function applyMarketCheck(
       continue;
     }
     const adjusted = marketAdjustment(
-      { cost: product.price, shipping: product.shipping, suggestedPrice: product.suggestedPrice, winningScore: product.winningScore },
+      {
+        // Supplier prices plus the seller's currency conversion (see landedCost in listing-defaults.ts).
+        cost: product.price * (1 + (options.fxPct ?? 0) / 100),
+        shipping: product.shipping * (1 + (options.fxPct ?? 0) / 100),
+        suggestedPrice: product.suggestedPrice,
+        winningScore: product.winningScore,
+      },
       lookup.market,
       options.adRatePct ?? 0,
     );

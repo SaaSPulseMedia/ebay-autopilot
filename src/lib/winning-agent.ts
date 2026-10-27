@@ -10,6 +10,7 @@ import {
   getWinningProducts,
   inCategoryScope,
 } from "@/lib/cj/catalog";
+import { saleFeePct } from "@/lib/listing-defaults";
 import { type MarketCheckSummary, applyMarketCheck } from "@/lib/market-check";
 import type { NICHES } from "@/lib/niches";
 import { markSeen, seenPids, usedKeywords } from "@/lib/seen-products";
@@ -172,7 +173,8 @@ export async function scoutWinners(
   const checked = await applyMarketCheck(products, {
     top: MARKET_CHECK_COUNT,
     deadline: started + MARKET_DEADLINE_MS,
-    adRatePct: defaults.adRatePct,
+    adRatePct: saleFeePct(defaults),
+    fxPct: defaults.fxPct,
   });
   const shown = checked.products.slice(0, RETURNED);
   await markSeen(userId, niche.name, [

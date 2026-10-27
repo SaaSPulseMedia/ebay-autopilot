@@ -10,7 +10,7 @@ export function PriceBreakdown({ breakdown, compact = false }: { breakdown: Brea
     { label: "Shipping to buyer", value: breakdown.shipping, minus: true, hide: breakdown.shipping === 0 },
     { label: "eBay final value fee (13.55%)", value: breakdown.finalValueFee, minus: true },
     { label: "eBay per-order fee", value: breakdown.fixedFee, minus: true },
-    { label: "Promoted listing ad fee", value: breakdown.adFee, minus: true, hide: breakdown.adFee === 0 },
+    { label: "Ads and your other eBay fees", value: breakdown.adFee, minus: true, hide: breakdown.adFee === 0 },
   ];
   const loses = breakdown.profit <= 0;
 

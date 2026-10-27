@@ -2,7 +2,7 @@ import "server-only";
 
 import { getCurrentUser } from "@/lib/auth";
 import { resolveListingPrice } from "@/lib/market-pricing";
-import { priceBreakdown } from "@/lib/pricing";
+import { realBreakdown } from "@/lib/listing-defaults";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { getCatalog } from "@/lib/suppliers";
 
@@ -37,7 +37,7 @@ export async function POST(request: Request) {
     prices.push({
       externalId: product.externalId,
       ...price,
-      breakdown: priceBreakdown(price.listPrice, product.supplierPrice, product.shippingCost, defaults.adRatePct),
+      breakdown: realBreakdown(defaults, price.listPrice, product.supplierPrice, product.shippingCost),
     });
   }
   return Response.json({ ok: true, prices });

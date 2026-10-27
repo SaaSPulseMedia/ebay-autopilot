@@ -8,7 +8,8 @@ import { isEbaySandbox } from "@/lib/ebay/oauth";
 import { planLimits } from "@/lib/limits";
 import { checkPlanCapacity, connectedAccessToken, createListing } from "@/lib/listing-pipeline";
 import { resolveListingPrice } from "@/lib/market-pricing";
-import { MIN_PROFIT, netProfitFor } from "@/lib/pricing";
+import { realProfit } from "@/lib/listing-defaults";
+import { MIN_PROFIT } from "@/lib/pricing";
 import { withUserImages } from "@/lib/product-images";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { getCatalogProduct } from "@/lib/suppliers";
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
   if (price.rule === "low") {
     return Response.json({ ok: false, step: "pricing", error: `Low: not listed, ${price.reason}.` }, { status: 422 });
   }
-  const profit = netProfitFor(listPrice, product.supplierPrice, product.shippingCost, defaults.adRatePct);
+  const profit = realProfit(defaults, listPrice, product.supplierPrice, product.shippingCost);
   // Backstop for the profit floor resolveListingPrice already prices to.
   if (profit < MIN_PROFIT) {
     return Response.json(
