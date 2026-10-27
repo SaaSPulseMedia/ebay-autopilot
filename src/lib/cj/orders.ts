@@ -53,6 +53,26 @@ const amountOf = (value: unknown) => {
 };
 const clip = (value: string, max: number) => value.slice(0, max);
 
+/** eBay gives US states as codes ("MN"); CJ says "Address incomplete" unless they are written out. */
+const US_STATES: { [code: string]: string } = {
+  AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California", CO: "Colorado", CT: "Connecticut",
+  DE: "Delaware", DC: "District of Columbia", FL: "Florida", GA: "Georgia", HI: "Hawaii", ID: "Idaho", IL: "Illinois",
+  IN: "Indiana", IA: "Iowa", KS: "Kansas", KY: "Kentucky", LA: "Louisiana", ME: "Maine", MD: "Maryland",
+  MA: "Massachusetts", MI: "Michigan", MN: "Minnesota", MS: "Mississippi", MO: "Missouri", MT: "Montana",
+  NE: "Nebraska", NV: "Nevada", NH: "New Hampshire", NJ: "New Jersey", NM: "New Mexico", NY: "New York",
+  NC: "North Carolina", ND: "North Dakota", OH: "Ohio", OK: "Oklahoma", OR: "Oregon", PA: "Pennsylvania",
+  RI: "Rhode Island", SC: "South Carolina", SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah",
+  VT: "Vermont", VA: "Virginia", WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming",
+  PR: "Puerto Rico", GU: "Guam", VI: "U.S. Virgin Islands", AS: "American Samoa", MP: "Northern Mariana Islands",
+  AA: "Armed Forces Americas", AE: "Armed Forces Europe", AP: "Armed Forces Pacific",
+};
+
+/** The province as CJ wants it: a US state code written out in full; anything else as given. */
+export function provinceName(province: string, countryCode: string) {
+  const code = province.trim().toUpperCase();
+  return countryCode.toUpperCase() === "US" ? (US_STATES[code] ?? province.trim()) : province.trim();
+}
+
 function countryName(code: string) {
   try {
     return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code;
@@ -70,7 +90,7 @@ export async function createCjOrder(input: CjOrderInput): Promise<CjResult<CjCre
       shippingZip: clip(a.zip, 20),
       shippingCountryCode: a.countryCode,
       shippingCountry: clip(countryName(a.countryCode), 50),
-      shippingProvince: clip(a.province, 50),
+      shippingProvince: clip(provinceName(a.province, a.countryCode), 50),
       shippingCity: clip(a.city, 50),
       shippingPhone: clip(a.phone.replace(/[^\d+]/g, ""), 20),
       shippingCustomerName: clip(a.name, 50),

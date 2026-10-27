@@ -138,7 +138,7 @@ export function ProductControlModal({ target, onClose }: { target: ProductContro
         setShipping({ status: "error", message: body?.error ?? `HTTP ${res.status}` });
         return;
       }
-      setShipping({ status: "done", quote: { variant: body.variant, options: body.options } });
+      setShipping({ status: "done", quote: { variant: body.variant, options: body.options, usStock: body.usStock ?? null } });
     } catch {
       setShipping({ status: "error", message: "couldn't reach AutoPilot" });
     }

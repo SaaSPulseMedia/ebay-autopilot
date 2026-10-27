@@ -158,7 +158,7 @@ function FulfillModal({
 
         <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
           <section>
-            <h3 className="mb-2 text-sm font-semibold text-white">Order automatically on CJ</h3>
+            <h3 className="mb-2 text-sm font-semibold text-white">Order automatically on CJ (beta)</h3>
             <AutoOrderOnCj orderId={order.orderId} onChanged={onChanged} />
           </section>
 

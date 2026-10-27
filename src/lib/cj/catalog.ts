@@ -850,7 +850,29 @@ export type CjShippingQuote = {
   variant: string;
   /** Cheapest first. Empty when CJ has no method to the US for it. */
   options: CjShippingOption[];
+  /**
+   * Units of the variant in CJ's US warehouses, or null when CJ didn't say.
+   * At 0, US-warehouse methods are left out of `options`: CJ quotes them
+   * anyway, but an order from an empty warehouse can't ship.
+   */
+  usStock: number | null;
 };
+
+/**
+ * Units of a variant in CJ's US warehouses (product/stock/queryByVid: one
+ * row per warehouse, with countryCode and totalInventoryNum), or null when
+ * CJ doesn't answer, so a failed lookup never hides US shipping.
+ */
+async function cjUsStock(vid: string): Promise<number | null> {
+  const res = await cjGet(`/product/stock/queryByVid?vid=${encodeURIComponent(vid)}`);
+  if (!res.ok || !Array.isArray(res.data)) return null;
+  type Row = { countryCode?: unknown; totalInventoryNum?: unknown; totalInventory?: unknown };
+  const rows = res.data as Row[];
+  if (!rows.length) return null;
+  return rows
+    .filter((r) => str(r.countryCode).toUpperCase() === "US")
+    .reduce((sum, r) => sum + Math.max(0, Math.floor(Number(r.totalInventoryNum ?? r.totalInventory) || 0)), 0);
+}
 
 const SHIPPING_TTL_MS = 6 * 60 * 60 * 1000;
 const shippingCache = new Map<string, { at: number; quote: CjShippingQuote }>();
@@ -880,11 +902,14 @@ export async function getCjShipping(pid: string, sku?: string | null): Promise<C
   const variant = list.find((v) => sku && str(v.variantSku) === sku) ?? list.find((v) => str(v.vid));
   if (!variant?.vid) return { ok: false, error: "CJ has no variants for this product to quote shipping on.", status: 404 };
 
+  // CJ quotes its US warehouse even when it holds none of this variant: ask the stock first.
+  const usStock = await cjUsStock(str(variant.vid));
   const options: CjShippingOption[] = [];
   let lastError: { ok: false; error: string; status: number } | null = null;
   /** CJ's raw answer per warehouse, logged when nothing usable came back. */
   const raw: Record<string, unknown> = {};
   for (const from of ["CN", "US"] as const) {
+    if (from === "US" && usStock === 0) continue;
     const res = await cjGet("/logistic/freightCalculate", {
       method: "POST",
       body: JSON.stringify({ startCountryCode: from, endCountryCode: "US", products: [{ quantity: 1, vid: variant.vid }] }),
@@ -908,9 +933,11 @@ export async function getCjShipping(pid: string, sku?: string | null): Promise<C
   // Both warehouses failing is an error; one failing (usually: not stocked in the US) isn't.
   if (!options.length && lastError) return lastError;
   options.sort((a, b) => a.price - b.price);
-  const quote = { variant: str(variant.variantNameEn) || str(variant.variantKey) || str(variant.variantSku), options };
+  const quote = { variant: str(variant.variantNameEn) || str(variant.variantKey) || str(variant.variantSku), options, usStock };
   shippingCache.set(key, { at: Date.now(), quote });
-  console.log(`[cj-shipping] pid=${pid} vid=${variant.vid} options=${options.length} cheapest=${options[0]?.price ?? "none"}`);
+  console.log(
+    `[cj-shipping] pid=${pid} vid=${variant.vid} usStock=${usStock ?? "unknown"} options=${options.length} cheapest=${options[0]?.price ?? "none"}`,
+  );
   return { ok: true, data: quote };
 }
 

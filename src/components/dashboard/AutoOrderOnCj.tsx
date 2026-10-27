@@ -35,7 +35,10 @@ const CJ_STATES: { [status: string]: string } = {
   CANCELLED: "cancelled",
 };
 
-type Loaded = { lines: Line[]; shipping: Shipping[]; shippingError: string | null; record: Record | null };
+type Loaded = { lines: Line[]; shipping: Shipping[]; shippingError: string | null; usStock: number | null; record: Record | null };
+
+/** Shipping methods shown before "Show all": CJ often offers 40. */
+const FIRST_METHODS = 5;
 
 const money = (n: number) => (n === 0 ? "free" : `$${n.toFixed(2)}`);
 
@@ -68,7 +71,10 @@ export function AutoOrderOnCj({ orderId, onChanged }: { orderId: string; onChang
   const [loadError, setLoadError] = useState<string | null>(null);
   const [skus, setSkus] = useState<{ [lineItemId: string]: string }>({});
   const [method, setMethod] = useState<string>("");
-  const [sandbox, setSandbox] = useState(false);
+  // Beta: a test (sandbox) order first, and the form only once the seller opens it.
+  const [sandbox, setSandbox] = useState(true);
+  const [open, setOpen] = useState(false);
+  const [allMethods, setAllMethods] = useState(false);
   const [busy, setBusy] = useState<"placing" | "checking" | null>(null);
   const [message, setMessage] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
 
@@ -195,7 +201,21 @@ export function AutoOrderOnCj({ orderId, onChanged }: { orderId: string; onChang
         </div>
       ) : null}
 
-      {active ? null : (
+      {active ? null : !open ? (
+        <div className="space-y-1.5">
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="rounded-full border border-white/20 px-3.5 py-1.5 text-xs font-semibold text-slate-200 hover:bg-white/5"
+          >
+            Try automatic ordering (beta)
+          </button>
+          <p className="text-xs text-slate-500">
+            Still being proven on real orders: the manual steps below are the safe way. The beta starts with a free CJ test
+            order.
+          </p>
+        </div>
+      ) : (
         <>
           {unmatched.length ? (
             <p className="rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
@@ -228,7 +248,12 @@ export function AutoOrderOnCj({ orderId, onChanged }: { orderId: string; onChang
               ) : (
                 <fieldset className="space-y-1.5">
                   <legend className="mb-1 text-sm text-slate-300">Shipping method (cheapest first):</legend>
-                  {data.shipping.map((o) => {
+                  {data.usStock === 0 ? (
+                    <p className="text-xs text-amber-200">
+                      CJ&apos;s US warehouse has none of this item, so only shipping from China is offered (slower: tell the buyer).
+                    </p>
+                  ) : null}
+                  {(allMethods ? data.shipping : data.shipping.slice(0, FIRST_METHODS)).map((o) => {
                     const value = `${o.from}|${o.method}`;
                     return (
                       <label key={value} className="flex items-center gap-2 text-sm text-slate-200">
@@ -237,6 +262,11 @@ export function AutoOrderOnCj({ orderId, onChanged }: { orderId: string; onChang
                       </label>
                     );
                   })}
+                  {!allMethods && data.shipping.length > FIRST_METHODS ? (
+                    <button type="button" onClick={() => setAllMethods(true)} className="text-xs text-brand-400 hover:underline">
+                      {`Show all ${data.shipping.length} methods`}
+                    </button>
+                  ) : null}
                 </fieldset>
               )}
 

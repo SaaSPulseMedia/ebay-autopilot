@@ -18,8 +18,8 @@ export async function GET(request: Request) {
   if (!orderId) return Response.json({ ok: false, error: "Which order?" }, { status: 400 });
   const prepared = await prepareCjOrder(user.id, orderId);
   if (!prepared.ok) return Response.json(prepared, { status: 502 });
-  const { lines, shipping, shippingError, record } = prepared.data;
-  return Response.json({ ok: true, lines, shipping, shippingError, record });
+  const { lines, shipping, shippingError, usStock, record } = prepared.data;
+  return Response.json({ ok: true, lines, shipping, shippingError, usStock, record });
 }
 
 export async function POST(request: Request) {

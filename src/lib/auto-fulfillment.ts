@@ -36,6 +36,8 @@ export type PreparedOrder = {
   /** CJ's methods to the US for the first matched item, cheapest first. */
   shipping: CjShippingOption[];
   shippingError: string | null;
+  /** Units of the first item in CJ's US warehouses (0: only China shipping is offered); null when unknown. */
+  usStock: number | null;
   record: CjOrderRecord | null;
 };
 
@@ -72,13 +74,15 @@ export async function prepareCjOrder(userId: number, ebayOrderId: string): Promi
   const first = lines.find((line) => line.match)?.match;
   let shipping: CjShippingOption[] = [];
   let shippingError: string | null = null;
+  let usStock: number | null = null;
   if (first) {
     const quote = await getCjShipping(first.pid, first.cjSku);
     if (quote.ok) shipping = quote.data.options;
     else shippingError = quote.error;
+    if (quote.ok) usStock = quote.data.usStock;
     if (quote.ok && !shipping.length) shippingError = "CJ has no shipping method to the US for this product right now.";
   }
-  return { ok: true, data: { order, lines, shipping, shippingError, record: await recordFor(userId, ebayOrderId) } };
+  return { ok: true, data: { order, lines, shipping, shippingError, usStock, record: await recordFor(userId, ebayOrderId) } };
 }
 
 export type PlaceInput = {
