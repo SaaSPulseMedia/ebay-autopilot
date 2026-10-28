@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { listings } from "@/db/schema";
 import { getCjShipping } from "@/lib/cj/catalog";
 import { getEbayItemStatus } from "@/lib/ebay/item-status";
+import { charmUp, raiseListingPrice } from "@/lib/ebay/reprice";
 import { type ListingDefaults, landedCost, realProfit, saleFeePct } from "@/lib/listing-defaults";
 import { MIN_PROFIT, priceForMinProfit } from "@/lib/pricing";
 import { getCatalogProduct } from "@/lib/suppliers";
@@ -45,7 +46,7 @@ export type CjListingCheck = {
 const money = (n: number) => `$${n.toFixed(2)}`;
 const cents = (n: number) => Math.round(n * 100) / 100;
 
-type Payload = { externalId?: unknown };
+type Payload = { externalId?: unknown; sku?: unknown; variants?: Array<{ sku?: unknown }> };
 
 /** The seller's live listings made from CJ products, newest first. */
 export async function cjListings(userId: number) {
@@ -127,4 +128,30 @@ export async function checkCjListing(
     neededPrice,
     note: `${cost}: you ${profit < 0 ? `lose ${money(-profit)}` : `keep only ${money(profit)}`} per sale. An item price of ${money(neededPrice)} keeps ${money(MIN_PROFIT)}.`,
   };
+}
+
+export type CjPriceFix = { listingId: number; ok: boolean; note: string; from?: number; to?: number };
+
+/**
+ * "Raise the price": re-checks the listing (so the price is never based on
+ * stale numbers) and, when it is losing money or under MIN_PROFIT, raises
+ * every variation on eBay so the cheapest reaches the needed price (to .99).
+ */
+export async function fixCjListingPrice(userId: number, token: string, defaults: ListingDefaults, listingId: number): Promise<CjPriceFix> {
+  const check = await checkCjListing(userId, token, defaults, listingId);
+  if (!check) return { listingId, ok: false, note: "Listing not found." };
+  if (check.verdict === "ok") return { listingId, ok: true, note: `Already fine: you keep ${money(check.profit ?? 0)} per sale.` };
+  if (check.neededPrice == null) return { listingId, ok: false, note: check.note };
+
+  const [row] = await db.select({ payload: listings.payload }).from(listings).where(eq(listings.id, listingId)).limit(1);
+  const payload = (row?.payload ?? {}) as Payload;
+  const variantSkus = (payload.variants ?? []).map((v) => v.sku).filter((s): s is string => typeof s === "string" && s.length > 0);
+  const skus = variantSkus.length > 1 ? variantSkus : typeof payload.sku === "string" ? [payload.sku] : [];
+  if (!skus.length) return { listingId, ok: false, note: "AutoPilot doesn't know this listing's SKUs: change the price in eBay Seller Hub." };
+
+  const raised = await raiseListingPrice(token, check.itemId, skus, charmUp(check.neededPrice));
+  if (!raised.ok) return { listingId, ok: false, note: raised.error };
+  await db.update(listings).set({ listPrice: raised.to.toFixed(2) }).where(eq(listings.id, listingId));
+  const variations = raised.variations > 1 ? ` (all ${raised.variations} variations raised in step)` : "";
+  return { listingId, ok: true, from: raised.from, to: raised.to, note: `Raised from ${money(raised.from)} to ${money(raised.to)}${variations}.` };
 }

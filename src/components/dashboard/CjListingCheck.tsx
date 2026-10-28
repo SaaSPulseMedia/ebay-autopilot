@@ -35,6 +35,14 @@ const VERDICTS: Record<Verdict, { label: string; tone: string; order: number }> 
 
 const money = (n: number | null) => (n == null ? "—" : `$${n.toFixed(2)}`);
 
+/** The price actually set: up to the next .99 (same as the server's charmUp). */
+const charmUp = (n: number) => Math.ceil(n + 0.01) - 0.01;
+
+type Fix = { state: "working" | "done" | "failed"; note: string };
+
+/** A rise this big (vs the live price) may stop buyers: the row says ending could be better. */
+const BIG_JUMP = 1.4;
+
 /**
  * "Check my CJ listings": every live listing made from a CJ product, re-costed
  * with CJ's real (stock-aware) shipping and the seller's real fees, so the ones
@@ -46,11 +54,46 @@ export function CjListingCheck({ ebayConnected }: { ebayConnected: boolean }) {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const stopRef = useRef(false);
+  const [fixes, setFixes] = useState<Record<number, Fix>>({});
+  const [fixing, setFixing] = useState(false);
+
+  async function fixOne(listingId: number) {
+    setFixes((f) => ({ ...f, [listingId]: { state: "working", note: "Raising the price on eBay…" } }));
+    try {
+      const res = await fetch("/api/cj-listing-check/fix", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ listingId }),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string; fix?: { ok: boolean; note: string } };
+      const fix = json.fix;
+      setFixes((f) => ({
+        ...f,
+        [listingId]: fix ? { state: fix.ok ? "done" : "failed", note: fix.note } : { state: "failed", note: json.error ?? "Couldn't change the price." },
+      }));
+    } catch {
+      setFixes((f) => ({ ...f, [listingId]: { state: "failed", note: "The connection dropped. Try again." } }));
+    }
+  }
+
+  async function fixAll() {
+    const todo = sorted.filter((r) => r.neededPrice != null && fixes[r.listingId]?.state !== "done");
+    if (!todo.length) return;
+    if (!window.confirm(`Raise the price of ${todo.length} listing${todo.length === 1 ? "" : "s"} on eBay now, so each one keeps at least ${MIN_PROFIT_LABEL} per sale?`)) return;
+    setFixing(true);
+    stopRef.current = false;
+    for (const r of todo) {
+      if (stopRef.current) break;
+      await fixOne(r.listingId);
+    }
+    setFixing(false);
+  }
 
   async function run() {
     setRunning(true);
     setError(null);
     setResults([]);
+    setFixes({});
     stopRef.current = false;
     try {
       const listRes = await fetch("/api/cj-listing-check");
@@ -89,6 +132,9 @@ export function CjListingCheck({ ebayConnected }: { ebayConnected: boolean }) {
     for (const r of results) c[r.verdict] = (c[r.verdict] ?? 0) + 1;
     return c;
   }, [results]);
+
+  const fixable = sorted.filter((r) => r.neededPrice != null && fixes[r.listingId]?.state !== "done").length;
+  const noFix = sorted.filter((r) => r.verdict === "losing" && r.neededPrice == null).length;
 
   function download() {
     const head = ["Verdict", "Item number", "Title", "Item price", "Buyer shipping", "CJ cost", "CJ shipping", "Ships from", "You keep", "Item price needed", "Details", "eBay link"];
@@ -164,6 +210,35 @@ export function CjListingCheck({ ebayConnected }: { ebayConnected: boolean }) {
                 </span>
               ))}
           </div>
+          {fixable && !running ? (
+            <div className="space-y-2 rounded-xl border border-lime-brand/30 bg-lime-brand/5 p-3 text-xs text-slate-300">
+              <p>
+                {`${fixable} listing${fixable === 1 ? " needs" : "s need"} a higher price. One click raises them all on eBay to the price shown (every size and colour goes up in step), so each sale keeps at least ${MIN_PROFIT_LABEL}. With your eBay store, a listing that doesn't sell at the new price costs you nothing; one that sells at a loss does.`}
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => void fixAll()}
+                  disabled={fixing}
+                  className="rounded-full bg-lime-brand px-4 py-2 text-sm font-semibold text-slate-950 hover:opacity-90 disabled:opacity-50"
+                >
+                  {fixing ? "Raising prices…" : `Raise all ${fixable} prices for me`}
+                </button>
+                {fixing ? (
+                  <button
+                    type="button"
+                    onClick={() => (stopRef.current = true)}
+                    className="rounded-full border border-white/15 px-4 py-2 text-sm text-slate-200 hover:bg-white/5"
+                  >
+                    Stop
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+          {noFix && !running ? (
+            <p className="text-xs text-amber-200">{`${noFix} listing${noFix === 1 ? "" : "s"} can't be fixed with a price because CJ can't ship ${noFix === 1 ? "it" : "them"} to the US right now: end ${noFix === 1 ? "it" : "them"} in eBay Seller Hub.`}</p>
+          ) : null}
           <ul className="space-y-2">
             {sorted.map((r) => (
               <li key={r.listingId} className="min-w-0 space-y-1 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs">
@@ -185,12 +260,28 @@ export function CjListingCheck({ ebayConnected }: { ebayConnected: boolean }) {
                     {r.neededPrice != null ? (
                       <>
                         {" · "}
-                        <span className="font-semibold text-lime-brand">{`raise to ${money(r.neededPrice)}`}</span>
+                        <span className="font-semibold text-lime-brand">{`raise to ${money(charmUp(r.neededPrice))}`}</span>
                       </>
                     ) : null}
                   </p>
                 ) : null}
                 <p className="text-slate-500">{r.note}</p>
+                {r.neededPrice != null && r.price && r.neededPrice / r.price > BIG_JUMP ? (
+                  <p className="text-amber-200">{`A big rise (${Math.round((r.neededPrice / r.price - 1) * 100)}%): if it stops selling at that price, end it.`}</p>
+                ) : null}
+                {fixes[r.listingId] ? (
+                  <p className={fixes[r.listingId].state === "failed" ? "text-red-300" : fixes[r.listingId].state === "done" ? "text-lime-brand" : "text-slate-300"}>
+                    {fixes[r.listingId].note}
+                  </p>
+                ) : r.neededPrice != null && !fixing ? (
+                  <button
+                    type="button"
+                    onClick={() => void fixOne(r.listingId)}
+                    className="rounded-full border border-white/15 px-3 py-1 text-xs text-slate-200 hover:bg-white/5"
+                  >
+                    {`Raise to ${money(charmUp(r.neededPrice))} on eBay`}
+                  </button>
+                ) : null}
               </li>
             ))}
           </ul>
