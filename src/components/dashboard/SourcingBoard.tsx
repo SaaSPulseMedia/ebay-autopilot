@@ -3,7 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { MoreLikeThis } from "@/components/dashboard/MoreLikeThis";
 import { cjProductUrl } from "@/lib/cj/urls";
+import { demandLabel } from "@/lib/demand-labels";
 import { MIN_PROFIT_LABEL } from "@/lib/pricing";
 import { REJECT_REASONS, type RejectReason } from "@/lib/sourcing-reasons";
 
@@ -19,6 +21,8 @@ type ReadyProduct = {
   market: number | null;
   variantCount: number;
   ebayCategory: string | null;
+  ebaySold: number | null;
+  ebayListings: number | null;
   checkedAt: string | null;
 };
 
@@ -216,8 +220,13 @@ export function SourcingBoard({ niches, selected, enabled, lastRunAt, waiting, l
         </p>
       </section>
 
+      <MoreLikeThis />
+
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-white">Ready to list ({ready.length})</h2>
+        <div>
+          <h2 className="text-lg font-semibold text-white">Ready to list ({ready.length})</h2>
+          <p className="mt-0.5 text-xs text-slate-400">Most wanted on eBay first: what similar listings have sold, with fewer competitors counting for more.</p>
+        </div>
         {ready.length ? (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {ready.map((p) => (
@@ -325,6 +334,7 @@ function ReadyCard({ product: p, ebayConnected }: { product: ReadyProduct; ebayC
             {p.market != null ? ` · eBay avg ${money(p.market)}` : ""}
             {p.variantCount > 1 ? ` · ${p.variantCount} variants` : ""}
           </p>
+          <DemandLine sold={p.ebaySold} listings={p.ebayListings} />
           <p className="truncate text-slate-500">
             {p.niche}
             {p.ebayCategory ? ` → ${p.ebayCategory}` : ""}
@@ -367,5 +377,18 @@ function ReadyCard({ product: p, ebayConnected }: { product: ReadyProduct; ebayC
         </>
       )}
     </article>
+  );
+}
+
+/** "Selling well on eBay (top listings sold 340) · few competitors (210 listings)". */
+function DemandLine({ sold, listings }: { sold: number | null; listings: number | null }) {
+  const { wanted, crowd, tone } = demandLabel(sold, listings);
+  if (!wanted && !crowd) return <p className="text-slate-500">eBay demand: checked at the next re-check</p>;
+  const color = tone === "good" ? "text-lime-brand" : tone === "weak" ? "text-amber-200" : "text-slate-300";
+  return (
+    <p className={color}>
+      {wanted ? `${wanted} (top listings sold ${sold?.toLocaleString("en-US")})` : "eBay sales unknown"}
+      {crowd ? ` · ${crowd} (${listings?.toLocaleString("en-US")} listings)` : ""}
+    </p>
   );
 }

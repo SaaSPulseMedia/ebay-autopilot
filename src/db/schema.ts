@@ -177,6 +177,9 @@ export const sourcingCandidates = pgTable(
     market: numeric("market", { precision: 10, scale: 2 }),
     variantCount: integer("variant_count").notNull().default(1),
     ebayCategory: text("ebay_category"),
+    /** eBay demand when checked: units the top matching listings sold, and how many listings compete. */
+    ebaySold: integer("ebay_sold"),
+    ebayListings: integer("ebay_listings"),
     foundAt: timestamp("found_at", { withTimezone: true }).notNull().defaultNow(),
     checkedAt: timestamp("checked_at", { withTimezone: true }),
   },

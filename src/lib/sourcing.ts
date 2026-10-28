@@ -4,7 +4,9 @@ import { and, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-or
 
 import { db } from "@/db";
 import { listings, sourcingCandidates, sourcingSettings, users } from "@/db/schema";
-import { cjCategoryScope, fetchCjListingData, getWinningProducts } from "@/lib/cj/catalog";
+import { cjCategoryScope, fetchCjListingData, getWinningProducts, searchCjProducts } from "@/lib/cj/catalog";
+import { keywordWords } from "@/lib/cj/relevance";
+import { demandScore, getEbayDemand } from "@/lib/ebay/demand";
 import { getMarketPrice, marketPriceWarning } from "@/lib/ebay/market-price";
 import { planEbayListing } from "@/lib/ebay/publish-with-resolver";
 import { planLimits } from "@/lib/limits";
@@ -161,6 +163,10 @@ async function checkProduct(ctx: CheckContext, pid: string): Promise<CheckOutcom
     supplierVariants: draft.variants,
     maxVariants: ctx.maxVariants,
   });
+  // How wanted it is on eBay: ranks the ready list (never turns a product down).
+  const demand = await getEbayDemand(draft.title);
+  const demandValues = { ebaySold: demand?.sold ?? null, ebayListings: demand?.listings ?? null };
+
   let ebayCategory: string | null = null;
   if (ctx.ebayConnected) {
     const plan = await planEbayListing({
@@ -173,7 +179,7 @@ async function checkProduct(ctx: CheckContext, pid: string): Promise<CheckOutcom
     ebayCategory = plan.categoryPath;
   }
 
-  return { status: "ready", values: { ...priced, market, variantCount: variants.length, ebayCategory } };
+  return { status: "ready", values: { ...priced, market, variantCount: variants.length, ebayCategory, ...demandValues } };
 }
 
 /** CJ product ids the seller has already listed (not ended), from listings.payload.externalId ("cj-<pid>"). */
@@ -259,9 +265,11 @@ export type SourcingRun = {
 export type SourcingRunResult = SourcingRun | { ok: false; error: string };
 
 /** One sourcing run for a seller: find more products if few are waiting, then check as many as time allows. */
-export async function runSourcing(userId: number, deadline: number): Promise<SourcingRunResult> {
+export async function runSourcing(userId: number, deadline: number, options: { checkOnly?: boolean } = {}): Promise<SourcingRunResult> {
   const settings = await getSourcingSettings(userId);
-  if (!settings.niches.length) return { ok: false, error: "Pick at least one niche first." };
+  if (!settings.niches.length && !options.checkOnly) return { ok: false, error: "Pick at least one niche first." };
+  // "More like this" may run before any niche is saved: the settings row the run lock needs.
+  await db.insert(sourcingSettings).values({ userId, niches: [], enabled: false }).onConflictDoNothing();
 
   // Claim the run: one at a time per seller (the hourly job and "Check now" can overlap).
   const claimed = await db
@@ -320,7 +328,7 @@ export async function runSourcing(userId: number, deadline: number): Promise<Sou
     );
 
   let queue = await waiting();
-  if (queue.length < QUEUE_MIN) {
+  if (queue.length < QUEUE_MIN && !options.checkOnly) {
     // Niches in random order; the next is tried when one has nothing new right now.
     const order = [...settings.niches].sort(() => Math.random() - 0.5);
     for (const niche of order) {
@@ -381,6 +389,8 @@ export type ReadyProduct = {
   market: number | null;
   variantCount: number;
   ebayCategory: string | null;
+  ebaySold: number | null;
+  ebayListings: number | null;
   checkedAt: string | null;
 };
 
@@ -415,7 +425,7 @@ export async function getSourcingOverview(userId: number): Promise<SourcingOverv
       .from(sourcingCandidates)
       .where(and(eq(sourcingCandidates.userId, userId), eq(sourcingCandidates.status, "ready")))
       .orderBy(desc(sourcingCandidates.profit))
-      .limit(100),
+      .limit(200),
     db
       .select({ n: sql<number>`count(*)::int` })
       .from(sourcingCandidates)
@@ -460,7 +470,12 @@ export async function getSourcingOverview(userId: number): Promise<SourcingOverv
       checkedAt: r.checkedAt ? r.checkedAt.toISOString() : null,
     })),
     // A ready product the seller has since listed (from here or any other page) leaves the list.
-    ready: readyRows.filter((r) => !listed.has(r.pid)).map((r) => ({
+    // Most wanted on eBay first (sales of the top listings, less for crowded searches), then by profit.
+    ready: readyRows
+      .filter((r) => !listed.has(r.pid))
+      .sort((a, b) => (demandScore(b.ebaySold, b.ebayListings) ?? -1) - (demandScore(a.ebaySold, a.ebayListings) ?? -1))
+      .slice(0, 100)
+      .map((r) => ({
       pid: r.pid,
       niche: r.niche,
       title: r.title,
@@ -472,6 +487,8 @@ export async function getSourcingOverview(userId: number): Promise<SourcingOverv
       market: toNumber(r.market),
       variantCount: r.variantCount,
       ebayCategory: r.ebayCategory,
+      ebaySold: r.ebaySold,
+      ebayListings: r.ebayListings,
       checkedAt: r.checkedAt ? r.checkedAt.toISOString() : null,
     })),
   };
@@ -485,4 +502,46 @@ export async function dismissCandidate(userId: number, pid: string) {
     .where(and(eq(sourcingCandidates.userId, userId), eq(sourcingCandidates.pid, pid)))
     .returning({ niche: sourcingCandidates.niche });
   await dismissProduct(userId, pid, row?.niche ?? "");
+}
+
+/** Words that say who it's for, not what it is: left out of "More like this" searches. */
+const WHO = new Set(["women", "womens", "woman", "men", "mens", "man", "ladies", "lady", "girls", "girl", "boys", "boy", "kids", "unisex", "female", "male"]);
+/** CJ products queued per "More like this" search. */
+const LIKE_LIMIT = 20;
+/** Queued above any Winning Score, so they are checked first. */
+const LIKE_SCORE = 1000;
+
+/**
+ * "More like this": searches CJ for products like a title the seller knows
+ * sells (e.g. "Women's Denim Maxi Dress Vintage Collar…" → "denim maxi dress"),
+ * and queues the new ones for the usual checks, first in line. Returns how
+ * many were queued, and the search used.
+ */
+export async function findSimilar(userId: number, title: string): Promise<{ ok: true; queued: number; query: string } | { ok: false; error: string }> {
+  const words = keywordWords(title).filter((w) => !/^\d+$/.test(w) && !WHO.has(w.replace(/'s$/, "")));
+  if (!words.length) return { ok: false, error: "Type a few words that describe the product." };
+  const queries = [...new Set([3, 2].map((n) => words.slice(0, n).join(" ")))];
+
+  const [known, dismissed, listed] = await Promise.all([
+    db.select({ pid: sourcingCandidates.pid }).from(sourcingCandidates).where(eq(sourcingCandidates.userId, userId)),
+    dismissedPids(userId),
+    listedPids(userId),
+  ]);
+  const exclude = new Set([...known.map((r) => r.pid), ...dismissed, ...listed]);
+  const found = new Map<string, { pid: string; title: string; imageUrl: string | null; listedNum: number }>();
+  for (const q of queries) {
+    const res = await searchCjProducts(userId, q, 1);
+    if (!res.ok) return { ok: false, error: `CJ search failed: ${res.error}` };
+    for (const item of res.data.items) if (!exclude.has(item.pid) && !found.has(item.pid) && item.price > 0) found.set(item.pid, item);
+    if (found.size >= LIKE_LIMIT) break;
+  }
+  const picked = [...found.values()].slice(0, LIKE_LIMIT);
+  const niche = `Like: ${queries[0]}`.slice(0, 60);
+  if (picked.length) {
+    await db
+      .insert(sourcingCandidates)
+      .values(picked.map((p, i) => ({ userId, pid: p.pid, niche, title: p.title, imageUrl: p.imageUrl, listedNum: p.listedNum, score: LIKE_SCORE - i })))
+      .onConflictDoNothing();
+  }
+  return { ok: true, queued: picked.length, query: queries[0] };
 }
