@@ -6,7 +6,8 @@ import { useMemo, useState } from "react";
 
 import { BatchSummary, DripToggle, type BatchResponse } from "@/components/dashboard/BatchControls";
 import { PriceBreakdown } from "@/components/dashboard/PriceBreakdown";
-import { MIN_PROFIT_LABEL, listPriceFor, priceBreakdown } from "@/lib/pricing";
+import { landedCost, realBreakdown, saleFeePct } from "@/lib/listing-defaults";
+import { MIN_PROFIT_LABEL, listPriceFor } from "@/lib/pricing";
 import { checkSupplierUrl } from "@/lib/supplier-policy";
 
 type Props = {
@@ -16,9 +17,12 @@ type Props = {
   dripPerRun: number;
   defaultMarkupPct: number;
   defaultAdRatePct: number;
+  /** The seller's real eBay fee rate and currency conversion (Settings), as the server prices with. */
+  ebayFeePct: number;
+  fxPct: number;
 };
 
-export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun, defaultMarkupPct, defaultAdRatePct }: Props) {
+export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun, defaultMarkupPct, defaultAdRatePct, ebayFeePct, fxPct }: Props) {
   const router = useRouter();
   const [text, setText] = useState("");
   const [markupPct, setMarkupPct] = useState(defaultMarkupPct);
@@ -37,8 +41,11 @@ export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun, de
   const cap = Math.min(batchSize, remaining);
   const tooMany = links.length > cap;
 
-  // Worked example so the markup is easy to judge: a $20 CJ item with $5 shipping, priced like a real link.
-  const example = priceBreakdown(listPriceFor({ pricingMode: "markup", markupPct, adRatePct }, 20, 5, 0), 20, 5, adRatePct);
+  // Worked example so the markup is easy to judge: a $20 CJ item with $5 shipping, priced like a real link
+  // (with the seller's real eBay fees and currency conversion, as the server does).
+  const fees = { adRatePct, ebayFeePct, fxPct };
+  const examplePrice = listPriceFor({ pricingMode: "markup", markupPct, adRatePct: saleFeePct(fees) }, landedCost(fees, 20), landedCost(fees, 5), 0);
+  const example = realBreakdown(fees, examplePrice, 20, 5);
 
   async function submit() {
     setBusy(true);

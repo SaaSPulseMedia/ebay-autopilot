@@ -40,6 +40,8 @@ export default async function ImportPage() {
         dripPerRun={DRIP_PER_RUN}
         defaultMarkupPct={defaults.markupPct}
         defaultAdRatePct={defaults.adRatePct}
+        ebayFeePct={defaults.ebayFeePct}
+        fxPct={defaults.fxPct}
       />
     </div>
   );

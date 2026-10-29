@@ -6,13 +6,17 @@ import { useState } from "react";
 
 import { PriceBreakdown } from "@/components/dashboard/PriceBreakdown";
 import { ENGINES, type ListingEngine } from "@/lib/ebay/types";
-import { priceBreakdown, priceFromMarkup } from "@/lib/pricing";
+import { landedCost, realBreakdown, saleFeePct } from "@/lib/listing-defaults";
+import { listPriceFor } from "@/lib/pricing";
 
 type Props = {
   initialTitle?: string;
   initialCost?: number;
   initialPrice?: number;
   adRatePct?: number;
+  /** The seller's real eBay fee rate and currency conversion (Settings). */
+  ebayFeePct?: number;
+  fxPct?: number;
   markupPct?: number;
   hasFooter?: boolean;
 };
@@ -37,6 +41,8 @@ export function ListingWizard({
   initialCost = 0,
   initialPrice = 0,
   adRatePct = 0,
+  ebayFeePct = 13.55,
+  fxPct = 0,
   markupPct = 40,
   hasFooter = false,
 }: Props) {
@@ -70,7 +76,9 @@ export function ListingWizard({
       if (json.product?.title) setTitle(json.product.title);
       if (typeof json.product?.price === "number") {
         setSupplierPrice(json.product.price);
-        setListPrice(priceFromMarkup(json.product.price, markupPct));
+        // Markup on the landed cost, raised if needed to keep the minimum profit with the real fees.
+        const fees = { adRatePct, ebayFeePct, fxPct };
+        setListPrice(listPriceFor({ pricingMode: "markup", markupPct, adRatePct: saleFeePct(fees) }, landedCost(fees, json.product.price), 0, 0));
       }
       if (json.product?.imageUrl) setImageUrl(json.product.imageUrl);
       if (json.copy?.description) setDescription(json.copy.description);
@@ -119,7 +127,7 @@ export function ListingWizard({
     }
   }
 
-  const breakdown = priceBreakdown(listPrice, supplierPrice, 0, adRatePct);
+  const breakdown = realBreakdown({ adRatePct, ebayFeePct, fxPct }, listPrice, supplierPrice, 0);
 
   return (
     <div className="space-y-5">

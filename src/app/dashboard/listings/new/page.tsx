@@ -1,5 +1,6 @@
 import { ListingWizard } from "@/components/dashboard/ListingWizard";
 import { getCurrentUser } from "@/lib/auth";
+import { landedCost, saleFeePct } from "@/lib/listing-defaults";
 import { listPriceFor } from "@/lib/pricing";
 import { getListingDefaults } from "@/lib/seller-settings";
 
@@ -19,7 +20,7 @@ export default async function NewListingPage({
   const cost = Number(params.cost ?? 0);
   const suggested = Number(params.price ?? 0);
   // Research links pass AutoPilot's suggested price; the seller's own markup wins if they set one.
-  const initialPrice = cost > 0 ? listPriceFor(defaults, cost, 0, suggested) : suggested;
+  const initialPrice = cost > 0 ? listPriceFor({ ...defaults, adRatePct: saleFeePct(defaults) }, landedCost(defaults, cost), 0, suggested) : suggested;
 
   return (
     <div className="space-y-6">
@@ -35,6 +36,8 @@ export default async function NewListingPage({
         initialCost={cost}
         initialPrice={initialPrice}
         adRatePct={defaults.adRatePct}
+        ebayFeePct={defaults.ebayFeePct}
+        fxPct={defaults.fxPct}
         markupPct={defaults.markupPct}
         hasFooter={Boolean(defaults.descriptionFooter)}
       />
