@@ -265,7 +265,7 @@ export type SourcingRun = {
 export type SourcingRunResult = SourcingRun | { ok: false; error: string };
 
 /** One sourcing run for a seller: find more products if few are waiting, then check as many as time allows. */
-export async function runSourcing(userId: number, deadline: number, options: { checkOnly?: boolean } = {}): Promise<SourcingRunResult> {
+export async function runSourcing(userId: number, deadline: number, options: { checkOnly?: boolean; niche?: string } = {}): Promise<SourcingRunResult> {
   const settings = await getSourcingSettings(userId);
   if (!settings.niches.length && !options.checkOnly) return { ok: false, error: "Pick at least one niche first." };
   // "More like this" may run before any niche is saved: the settings row the run lock needs.
@@ -305,10 +305,13 @@ export async function runSourcing(userId: number, deadline: number, options: { c
       .where(
         and(
           eq(sourcingCandidates.userId, userId),
-          or(
-            eq(sourcingCandidates.status, "queued"),
-            and(eq(sourcingCandidates.status, "ready"), lt(sourcingCandidates.checkedAt, staleReady)),
-          ),
+          // One "More like this" search: only its own products still waiting.
+          options.niche
+            ? and(eq(sourcingCandidates.niche, options.niche), eq(sourcingCandidates.status, "queued"))
+            : or(
+                eq(sourcingCandidates.status, "queued"),
+                and(eq(sourcingCandidates.status, "ready"), lt(sourcingCandidates.checkedAt, staleReady)),
+              ),
         ),
       )
       // Stale ready products first (keep the list honest), then the best new ones.
@@ -363,6 +366,11 @@ export async function runSourcing(userId: number, deadline: number, options: { c
     }
   }
 
+  // Free the run lock now it's done, so "More like this" can carry straight on (lastRunAt stays within a minute).
+  await db
+    .update(sourcingSettings)
+    .set({ lastRunAt: new Date(Date.now() - RUN_LOCK_MS) })
+    .where(eq(sourcingSettings.userId, userId));
   console.log(`[sourcing] user ${userId}: ${JSON.stringify(run)}`);
   return run;
 }
@@ -517,10 +525,18 @@ const LIKE_SCORE = 1000;
  * and queues the new ones for the usual checks, first in line. Returns how
  * many were queued, and the search used.
  */
-export async function findSimilar(userId: number, title: string): Promise<{ ok: true; queued: number; query: string } | { ok: false; error: string }> {
-  const words = keywordWords(title).filter((w) => !/^\d+$/.test(w) && !WHO.has(w.replace(/'s$/, "")));
-  if (!words.length) return { ok: false, error: "Type a few words that describe the product." };
+/** The CJ searches for a "More like this" title, and the niche label its products are queued under. */
+export function likeSearch(title: string) {
+  const words = keywordWords(title).filter((w) => !/^\d+$/.test(w) && !WHO.has(w));
+  if (!words.length) return null;
   const queries = [...new Set([3, 2].map((n) => words.slice(0, n).join(" ")))];
+  return { queries, niche: `Like: ${queries[0]}`.slice(0, 60) };
+}
+
+export async function findSimilar(userId: number, title: string): Promise<{ ok: true; queued: number; query: string } | { ok: false; error: string }> {
+  const search = likeSearch(title);
+  if (!search) return { ok: false, error: "Type a few words that describe the product." };
+  const { queries, niche } = search;
 
   const [known, dismissed, listed] = await Promise.all([
     db.select({ pid: sourcingCandidates.pid }).from(sourcingCandidates).where(eq(sourcingCandidates.userId, userId)),
@@ -536,7 +552,6 @@ export async function findSimilar(userId: number, title: string): Promise<{ ok: 
     if (found.size >= LIKE_LIMIT) break;
   }
   const picked = [...found.values()].slice(0, LIKE_LIMIT);
-  const niche = `Like: ${queries[0]}`.slice(0, 60);
   if (picked.length) {
     await db
       .insert(sourcingCandidates)
@@ -544,4 +559,53 @@ export async function findSimilar(userId: number, title: string): Promise<{ ok: 
       .onConflictDoNothing();
   }
   return { ok: true, queued: picked.length, query: queries[0] };
+}
+
+export type SimilarResult = {
+  status: "queued" | "ready" | "rejected";
+  product: ReadyProduct;
+  reason: RejectReason | null;
+  detail: string;
+};
+
+/** Every product a "More like this" search queued (its niche label), with where its check got to. */
+export async function similarResults(userId: number, niche: string): Promise<SimilarResult[]> {
+  const [rows, listed] = await Promise.all([
+    db
+      .select()
+      .from(sourcingCandidates)
+      .where(and(eq(sourcingCandidates.userId, userId), eq(sourcingCandidates.niche, niche), inArray(sourcingCandidates.status, ["queued", "ready", "rejected"])))
+      .orderBy(desc(sourcingCandidates.score))
+      .limit(100),
+    listedPids(userId),
+  ]);
+  const order = { ready: 0, queued: 1, rejected: 2 } as const;
+  return rows
+    .filter((r) => !listed.has(r.pid))
+    .map((r) => ({
+      status: r.status as SimilarResult["status"],
+      reason: (r.reason as RejectReason | null) ?? null,
+      detail: r.detail ?? "",
+      product: {
+        pid: r.pid,
+        niche: r.niche,
+        title: r.title,
+        imageUrl: r.imageUrl,
+        cost: toNumber(r.cost) ?? 0,
+        shipping: toNumber(r.shipping) ?? 0,
+        listPrice: toNumber(r.listPrice) ?? 0,
+        profit: toNumber(r.profit) ?? 0,
+        market: toNumber(r.market),
+        variantCount: r.variantCount,
+        ebayCategory: r.ebayCategory,
+        ebaySold: r.ebaySold,
+        ebayListings: r.ebayListings,
+        checkedAt: r.checkedAt ? r.checkedAt.toISOString() : null,
+      },
+    }))
+    .sort(
+      (a, b) =>
+        order[a.status] - order[b.status] ||
+        (demandScore(b.product.ebaySold, b.product.ebayListings) ?? -1) - (demandScore(a.product.ebaySold, a.product.ebayListings) ?? -1),
+    );
 }

@@ -47,7 +47,7 @@ const BRANDS = [
   "ninja foodi", "instant pot", "keurig",
   // Toys, characters & licences
   "disney", "marvel", "star wars", "pokemon", "lego", "barbie", "hot wheels", "hello kitty", "sanrio", "harry potter",
-  "nfl", "nba", "mlb", "nhl", "fifa",
+  "nfl", "nba", "mlb", "nhl", "fifa", "needoh", "nee doh", "schylling", "squishmallow", "squishmallows",
   // Eyewear
   "ray-ban", "ray ban", "rayban", "oakley",
 ];
