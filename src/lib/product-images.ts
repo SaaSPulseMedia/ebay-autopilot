@@ -167,7 +167,9 @@ export async function storeUpload(userId: number, image: ProcessedImage) {
 
 /** eBay's Picture Policy: the longest side must be at least this many pixels. */
 const EBAY_MIN_LONG_SIDE = 500;
-const FETCH_TIMEOUT_MS = 10_000;
+const FETCH_TIMEOUT_MS = 6_000;
+/** Enough of a JPEG, PNG or WebP file to read its width and height. */
+const HEAD_BYTES = 64 * 1024;
 /** Supplier pictures larger than this aren't downloaded to be measured (they are big enough anyway). */
 const MAX_FETCH_BYTES = 15 * 1024 * 1024;
 const sizeCache = new Map<string, string | null>();
@@ -192,17 +194,28 @@ async function bigEnoughUrl(userId: number, url: string): Promise<string | null>
   if (sizeCache.has(key)) return sizeCache.get(key) ?? null;
   let result: string | null = url;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), cache: "no-store" });
-    const length = Number(res.headers.get("content-length") ?? 0);
-    if (res.ok && length <= MAX_FETCH_BYTES) {
-      const bytes = Buffer.from(await res.arrayBuffer());
-      const meta = await sharp(bytes).metadata();
-      const longSide = Math.max(meta.width ?? 0, meta.height ?? 0);
-      if (longSide > 0 && longSide < EBAY_MIN_LONG_SIDE) {
-        const base = serverBaseUrl();
-        result = base ? `${base}/api/images/${await storeUpload(userId, await processUpload(bytes))}.jpg` : null;
-        console.log(`[ebay-media] picture ${longSide}px is under eBay's ${EBAY_MIN_LONG_SIDE}px: ${result ? "enlarged" : "left out"}`);
+    // The size is in the file's first bytes: only those are fetched (servers that ignore Range send it all).
+    const head = await fetch(url, { headers: { Range: `bytes=0-${HEAD_BYTES - 1}` }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), cache: "no-store" });
+    let meta = head.ok ? await sharp(Buffer.from(await head.arrayBuffer())).metadata().catch(() => null) : null;
+    let whole: Buffer | null = null;
+    if (!meta?.width && head.ok) {
+      // Some formats (e.g. WebP) can't be measured from part of the file: fetch it all (when not huge).
+      const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), cache: "no-store" });
+      if (res.ok && Number(res.headers.get("content-length") ?? 0) <= MAX_FETCH_BYTES) {
+        whole = Buffer.from(await res.arrayBuffer());
+        meta = await sharp(whole).metadata().catch(() => null);
       }
+    }
+    const longSide = Math.max(meta?.width ?? 0, meta?.height ?? 0);
+    if (longSide > 0 && longSide < EBAY_MIN_LONG_SIDE) {
+      // Small pictures are small files: the whole one is fetched (if it isn't yet) to enlarge it.
+      if (!whole) {
+        const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), cache: "no-store" });
+        if (res.ok && Number(res.headers.get("content-length") ?? 0) <= MAX_FETCH_BYTES) whole = Buffer.from(await res.arrayBuffer());
+      }
+      const base = serverBaseUrl();
+      result = base && whole ? `${base}/api/images/${await storeUpload(userId, await processUpload(whole))}.jpg` : null;
+      console.log(`[ebay-media] picture ${longSide}px is under eBay's ${EBAY_MIN_LONG_SIDE}px: ${result ? "enlarged" : "left out"}`);
     }
   } catch (error) {
     // Can't measure it: send it as it is (eBay's own check still applies).
@@ -212,12 +225,12 @@ async function bigEnoughUrl(userId: number, url: string): Promise<string | null>
   return result;
 }
 
-/** bigEnoughUrl for many pictures, five at a time: original URL → URL to use (null: leave it out). */
+/** bigEnoughUrl for many pictures, ten at a time: original URL → URL to use (null: leave it out). */
 export async function bigEnoughPictures(userId: number, urls: string[]): Promise<Map<string, string | null>> {
   const unique = [...new Set(urls.filter(Boolean))];
   const out = new Map<string, string | null>();
-  for (let i = 0; i < unique.length; i += 5) {
-    const batch = unique.slice(i, i + 5);
+  for (let i = 0; i < unique.length; i += 10) {
+    const batch = unique.slice(i, i + 10);
     const checked = await Promise.all(batch.map((url) => bigEnoughUrl(userId, url)));
     batch.forEach((url, j) => out.set(url, checked[j]));
   }

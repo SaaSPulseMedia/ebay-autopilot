@@ -60,7 +60,15 @@ export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun, de
             : { urls: links, markupPct, adRatePct, drip: dripAllowed && drip },
         ),
       });
-      const json = (await res.json()) as BatchResponse;
+      const json = (await res.json().catch(() => null)) as BatchResponse | null;
+      if (!json) {
+        // No answer in time (Vercel stops a request after a minute): the listing may still have gone out.
+        setSummary({
+          ok: false,
+          error: `AutoPilot took too long to answer (HTTP ${res.status}). The listing may still have been published: check your Listings page before trying again.`,
+        });
+        return;
+      }
       setSummary(json);
       if (json.ok) {
         setText("");
