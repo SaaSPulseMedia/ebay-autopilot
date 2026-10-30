@@ -236,6 +236,34 @@ export const cjOrders = pgTable(
   (t) => [primaryKey({ columns: [t.userId, t.ebayOrderId] })],
 );
 
+/** The seller's thank-you message, sent once to the buyer of each new sale through eBay messaging. */
+export const buyerMessageSettings = pgTable("buyer_message_settings", {
+  userId: integer("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(false),
+  /** With {first_name}, {item} and {order} filled in for each buyer. */
+  template: text("template").notNull().default(""),
+  /** When it was last switched on: only sales after this get the message. */
+  enabledAt: timestamp("enabled_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** One row per order the thank-you message went to (or failed for): never sent twice. No buyer details. */
+export const buyerMessagesSent = pgTable(
+  "buyer_messages_sent",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    ebayOrderId: text("ebay_order_id").notNull(),
+    status: text("status").notNull().default("sent"), // 'sent' | 'error'
+    error: text("error"),
+    sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.ebayOrderId] })],
+);
+
 /** Automatic ordering on CJ for new eBay sales: off, create (and check) only, or create and pay from the CJ wallet. */
 export const autoOrderSettings = pgTable("auto_order_settings", {
   userId: integer("user_id")

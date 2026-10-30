@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AutoOrderOnCj } from "@/components/dashboard/AutoOrderOnCj";
 import { AutoOrdering } from "@/components/dashboard/AutoOrdering";
+import { BuyerMessage } from "@/components/dashboard/BuyerMessage";
 import type { EbayOrder, ShipTo } from "@/lib/ebay/orders";
 import type { CjMatch } from "@/lib/order-fulfillment";
 
@@ -301,6 +302,7 @@ export function EbayOrders() {
   return (
     <section className="space-y-3">
       <AutoOrdering onRun={() => void load(show, true)} />
+      <BuyerMessage />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex rounded-full border border-white/15 p-0.5 text-xs font-semibold" role="tablist">
           {(["awaiting", "all"] as const).map((value) => (

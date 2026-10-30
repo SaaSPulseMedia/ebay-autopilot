@@ -1,5 +1,6 @@
 import { sellersWithOpenCjOrders, syncCjOrders } from "@/lib/auto-fulfillment";
 import { runAutoOrdering, sellersWithAutoOrdering } from "@/lib/auto-ordering";
+import { runBuyerMessages, sellersWithMessages } from "@/lib/buyer-messages";
 import { cronAuthorized } from "@/lib/cron-auth";
 
 /**
@@ -32,6 +33,16 @@ export async function GET(request: Request) {
       auto.held += run.held;
     }
 
+    // Thank-you messages to the buyers of new sales (quick: one eBay call each).
+    const messages = { sent: 0, failed: 0 };
+    const messageDeadline = Date.now() + 10_000;
+    for (const userId of await sellersWithMessages()) {
+      if (Date.now() > messageDeadline) break;
+      const run = await runBuyerMessages(userId, messageDeadline);
+      messages.sent += run.sent;
+      messages.failed += run.failed;
+    }
+
     const sellers = await sellersWithOpenCjOrders();
     let synced = 0;
     let trackingSent = 0;
@@ -41,7 +52,7 @@ export async function GET(request: Request) {
       synced += records.length;
       trackingSent += records.filter((r) => r.status === "tracking_sent").length;
     }
-    return Response.json({ ok: true, auto, sellers: sellers.length, synced, trackingSent });
+    return Response.json({ ok: true, auto, messages, sellers: sellers.length, synced, trackingSent });
   } catch (error) {
     console.error("[cron/fulfillment] failed", error);
     return Response.json({ ok: false, error: error instanceof Error ? error.message.split("\n")[0] : String(error) }, { status: 500 });

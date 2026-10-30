@@ -148,6 +148,27 @@ const ADDED_TABLES: Array<{ table: string; ddl: string }> = [
     )`,
   },
   {
+    table: "buyer_message_settings",
+    ddl: `CREATE TABLE IF NOT EXISTS buyer_message_settings (
+      user_id integer PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      enabled boolean NOT NULL DEFAULT false,
+      template text NOT NULL DEFAULT '',
+      enabled_at timestamptz,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )`,
+  },
+  {
+    table: "buyer_messages_sent",
+    ddl: `CREATE TABLE IF NOT EXISTS buyer_messages_sent (
+      user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      ebay_order_id text NOT NULL,
+      status text NOT NULL DEFAULT 'sent',
+      error text,
+      sent_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, ebay_order_id)
+    )`,
+  },
+  {
     table: "auto_order_settings",
     ddl: `CREATE TABLE IF NOT EXISTS auto_order_settings (
       user_id integer PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
