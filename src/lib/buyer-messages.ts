@@ -8,15 +8,13 @@ import { getAccessTokenForUser } from "@/lib/ebay/client";
 import { sendBuyerMessage } from "@/lib/ebay/messages";
 import { type EbayOrder, fetchEbayOrders } from "@/lib/ebay/orders";
 import { DEFAULT_MESSAGE, renderMessage } from "@/lib/message-template";
-import { matchSkusToCj } from "@/lib/order-fulfillment";
 
 /**
  * The seller's thank-you message: once to the buyer of each new paid sale,
  * through eBay messaging, with {first_name}, {item} and {order} filled in.
- * A sale of a CJ product waits until its CJ order is paid (the order
- * AutoPilot created shows paid, shipped or tracking sent); one never ordered
- * through AutoPilot (e.g. "Buy sample") gets it after CJ_FALLBACK_MS. Other
- * sales (e.g. AliExpress) get it within the hour of the sale.
+ * Only sales whose CJ order AutoPilot follows get it, once that order is
+ * paid (shows paid, shipped or tracking sent). Other sales (e.g. AliExpress,
+ * or CJ bought with "Buy sample") are left to the seller to message by hand.
  * Runs hourly (the fulfillment job). Only sales after it was switched on get
  * it, each once (buyer_messages_sent); a failure is recorded, not retried.
  * The buyer's name is used to write the message and never stored or logged.
@@ -27,8 +25,6 @@ export type MessageSettings = { enabled: boolean; template: string; enabledAt: D
 /** eBay orders older than this are never messaged. */
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const SUBJECT = "Your order is on its way";
-/** A CJ sale with no paid CJ order in AutoPilot after this long gets the message anyway (ordered some other way). */
-const CJ_FALLBACK_MS = 48 * 60 * 60 * 1000;
 /** CJ orders AutoPilot knows are paid. */
 const PAID = ["paid", "shipped", "tracking_sent"];
 
@@ -74,26 +70,19 @@ export async function runBuyerMessages(userId: number, deadline: number): Promis
   const since = Math.max(settings.enabledAt.getTime(), Date.now() - MAX_AGE_MS);
   const fresh = orders.orders.filter((o) => o.paymentStatus === "PAID" && new Date(o.createdAt).getTime() >= since);
   if (!fresh.length) return run;
-  const [cjMatches, cjRecords] = await Promise.all([
-    matchSkusToCj(userId, fresh.flatMap((o) => o.lines.map((l) => l.sku))),
-    db
+  const cjRecords = await db
       .select({ ebayOrderId: cjOrders.ebayOrderId, status: cjOrders.status })
       .from(cjOrders)
-      .where(and(eq(cjOrders.userId, userId), eq(cjOrders.sandbox, false), inArray(cjOrders.ebayOrderId, fresh.map((o) => o.orderId)))),
-  ]);
+      .where(and(eq(cjOrders.userId, userId), eq(cjOrders.sandbox, false), inArray(cjOrders.ebayOrderId, fresh.map((o) => o.orderId))));
   const cjStatus = new Map(cjRecords.map((r) => [r.ebayOrderId, r.status]));
 
   for (const order of fresh) {
     if (Date.now() > deadline) break;
     const line = order.lines.find((l) => l.legacyItemId);
     if (!line || !order.buyerUsername) continue;
-    // A CJ sale: only once its CJ order is paid (or, never ordered through AutoPilot, after CJ_FALLBACK_MS).
-    const isCj = order.lines.some((l) => l.sku && cjMatches[l.sku]);
+    // Only once AutoPilot has seen the sale's CJ order paid; anything else is the seller's to message.
     const status = cjStatus.get(order.orderId);
-    const waitedLong = Date.now() - new Date(order.createdAt).getTime() > CJ_FALLBACK_MS;
-    // An order AutoPilot is still following on CJ (created, waiting for payment) always waits for "paid".
-    const followed = Boolean(status) && !["held", "error", "cancelled"].includes(status as string);
-    if ((isCj || status) && !(status && PAID.includes(status)) && !(waitedLong && !followed)) continue;
+    if (!status || !PAID.includes(status)) continue;
     // Claim it first: two runs at once never send it twice.
     const claimed = await db
       .insert(buyerMessagesSent)

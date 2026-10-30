@@ -46,7 +46,7 @@ export function BuyerMessage() {
       }
       setSaved(json.settings);
       setTemplate(json.settings.template);
-      setMessage(json.settings.enabled ? "Saved. Every new sale from now on gets this message (CJ sales once their CJ order is paid)." : "Saved: the message is off.");
+      setMessage(json.settings.enabled ? "Saved. From now on, each CJ order AutoPilot follows gets this message once you've paid it on CJ." : "Saved: the message is off.");
     } catch (error) {
       setMessage(`Couldn't save (${error instanceof Error ? error.message : "no answer"}).`);
     } finally {
@@ -64,8 +64,8 @@ export function BuyerMessage() {
         <div>
           <h2 className="text-sm font-semibold text-white">Thank-you message to buyers</h2>
           <p className="mt-0.5 text-xs text-slate-400">
-            Sent once to the buyer of every new sale, through eBay messages. For a CJ product it goes out once your CJ order is paid
-            (within the hour of AutoPilot seeing it paid); for other sales (e.g. AliExpress), within the hour of the sale.{" "}
+            Sent once, through eBay messages, to the buyer of each new sale AutoPilot orders on CJ, within the hour of AutoPilot seeing
+            your CJ payment. AliExpress sales (and CJ bought with Buy sample) get nothing: you message those buyers yourself.{" "}
             {saved.enabled && saved.enabledAt
               ? `On since ${new Date(saved.enabledAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}: only sales after that get it.`
               : "Off."}
