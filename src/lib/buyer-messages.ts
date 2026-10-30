@@ -6,7 +6,7 @@ import { db } from "@/db";
 import { buyerMessageSettings, buyerMessagesSent, cjOrders } from "@/db/schema";
 import { getAccessTokenForUser } from "@/lib/ebay/client";
 import { sendBuyerMessage } from "@/lib/ebay/messages";
-import { type EbayOrder, fetchEbayOrders } from "@/lib/ebay/orders";
+import { type EbayOrder, fetchEbayOrder, fetchEbayOrders } from "@/lib/ebay/orders";
 import { DEFAULT_MESSAGE, renderMessage } from "@/lib/message-template";
 
 /**
@@ -106,4 +106,53 @@ export async function runBuyerMessages(userId: number, deadline: number): Promis
   }
   if (run.sent || run.failed) console.log(`[buyer-message] user ${userId}: ${JSON.stringify(run)}`);
   return run;
+}
+
+/**
+ * "Send message" on one order: the seller's thank-you message to that buyer
+ * now (whether or not automatic sending is on), once per order.
+ */
+export async function sendThankYouNow(userId: number, ebayOrderId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const [settings, order, token] = await Promise.all([getMessageSettings(userId), fetchEbayOrder(userId, ebayOrderId), getAccessTokenForUser(userId)]);
+  if (!order || !token) return { ok: false, error: "eBay didn't return this order. Refresh and try again." };
+  const line = order.lines.find((l) => l.legacyItemId);
+  if (!line || !order.buyerUsername) return { ok: false, error: "eBay didn't give the buyer or item for this order." };
+  const claimed = await db
+    .insert(buyerMessagesSent)
+    .values({ userId, ebayOrderId })
+    .onConflictDoNothing()
+    .returning({ id: buyerMessagesSent.ebayOrderId });
+  if (!claimed.length) {
+    const [row] = await db
+      .select({ status: buyerMessagesSent.status })
+      .from(buyerMessagesSent)
+      .where(and(eq(buyerMessagesSent.userId, userId), eq(buyerMessagesSent.ebayOrderId, ebayOrderId)))
+      .limit(1);
+    // A failed attempt may be retried; a sent message is never sent twice.
+    if (row?.status === "sent") return { ok: false, error: "Your message was already sent to this buyer." };
+    await db
+      .update(buyerMessagesSent)
+      .set({ status: "sent", error: null, sentAt: new Date() })
+      .where(and(eq(buyerMessagesSent.userId, userId), eq(buyerMessagesSent.ebayOrderId, ebayOrderId)));
+  }
+  const body = renderMessage(settings.template, { firstName: firstName(order), itemTitle: line.title, orderId: order.orderId });
+  const sent = await sendBuyerMessage(token, { itemId: line.legacyItemId, buyerUsername: order.buyerUsername, subject: SUBJECT, body });
+  if (!sent.ok) {
+    await db
+      .update(buyerMessagesSent)
+      .set({ status: "error", error: sent.error.slice(0, 500) })
+      .where(and(eq(buyerMessagesSent.userId, userId), eq(buyerMessagesSent.ebayOrderId, ebayOrderId)));
+    return { ok: false, error: `eBay didn't send it: ${sent.error}` };
+  }
+  return { ok: true };
+}
+
+/** Which of these orders already got the thank-you message. */
+export async function messagedOrders(userId: number, ebayOrderIds: string[]) {
+  if (!ebayOrderIds.length) return new Set<string>();
+  const rows = await db
+    .select({ id: buyerMessagesSent.ebayOrderId })
+    .from(buyerMessagesSent)
+    .where(and(eq(buyerMessagesSent.userId, userId), eq(buyerMessagesSent.status, "sent"), inArray(buyerMessagesSent.ebayOrderId, ebayOrderIds)));
+  return new Set(rows.map((r) => r.id));
 }
