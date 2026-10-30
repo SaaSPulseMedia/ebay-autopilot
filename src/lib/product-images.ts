@@ -164,3 +164,62 @@ export async function storeUpload(userId: number, image: ProcessedImage) {
   });
   return id;
 }
+
+/** eBay's Picture Policy: the longest side must be at least this many pixels. */
+const EBAY_MIN_LONG_SIDE = 500;
+const FETCH_TIMEOUT_MS = 10_000;
+/** Supplier pictures larger than this aren't downloaded to be measured (they are big enough anyway). */
+const MAX_FETCH_BYTES = 15 * 1024 * 1024;
+const sizeCache = new Map<string, string | null>();
+
+/** Base URL eBay can fetch our own images from, without a request (production domain); null when unknown. */
+function serverBaseUrl() {
+  const configured = process.env.APP_URL?.trim().replace(/\/+$/, "");
+  if (configured) return configured;
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  return null;
+}
+
+/**
+ * The URL to give eBay for a supplier picture: the same URL when it is big
+ * enough (or can't be checked), an enlarged copy served from /api/images when
+ * it is under eBay's 500 px minimum, or null when it is too small and can't
+ * be enlarged here (eBay rejects the whole listing for one such picture).
+ */
+async function bigEnoughUrl(userId: number, url: string): Promise<string | null> {
+  if (UPLOAD_PATH.test(url) || /(^|\.)ebayimg\.com\//i.test(url.replace(/^https?:\/\//, ""))) return url;
+  const key = `${userId}:${url}`;
+  if (sizeCache.has(key)) return sizeCache.get(key) ?? null;
+  let result: string | null = url;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), cache: "no-store" });
+    const length = Number(res.headers.get("content-length") ?? 0);
+    if (res.ok && length <= MAX_FETCH_BYTES) {
+      const bytes = Buffer.from(await res.arrayBuffer());
+      const meta = await sharp(bytes).metadata();
+      const longSide = Math.max(meta.width ?? 0, meta.height ?? 0);
+      if (longSide > 0 && longSide < EBAY_MIN_LONG_SIDE) {
+        const base = serverBaseUrl();
+        result = base ? `${base}/api/images/${await storeUpload(userId, await processUpload(bytes))}.jpg` : null;
+        console.log(`[ebay-media] picture ${longSide}px is under eBay's ${EBAY_MIN_LONG_SIDE}px: ${result ? "enlarged" : "left out"}`);
+      }
+    }
+  } catch (error) {
+    // Can't measure it: send it as it is (eBay's own check still applies).
+    console.warn(`[ebay-media] couldn't measure ${url.slice(0, 120)}: ${error instanceof Error ? error.message : error}`);
+  }
+  sizeCache.set(key, result);
+  return result;
+}
+
+/** bigEnoughUrl for many pictures, five at a time: original URL → URL to use (null: leave it out). */
+export async function bigEnoughPictures(userId: number, urls: string[]): Promise<Map<string, string | null>> {
+  const unique = [...new Set(urls.filter(Boolean))];
+  const out = new Map<string, string | null>();
+  for (let i = 0; i < unique.length; i += 5) {
+    const batch = unique.slice(i, i + 5);
+    const checked = await Promise.all(batch.map((url) => bigEnoughUrl(userId, url)));
+    batch.forEach((url, j) => out.set(url, checked[j]));
+  }
+  return out;
+}

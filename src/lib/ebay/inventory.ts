@@ -5,6 +5,7 @@ import { type EbayError, ebayErrorMessage, ebayFetch, getAccessTokenForUser } fr
 import { marketPriceWarning } from "@/lib/ebay/market-price";
 import { hostAllOnEbay, hostVideoOnEbay } from "@/lib/ebay/media";
 import { type PromotionResult, promoteListing } from "@/lib/ebay/promoted";
+import { bigEnoughPictures } from "@/lib/product-images";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { descriptionImageSources } from "@/lib/size-chart";
 
@@ -214,9 +215,20 @@ const escapeAttr = (text: string) => text.replace(/&/g, "&amp;").replace(/"/g, "
  *    won't take it, the original HTTPS image, still embedded (logged).
  * Never fails the listing.
  */
-async function withEbayHostedImages(input: PublishInput): Promise<PublishInput> {
-  const token = await getAccessTokenForUser(input.userId);
-  if (!token) return input;
+async function withEbayHostedImages(original: PublishInput): Promise<PublishInput> {
+  const token = await getAccessTokenForUser(original.userId);
+  if (!token) return original;
+  // eBay rejects the whole listing for one picture under 500 px: small ones are enlarged first.
+  const sized = await bigEnoughPictures(original.userId, [
+    ...original.imageUrls,
+    ...(original.variations ?? []).map((v) => v.imageUrl ?? ""),
+  ]);
+  const sizedUrl = (url: string) => (sized.has(url) ? sized.get(url) : url);
+  const input: PublishInput = {
+    ...original,
+    imageUrls: original.imageUrls.map(sizedUrl).filter((u): u is string => Boolean(u)),
+    variations: original.variations?.map((v) => ({ ...v, imageUrl: v.imageUrl ? (sizedUrl(v.imageUrl) ?? null) : v.imageUrl })),
+  };
   const gallery = pictureList(input.imageUrls);
   const variantPictures = (input.variations ?? []).map((v) => v.imageUrl).filter((u): u is string => Boolean(u));
   const inDescription = descriptionImageSources(input.description);
