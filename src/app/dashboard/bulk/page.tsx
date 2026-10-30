@@ -5,6 +5,7 @@ import Link from "next/link";
 import { db } from "@/db";
 import { listings } from "@/db/schema";
 import { BulkLister, type BulkProduct } from "@/components/dashboard/BulkLister";
+import { listingAllowance } from "@/lib/listing-pipeline";
 import { getCurrentUser } from "@/lib/auth";
 import { DRIP_PER_RUN, planLimits } from "@/lib/limits";
 import { landedCost, realBreakdown, saleFeePct } from "@/lib/listing-defaults";
@@ -25,13 +26,10 @@ export default async function BulkPage() {
 
   const limits = planLimits(user.plan);
   const externalId = sql<string>`${listings.payload}->>'externalId'`;
-  const [catalog, defaults, [{ count: activeUsed }], listedRows] = await Promise.all([
+  const [catalog, defaults, allowance, listedRows] = await Promise.all([
     getCatalog(user.id, 120),
     getListingDefaults(user.id),
-    db
-      .select({ count: count() })
-      .from(listings)
-      .where(and(eq(listings.userId, user.id), ne(listings.status, "ended"))),
+    listingAllowance(user.id, limits),
     // Catalog products with a live or scheduled listing (listings made before payload.externalId aren't matched).
     db
       .selectDistinct({ externalId })
@@ -118,8 +116,8 @@ export default async function BulkPage() {
           products={products}
           marketMode={defaults.pricingMode === "market"}
           batchSize={limits.batchSize}
-          activeListings={limits.activeListings}
-          activeUsed={activeUsed}
+          activeListings={allowance.allowed}
+          activeUsed={allowance.used}
           planName={limits.planName}
           isTrial={limits.isTrial}
           dripAllowed={limits.dripPosting}

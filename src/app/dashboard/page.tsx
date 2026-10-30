@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { listings, orders } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
 import { planLimits } from "@/lib/limits";
+import { listingAllowance } from "@/lib/listing-pipeline";
 import { getCatalogStats } from "@/lib/suppliers";
 import { and, count, desc, eq, ne } from "drizzle-orm";
 
@@ -17,9 +18,9 @@ export default async function OverviewPage() {
 
   const limits = planLimits(user.plan);
 
-  const [myListings, [{ count: activeListingsCount }], myOrders, stats] = await Promise.all([
+  const [myListings, allowance, myOrders, stats] = await Promise.all([
     db.select().from(listings).where(eq(listings.userId, user.id)).orderBy(desc(listings.createdAt)).limit(5),
-    db.select({ count: count() }).from(listings).where(and(eq(listings.userId, user.id), ne(listings.status, "ended"))),
+    listingAllowance(user.id, limits),
     db.select().from(orders).where(eq(orders.userId, user.id)).limit(200),
     getCatalogStats(user.id),
   ]);
@@ -31,8 +32,8 @@ export default async function OverviewPage() {
   const cards = [
     {
       label: "Active listings",
-      value: `${activeListingsCount} / ${limits.activeListings}`,
-      sub: `${limits.planName} plan`,
+      value: allowance.allowed >= 100_000 ? String(allowance.used) : `${allowance.used} / ${allowance.allowed}`,
+      sub: allowance.allowed >= 100_000 ? "No limit (store owner)" : `${limits.planName} plan`,
     },
     { label: "Orders", value: String(myOrders.length), sub: "All time" },
     { label: "Revenue", value: `$${revenue.toFixed(2)}`, sub: "Gross sales" },

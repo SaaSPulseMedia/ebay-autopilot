@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, count, eq, ne } from "drizzle-orm";
+import { and, count, eq, inArray, ne } from "drizzle-orm";
 
 import { db } from "@/db";
 import { listings } from "@/db/schema";
@@ -12,6 +12,7 @@ import { getValidAccessToken } from "@/lib/ebay/tokens";
 import type { ListingDraft, ListingEngine, ListingResult } from "@/lib/ebay/types";
 import { nextPlanUp, planLimits, type PlanLimits } from "@/lib/limits";
 import { withFooter, type ListingDefaults } from "@/lib/listing-defaults";
+import { isStoreOwner } from "@/lib/owner";
 import type { CatalogVariant } from "@/db/schema";
 import type { ProductFacts } from "@/lib/cj/facts";
 import { isApparel, sizeChartImages, sizeNotes } from "@/lib/size-chart";
@@ -71,17 +72,32 @@ export function storedStatus(result: ListingResult) {
   return result.status === "published" ? "active" : result.status === "queued" ? "queued" : "draft";
 }
 
-/** Every listing that is not ended counts against the plan — including scheduled ones. */
+/**
+ * Listings that count against the plan: live on eBay, being published, or
+ * scheduled for drip posting. Drafts (including attempts eBay rejected) and
+ * ended listings don't.
+ */
+export const COUNTED_STATUSES = ["active", "queued", "scheduled"];
+
 export async function activeListingCount(userId: number) {
   const [{ value }] = await db
     .select({ value: count() })
     .from(listings)
-    .where(and(eq(listings.userId, userId), ne(listings.status, "ended")));
+    .where(and(eq(listings.userId, userId), inArray(listings.status, COUNTED_STATUSES)));
   return value;
 }
 
 function limitError(body: Record<string, unknown>) {
   return Response.json({ ok: false, code: "plan_limit_reached", upgrade: true, ...body }, { status: 403 });
+}
+
+/** No plan limit (the store owner's own account): shown as this many active listings allowed. */
+const OWNER_ALLOWANCE = 100_000;
+
+/** Active listings used and allowed, for the pages that show "room for N" (the owner has no limit). */
+export async function listingAllowance(userId: number, limits: PlanLimits) {
+  const [used, owner] = await Promise.all([activeListingCount(userId), isStoreOwner(userId)]);
+  return { used, allowed: owner ? OWNER_ALLOWANCE : limits.activeListings };
 }
 
 /**
@@ -123,6 +139,8 @@ export async function checkPlanCapacity(
     );
   }
 
+  // The store owner's own account (the one AutoPilot's CJ account belongs to) has no listing limit.
+  if (await isStoreOwner(userId)) return null;
   const activeCount = await activeListingCount(userId);
   const remaining = Math.max(0, limits.activeListings - activeCount);
   if (remaining <= 0) {

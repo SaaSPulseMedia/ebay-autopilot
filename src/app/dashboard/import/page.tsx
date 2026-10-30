@@ -1,7 +1,7 @@
 import { ImportLister } from "@/components/dashboard/ImportLister";
 import { getCurrentUser } from "@/lib/auth";
 import { DRIP_PER_RUN, planLimits } from "@/lib/limits";
-import { activeListingCount } from "@/lib/listing-pipeline";
+import { listingAllowance } from "@/lib/listing-pipeline";
 import { MIN_PROFIT_LABEL } from "@/lib/pricing";
 import { getListingDefaults } from "@/lib/seller-settings";
 
@@ -14,7 +14,7 @@ export default async function ImportPage() {
   if (!user) return null;
 
   const limits = planLimits(user.plan);
-  const [activeUsed, defaults] = await Promise.all([activeListingCount(user.id), getListingDefaults(user.id)]);
+  const [allowance, defaults] = await Promise.all([listingAllowance(user.id, limits), getListingDefaults(user.id)]);
 
   return (
     <div className="space-y-6">
@@ -35,7 +35,7 @@ export default async function ImportPage() {
 
       <ImportLister
         batchSize={limits.batchSize}
-        remaining={Math.max(0, limits.activeListings - activeUsed)}
+        remaining={Math.max(0, allowance.allowed - allowance.used)}
         dripAllowed={limits.dripPosting}
         dripPerRun={DRIP_PER_RUN}
         defaultMarkupPct={defaults.markupPct}

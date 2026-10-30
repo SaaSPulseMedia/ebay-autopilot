@@ -6,6 +6,7 @@ import { ListingsTable } from "@/components/dashboard/ListingsTable";
 import { SyncFromEbay } from "@/components/dashboard/SyncFromEbay";
 import { getCurrentUser } from "@/lib/auth";
 import { DRIP_PER_RUN, planLimits } from "@/lib/limits";
+import { listingAllowance } from "@/lib/listing-pipeline";
 import { and, count, desc, eq, ne } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -18,18 +19,16 @@ export default async function ListingsPage() {
 
   const limits = planLimits(user.plan);
 
-  const [rows, [{ count: activeUsed }]] = await Promise.all([
+  const [rows, allowance] = await Promise.all([
     db
       .select()
       .from(listings)
       .where(eq(listings.userId, user.id))
       .orderBy(desc(listings.createdAt))
       .limit(100),
-    db
-      .select({ count: count() })
-      .from(listings)
-      .where(and(eq(listings.userId, user.id), ne(listings.status, "ended"))),
+    listingAllowance(user.id, limits),
   ]);
+  const activeUsed = allowance.used;
 
   const scheduled = rows.filter((row) => row.status === "scheduled").length;
 
@@ -39,7 +38,9 @@ export default async function ListingsPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white">Listings</h1>
           <p className="mt-1 text-sm text-slate-400">
-            {activeUsed} / {limits.activeListings} active listing slots used on {limits.planName} plan.
+            {allowance.allowed >= 100_000
+              ? `${activeUsed} active listings (no limit: store owner).`
+              : `${activeUsed} / ${allowance.allowed} active listing slots used on ${limits.planName} plan.`}
           </p>
         </div>
         <div className="flex items-center gap-2">

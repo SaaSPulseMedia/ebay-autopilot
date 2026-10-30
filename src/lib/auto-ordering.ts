@@ -12,6 +12,7 @@ import {
 } from "@/lib/cj/orders";
 import { fetchEbayOrders } from "@/lib/ebay/orders";
 import { realProfit } from "@/lib/listing-defaults";
+import { isStoreOwner } from "@/lib/owner";
 import { getListingDefaults } from "@/lib/seller-settings";
 
 /**
@@ -48,24 +49,8 @@ const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 /** One order takes ~15 s of CJ calls (1.1 s apart); none starts with less time left than this. */
 const ORDER_BUDGET_MS = 20_000;
 
-/**
- * The CJ account (CJ_API_KEY) is the store owner's: only that seller's
- * orders may be paid from its wallet. CJ_ACCOUNT_OWNER_EMAIL names them
- * (default: the store's original seller).
- */
-const walletOwnerEmail = () =>
-  (process.env.CJ_ACCOUNT_OWNER_EMAIL ?? "itsy@store.com").trim().toLowerCase();
-
-export async function ownsCjWallet(userId: number) {
-  const [row] = await db
-    .select({ email: users.email })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
-  return (
-    Boolean(row?.email) && row.email.trim().toLowerCase() === walletOwnerEmail()
-  );
-}
+/** Only the CJ account's owner may pay from its wallet (see isStoreOwner). */
+export const ownsCjWallet = isStoreOwner;
 
 export async function getAutoOrderSettings(
   userId: number,
