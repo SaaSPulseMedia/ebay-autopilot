@@ -1,6 +1,7 @@
 import "server-only";
 
 import { ebayErrorMessage, ebayFetch, getAccessTokenForUser } from "@/lib/ebay/client";
+import { marketQuery } from "@/lib/ebay/market-price";
 import { isFootwearPath, type SizeAspectKind } from "@/lib/ebay/sizes";
 
 /**
@@ -169,6 +170,21 @@ async function treeBaseFor(token: string): Promise<{ ok: true; base: string } | 
   return { ok: true, base: `/commerce/taxonomy/v1/category_tree/${encodeURIComponent(treeIdCache)}` };
 }
 
+/**
+ * What to ask eBay for a category, best first: the full title, then its first
+ * meaningful words, the words it repeats (a supplier title repeats what the
+ * product is: "Stirring Cup … Coffee Cup … Stirring Cup" → "stirring cup"),
+ * and its last words (often the product's name: "… Magnetic Water Cup").
+ */
+export function categoryQueries(title: string) {
+  const words = marketQuery(title, 50).split(" ").filter(Boolean);
+  const counts = new Map<string, number>();
+  for (const w of words) counts.set(w, (counts.get(w) ?? 0) + 1);
+  const repeated = [...new Set(words.filter((w) => (counts.get(w) ?? 0) > 1))].slice(0, 4).join(" ");
+  const last = [...new Set(words.slice(-4))].join(" ");
+  return [...new Set([title.trim(), marketQuery(title, 6), repeated, last, marketQuery(title, 3)])].filter(Boolean);
+}
+
 export async function resolveCategory(userId: number, productTitle: string): Promise<ResolveCategoryResult> {
   try {
     const token = await getAccessTokenForUser(userId);
@@ -176,18 +192,22 @@ export async function resolveCategory(userId: number, productTitle: string): Pro
     const tree = await treeBaseFor(token);
     if (!tree.ok) return tree;
 
-    const suggestions = await ebayFetch<SuggestionsResponse>(
-      `${tree.base}/get_category_suggestions?q=${encodeURIComponent(productTitle)}`,
-      token,
-    );
-    if (suggestions.errors?.length) {
-      return { ok: false, error: ebayErrorMessage(suggestions, "eBay could not suggest a category for this product.") };
+    // Long supplier titles ("… High Value Electric Stirring Cup Lazy Milkshake …") can match no category:
+    // then fewer, meaningful words are tried (the same cleaning as the market price search).
+    const queries = categoryQueries(productTitle);
+    let ranked: Suggestion[] = [];
+    let lastError = "eBay could not suggest a category for this product.";
+    for (const q of queries) {
+      const suggestions = await ebayFetch<SuggestionsResponse>(`${tree.base}/get_category_suggestions?q=${encodeURIComponent(q)}`, token);
+      ranked = (suggestions.categorySuggestions ?? []).filter((s) => s.category?.categoryId);
+      if (ranked.length) {
+        if (q !== queries[0]) console.log(`[ebay-category] no category for the full title; "${q}" found ${ranked[0].category?.categoryName ?? "one"}`);
+        break;
+      }
+      if (suggestions.errors?.length) lastError = ebayErrorMessage(suggestions, lastError);
     }
-    const ranked = (suggestions.categorySuggestions ?? []).filter((s) => s.category?.categoryId);
     const [top, ...rest] = ranked;
-    if (!top?.category?.categoryId) {
-      return { ok: false, error: "eBay could not suggest a category for this product." };
-    }
+    if (!top?.category?.categoryId) return { ok: false, error: lastError };
     const described = await describe(token, tree.base, {
       categoryId: top.category.categoryId,
       categoryName: top.category.categoryName ?? "",
