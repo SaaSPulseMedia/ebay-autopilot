@@ -32,10 +32,10 @@ export async function GET(request: Request) {
     console.error("[orders] CJ matching failed:", error instanceof Error ? error.message : error);
   }
   // The CJ orders AutoPilot created for these eBay orders (status and tracking).
-  const fulfillment: Record<string, { status: string; trackingNumber: string | null; sandbox: boolean; error: string | null }> = {};
+  const fulfillment: Record<string, { status: string; trackingNumber: string | null; sandbox: boolean; error: string | null; note: string | null; auto: boolean }> = {};
   try {
     for (const r of await getCjOrderRecords(user.id, result.orders.map((o) => o.orderId))) {
-      fulfillment[r.ebayOrderId] = { status: r.status, trackingNumber: r.trackingNumber, sandbox: r.sandbox, error: r.error };
+      fulfillment[r.ebayOrderId] = { status: r.status, trackingNumber: r.trackingNumber, sandbox: r.sandbox, error: r.error, note: r.note, auto: r.auto };
     }
   } catch (error) {
     console.error("[orders] CJ order records failed:", error instanceof Error ? error.message : error);

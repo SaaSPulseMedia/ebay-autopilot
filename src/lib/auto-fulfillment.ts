@@ -92,11 +92,17 @@ export type PlaceInput = {
   logisticName: string;
   fromCountryCode: string;
   sandbox: boolean;
+  /** Placed by automatic ordering. */
+  auto?: boolean;
 };
 
-export async function placeCjOrder(userId: number, input: PlaceInput): Promise<{ ok: true; record: CjOrderRecord; warnings: string[] } | { ok: false; error: string }> {
+export async function placeCjOrder(
+  userId: number,
+  input: PlaceInput,
+): Promise<{ ok: true; record: CjOrderRecord; warnings: string[]; shipmentOrderId: string | null } | { ok: false; error: string }> {
   const existing = await recordFor(userId, input.ebayOrderId);
-  if (existing && !existing.sandbox && existing.status !== "error" && existing.status !== "cancelled") {
+  // "held": automatic ordering left it for the seller, who may now place it.
+  if (existing && !existing.sandbox && !["error", "cancelled", "held"].includes(existing.status)) {
     return { ok: false, error: "A CJ order already exists for this eBay order. Check it in CJ (My CJ → Orders)." };
   }
   const prepared = await prepareCjOrder(userId, input.ebayOrderId);
@@ -143,9 +149,11 @@ export async function placeCjOrder(userId: number, input: PlaceInput): Promise<{
 
   // On to "Awaiting Payment" in CJ, so paying is the seller's only step there.
   let submitted: string | null = null;
+  let shipmentOrderId: string | null = null;
   if (created.ok) {
     const ready = await readyForPayment(created.data.cjOrderId, method.method, method.from);
     if (ready.note) created.data.warnings.push(ready.note);
+    if (ready.ok) shipmentOrderId = ready.shipmentOrderId;
     if (!ready.ok) {
       submitted = `Created, but CJ didn't move it to Awaiting Payment (${ready.error}). In CJ → Orders → Store Orders, choose the shipping method on the order, then Add to Orders Picking and pay.`;
       created.data.warnings.push(submitted);
@@ -163,6 +171,9 @@ export async function placeCjOrder(userId: number, input: PlaceInput): Promise<{
     trackingNumber: null,
     carrier: null,
     ebayShippedAt: null,
+    auto: input.auto ?? false,
+    paidAt: null,
+    note: null,
     ...(created.ok
       ? {
           cjOrderId: created.data.cjOrderId,
@@ -182,21 +193,25 @@ export async function placeCjOrder(userId: number, input: PlaceInput): Promise<{
     `[cj-fulfill] user ${userId} eBay order ${input.ebayOrderId}: ${created.ok ? `CJ order ${created.data.cjOrderId} created` : `failed: ${created.error}`}${input.sandbox ? " (test)" : ""}`,
   );
   if (!created.ok) return { ok: false, error: `CJ didn't take the order: ${created.error}` };
-  return { ok: true, record, warnings: created.data.warnings };
+  return { ok: true, record, warnings: created.data.warnings, shipmentOrderId };
 }
 
 /**
  * A created CJ order made ready to pay: its shipping method set (CJ doesn't
  * always keep the one sent with the order), then added to the cart and confirmed.
  */
-async function readyForPayment(cjOrderId: string, logisticName: string, from: string): Promise<{ ok: true; note: string | null } | { ok: false; error: string; note: string | null }> {
+async function readyForPayment(
+  cjOrderId: string,
+  logisticName: string,
+  from: string,
+): Promise<{ ok: true; note: string | null; shipmentOrderId: string | null } | { ok: false; error: string; note: string | null }> {
   const shipping = await setCjOrderLogistics(cjOrderId, logisticName, from);
   // Not fatal on its own: the order may already have a method; the cart step says if it hasn't.
   if (!shipping.ok) console.warn(`[cj-fulfill] ${cjOrderId}: shipping method not set: ${shipping.error}`);
   const note = shipping.ok ? shipping.data.note : null;
   const submit = await submitCjOrder(cjOrderId);
   if (!submit.ok) return { ok: false, error: shipping.ok ? submit.error : `${shipping.error} (${submit.error})`, note };
-  return { ok: true, note };
+  return { ok: true, note, shipmentOrderId: submit.data.shipmentOrderId || null };
 }
 
 /** One open CJ order: reads its status on CJ and, once it has tracking, puts it on the eBay order. */

@@ -37,6 +37,8 @@ export type EbayOrder = {
   paymentStatus: string;
   buyerUsername: string;
   total: string;
+  /** What the sale brings in, in USD: items + shipping the buyer paid (no tax); null when not in USD. */
+  saleValue: number | null;
   shipTo: ShipTo | null;
   lines: EbayOrderLine[];
 };
@@ -54,7 +56,7 @@ type OrdersResponse = {
     orderFulfillmentStatus?: string;
     orderPaymentStatus?: string;
     buyer?: { username?: string };
-    pricingSummary?: { total?: Amount };
+    pricingSummary?: { total?: Amount; priceSubtotal?: Amount; deliveryCost?: Amount };
     fulfillmentStartInstructions?: Array<{
       shippingStep?: {
         shipTo?: {
@@ -90,6 +92,14 @@ function money(amount: Amount | undefined) {
   return amount?.currency && amount.currency !== "USD" ? `${value.toFixed(2)} ${amount.currency}` : `$${value.toFixed(2)}`;
 }
 
+function saleValue(summary: { priceSubtotal?: Amount; deliveryCost?: Amount } | undefined) {
+  const usd = (a: Amount | undefined) => (a?.value != null && (!a.currency || a.currency === "USD") ? Number(a.value) : NaN);
+  const items = usd(summary?.priceSubtotal);
+  if (!Number.isFinite(items)) return null;
+  const shipping = summary?.deliveryCost ? usd(summary.deliveryCost) : 0;
+  return Math.round((items + (Number.isFinite(shipping) ? shipping : 0)) * 100) / 100;
+}
+
 export async function fetchEbayOrders(userId: number, options: { awaitingOnly: boolean }): Promise<OrdersResult> {
   const token = await getAccessTokenForUser(userId);
   if (!token) return { ok: false, notConnected: true, error: "No eBay store connected. Connect your store in Settings." };
@@ -119,6 +129,7 @@ function toOrder(order: RawOrder): EbayOrder {
     paymentStatus: s(order.orderPaymentStatus),
     buyerUsername: s(order.buyer?.username),
     total: money(order.pricingSummary?.total),
+    saleValue: saleValue(order.pricingSummary),
     shipTo: shipTo
       ? {
           fullName: s(shipTo.fullName),

@@ -224,11 +224,32 @@ export const cjOrders = pgTable(
     carrier: text("carrier"),
     ebayShippedAt: timestamp("ebay_shipped_at", { withTimezone: true }),
     error: text("error"),
+    /** Created by automatic ordering (not by the seller pressing a button). */
+    auto: boolean("auto").notNull().default(false),
+    /** When AutoPilot paid it from the CJ wallet. */
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    /** What automatic ordering did, in plain words ("Paid $24.73 from your CJ wallet…"). */
+    note: text("note"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.userId, t.ebayOrderId] })],
 );
+
+/** Automatic ordering on CJ for new eBay sales: off, create (and check) only, or create and pay from the CJ wallet. */
+export const autoOrderSettings = pgTable("auto_order_settings", {
+  userId: integer("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  mode: text("mode").notNull().default("off"), // 'off' | 'create' | 'pay'
+  /** Most a single CJ order may cost to be paid automatically (USD). */
+  maxOrder: real("max_order").notNull().default(40),
+  /** Most paid automatically in any 24 hours (USD). */
+  maxDay: real("max_day").notNull().default(150),
+  /** When it was last switched on: only eBay orders after this are ordered. */
+  enabledAt: timestamp("enabled_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 export const productImages = pgTable(
   "product_images",

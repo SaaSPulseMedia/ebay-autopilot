@@ -214,3 +214,27 @@ export async function getCjOrder(orderId: string): Promise<CjResult<CjOrderStatu
     },
   };
 }
+
+/** The CJ wallet balance available to pay orders (USD), from Get Balance. */
+export async function getCjBalance(): Promise<CjResult<number>> {
+  const res = await cjGet("/shopping/pay/getBalance");
+  if (!res.ok) return res;
+  const data = (res.data ?? {}) as Record<string, unknown>;
+  const amount = Number(data.amount);
+  if (!Number.isFinite(amount)) return { ok: false, error: "CJ didn't give the wallet balance.", status: 502 };
+  return { ok: true, data: Math.round(amount * 100) / 100 };
+}
+
+/**
+ * Pays a CJ order that is in Awaiting Payment from the CJ wallet balance:
+ * Pay Balance V2 with the payable (shipment) order submitCjOrder made, else
+ * Pay Balance with the order id. A sandbox order is paid with CJ's simulated
+ * payment: nothing is charged.
+ */
+export async function payCjOrderFromBalance(cjOrderId: string, shipmentOrderId: string | null): Promise<CjResult<null>> {
+  const res = shipmentOrderId
+    ? await cjGet("/shopping/pay/payBalanceV2", { method: "POST", body: JSON.stringify({ shipmentOrderId }) })
+    : await cjGet("/shopping/pay/payBalance", { method: "POST", body: JSON.stringify({ orderId: cjOrderId }) });
+  if (!res.ok) return res;
+  return { ok: true, data: null };
+}

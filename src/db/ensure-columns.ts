@@ -23,6 +23,9 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: "seller_settings", column: "fx_pct", definition: "real NOT NULL DEFAULT 0" },
   { table: "sourcing_candidates", column: "ebay_sold", definition: "integer" },
   { table: "sourcing_candidates", column: "ebay_listings", definition: "integer" },
+  { table: "cj_orders", column: "auto", definition: "boolean NOT NULL DEFAULT false" },
+  { table: "cj_orders", column: "paid_at", definition: "timestamptz" },
+  { table: "cj_orders", column: "note", definition: "text" },
 ];
 
 /**
@@ -142,6 +145,17 @@ const ADDED_TABLES: Array<{ table: string; ddl: string }> = [
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now(),
       PRIMARY KEY (user_id, ebay_order_id)
+    )`,
+  },
+  {
+    table: "auto_order_settings",
+    ddl: `CREATE TABLE IF NOT EXISTS auto_order_settings (
+      user_id integer PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      mode text NOT NULL DEFAULT 'off',
+      max_order real NOT NULL DEFAULT 40,
+      max_day real NOT NULL DEFAULT 150,
+      enabled_at timestamptz,
+      updated_at timestamptz NOT NULL DEFAULT now()
     )`,
   },
 ];

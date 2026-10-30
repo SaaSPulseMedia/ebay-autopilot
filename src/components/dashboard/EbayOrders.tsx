@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AutoOrderOnCj } from "@/components/dashboard/AutoOrderOnCj";
+import { AutoOrdering } from "@/components/dashboard/AutoOrdering";
 import type { EbayOrder, ShipTo } from "@/lib/ebay/orders";
 import type { CjMatch } from "@/lib/order-fulfillment";
 
@@ -15,7 +16,7 @@ type LoadState =
   | { status: "done"; orders: EbayOrder[]; total: number; cj: Record<string, CjMatch | null>; fulfillment: Record<string, Fulfillment> };
 
 /** The CJ order AutoPilot created for an eBay order. */
-type Fulfillment = { status: string; trackingNumber: string | null; sandbox: boolean; error: string | null };
+type Fulfillment = { status: string; trackingNumber: string | null; sandbox: boolean; error: string | null; note: string | null; auto: boolean };
 
 const CJ_STATUS: Record<string, { label: string; tone: string }> = {
   created: { label: "CJ: to pay", tone: "bg-amber-300/15 text-amber-200" },
@@ -24,6 +25,7 @@ const CJ_STATUS: Record<string, { label: string; tone: string }> = {
   tracking_sent: { label: "Tracking on eBay ✓", tone: "bg-lime-brand/15 text-lime-brand" },
   cancelled: { label: "CJ: cancelled", tone: "bg-white/10 text-slate-300" },
   error: { label: "CJ order failed", tone: "bg-red-400/15 text-red-200" },
+  held: { label: "Needs you", tone: "bg-amber-300/15 text-amber-200" },
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -298,6 +300,7 @@ export function EbayOrders() {
 
   return (
     <section className="space-y-3">
+      <AutoOrdering onRun={() => void load(show, true)} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex rounded-full border border-white/15 p-0.5 text-xs font-semibold" role="tablist">
           {(["awaiting", "all"] as const).map((value) => (
@@ -407,11 +410,17 @@ export function EbayOrders() {
                       {(() => {
                         const f = state.fulfillment[order.orderId];
                         const look = f ? CJ_STATUS[f.status] : null;
-                        return f && look && !f.sandbox ? (
-                          <span className={`mt-1 block w-fit rounded-full px-2 py-0.5 text-[11px] font-semibold ${look.tone}`} title={f.error ?? undefined}>
-                            {look.label}
-                          </span>
-                        ) : null;
+                        if (!f || !look || f.sandbox) return null;
+                        // Automatic ordering says what it did, or why it left the order for the seller.
+                        const say = f.auto ? (f.error ?? f.note) : null;
+                        return (
+                          <>
+                            <span className={`mt-1 block w-fit rounded-full px-2 py-0.5 text-[11px] font-semibold ${look.tone}`} title={f.error ?? f.note ?? undefined}>
+                              {f.auto ? `Auto · ${look.label}` : look.label}
+                            </span>
+                            {say ? <span className={`mt-1 block max-w-xs text-[11px] ${f.error ? "text-amber-200" : "text-slate-400"}`}>{say}</span> : null}
+                          </>
+                        );
                       })()}
                     </td>
                     <td className="px-4 py-3 text-right">
