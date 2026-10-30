@@ -54,8 +54,16 @@ export async function PUT(request: Request) {
     string,
     unknown
   > | null;
-  const settings = await saveAutoOrderSettings(user.id, body ?? {});
-  return Response.json({ ok: true, settings, ...(await walletInfo(user.id)) });
+  try {
+    const settings = await saveAutoOrderSettings(user.id, body ?? {});
+    return Response.json({ ok: true, settings, ...(await walletInfo(user.id)) });
+  } catch (error) {
+    // Said on the page, so a failure can be understood (no personal data in these errors).
+    const message =
+      error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
+    console.error("[auto-order] saving settings failed:", message);
+    return Response.json({ ok: false, error: `Couldn't save: ${message.split("\n")[0].slice(0, 200)}` }, { status: 500 });
+  }
 }
 
 export async function POST() {

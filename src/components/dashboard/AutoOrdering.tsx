@@ -83,9 +83,9 @@ export function AutoOrdering({ onRun }: { onRun?: () => void }) {
           maxDay: Number(maxDay),
         }),
       });
-      const json = (await res.json()) as Info & { ok: boolean; error?: string };
-      if (!json.ok) {
-        setMessage(json.error ?? "Couldn't save. Try again.");
+      const json = (await res.json().catch(() => null)) as (Info & { ok: boolean; error?: string }) | null;
+      if (!json?.ok) {
+        setMessage(json?.error ?? `Couldn't save (HTTP ${res.status}). Try again.`);
         return;
       }
       apply(json);
@@ -94,8 +94,8 @@ export function AutoOrdering({ onRun }: { onRun?: () => void }) {
           ? "Saved: automatic ordering is off."
           : "Saved. From now on, new sales of CJ products are ordered within the hour. Sales from before now are left to you.",
       );
-    } catch {
-      setMessage("Couldn't save. Try again.");
+    } catch (error) {
+      setMessage(`Couldn't save (${error instanceof Error ? error.message : "no answer"}). Try again.`);
     } finally {
       setBusy(null);
     }
