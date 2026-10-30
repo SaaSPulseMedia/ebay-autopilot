@@ -18,7 +18,18 @@ const CARRIERS = ["USPS", "UPS", "FedEx", "DHL", "Other"];
  * "Mark shipped" (tracking number onto the eBay order, optionally with the
  * thank-you message) and "Send message" (the thank-you message alone).
  */
-export function OrderActions({ orderId, messaged, onDone }: { orderId: string; messaged: boolean; onDone: () => void }) {
+export function OrderActions({
+  orderId,
+  messaged,
+  onDone,
+  canShip = true,
+}: {
+  orderId: string;
+  messaged: boolean;
+  onDone: () => void;
+  /** False for an order AutoPilot follows on CJ: its tracking goes on eBay by itself, only "Send message" is offered. */
+  canShip?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [tracking, setTracking] = useState("");
   const [carrier, setCarrier] = useState("Other");
@@ -77,13 +88,15 @@ export function OrderActions({ orderId, messaged, onDone }: { orderId: string; m
   return (
     <div className="mt-2 flex flex-col items-end gap-1.5 text-left">
       <div className="flex flex-wrap justify-end gap-1.5">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="whitespace-nowrap rounded-full border border-white/15 px-3 py-1 text-[11px] text-slate-200 hover:bg-white/5"
-        >
-          Mark shipped
-        </button>
+        {canShip ? (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="whitespace-nowrap rounded-full border border-white/15 px-3 py-1 text-[11px] text-slate-200 hover:bg-white/5"
+          >
+            Mark shipped
+          </button>
+        ) : null}
         {sent ? (
           <span className="whitespace-nowrap rounded-full bg-lime-brand/10 px-3 py-1 text-[11px] text-lime-brand">Message sent ✓</span>
         ) : (
@@ -97,7 +110,7 @@ export function OrderActions({ orderId, messaged, onDone }: { orderId: string; m
           </button>
         )}
       </div>
-      {open ? (
+      {open && canShip ? (
         <div className="w-64 space-y-2 rounded-xl border border-white/10 bg-white/[0.04] p-3 text-xs text-slate-300">
           <label className="block">
             Tracking number (from AliExpress)

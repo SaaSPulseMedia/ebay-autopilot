@@ -449,13 +449,19 @@ export function EbayOrders() {
                       >
                         Fulfill on CJ
                       </button>
-                      {/* Not being fulfilled through a CJ order AutoPilot follows (e.g. AliExpress): done by hand here. */}
-                      {order.fulfillmentStatus !== "FULFILLED" &&
-                      !(state.fulfillment[order.orderId] && !state.fulfillment[order.orderId].sandbox && !["held", "error", "cancelled"].includes(state.fulfillment[order.orderId].status)) ? (
+                      {/* Mark shipped for orders AutoPilot doesn't follow on CJ (e.g. AliExpress); Send message for every order. */}
+                      {order.fulfillmentStatus !== "FULFILLED" ? (
                         <OrderActions
                           orderId={order.orderId}
                           messaged={state.messaged.includes(order.orderId)}
                           onDone={() => void load(show, true)}
+                          canShip={
+                            !(
+                              state.fulfillment[order.orderId] &&
+                              !state.fulfillment[order.orderId].sandbox &&
+                              !["held", "error", "cancelled"].includes(state.fulfillment[order.orderId].status)
+                            )
+                          }
                         />
                       ) : null}
                     </td>
