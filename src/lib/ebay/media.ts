@@ -48,12 +48,12 @@ export async function hostOnEbay(token: string, url: string): Promise<string | n
   return hosted;
 }
 
-/** EPS copies of many URLs, five at a time; the map holds only the ones eBay took. */
+/** EPS copies of many URLs, ten at a time; the map holds only the ones eBay took. */
 export async function hostAllOnEbay(token: string, urls: string[]): Promise<Map<string, string>> {
   const unique = [...new Set(urls.filter(Boolean))];
   const hosted = new Map<string, string>();
-  for (let i = 0; i < unique.length; i += 5) {
-    const batch = unique.slice(i, i + 5);
+  for (let i = 0; i < unique.length; i += 10) {
+    const batch = unique.slice(i, i + 10);
     const copies = await Promise.all(batch.map((url) => hostOnEbay(token, url)));
     batch.forEach((url, j) => {
       if (copies[j]) hosted.set(url, copies[j] as string);

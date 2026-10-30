@@ -75,7 +75,7 @@ export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun, de
         router.refresh();
       }
     } catch {
-      setSummary({ ok: false, error: "The links could not be sent. Try again." });
+      setSummary({ ok: false, error: "The connection to AutoPilot dropped before it answered (it may have taken too long). Check your Listings page before trying again: the listing may still have been published." });
     } finally {
       setBusy(false);
     }

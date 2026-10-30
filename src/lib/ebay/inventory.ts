@@ -215,6 +215,25 @@ const escapeAttr = (text: string) => text.replace(/&/g, "&amp;").replace(/"/g, "
  *    won't take it, the original HTTPS image, still embedded (logged).
  * Never fails the listing.
  */
+/**
+ * Most a listing waits for its video to reach eBay. A large listing (many
+ * variations, AI copy, pictures) must finish inside Vercel's one-minute limit,
+ * and a slow video download from CJ could push it over: past this, the
+ * listing goes out without the video.
+ */
+const VIDEO_BUDGET_MS = 12_000;
+
+function videoWithinBudget(upload: Promise<string | null>, sku: string): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      console.warn(`[ebay-video] sku ${sku}: video not on eBay within ${VIDEO_BUDGET_MS / 1000} s; listing without it.`);
+      resolve(null);
+    }, VIDEO_BUDGET_MS);
+  });
+  return Promise.race([upload.finally(() => clearTimeout(timer)), late]);
+}
+
 async function withEbayHostedImages(original: PublishInput): Promise<PublishInput> {
   const token = await getAccessTokenForUser(original.userId);
   if (!token) return original;
@@ -234,7 +253,7 @@ async function withEbayHostedImages(original: PublishInput): Promise<PublishInpu
   const inDescription = descriptionImageSources(input.description);
   const [hosted, videoId] = await Promise.all([
     hostAllOnEbay(token, [...gallery, ...variantPictures, ...inDescription]),
-    input.videoUrl ? hostVideoOnEbay(token, input.videoUrl, input.title) : Promise.resolve(null),
+    input.videoUrl ? videoWithinBudget(hostVideoOnEbay(token, input.videoUrl, input.title), input.sku) : Promise.resolve(null),
   ]);
 
   const hostedGallery = gallery.map((url) => hosted.get(url)).filter((url): url is string => Boolean(url));
