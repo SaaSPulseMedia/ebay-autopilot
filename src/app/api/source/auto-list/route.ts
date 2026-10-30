@@ -21,7 +21,8 @@ import { getCatalogProduct } from "@/lib/suppliers";
  * Never falls back to demo mode: without a connected store it refuses.
  */
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// Same as Paste links: a big product can take over a minute to publish (300 s needs Fluid compute, on by default).
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   const user = await getCurrentUser();

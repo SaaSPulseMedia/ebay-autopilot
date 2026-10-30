@@ -22,7 +22,9 @@ import { checkSupplierUrl } from "@/lib/supplier-policy";
 import { getCatalogProduct } from "@/lib/suppliers";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// A big product (many variations, pictures and a video) can take over a minute to publish.
+// 300 s is the most Vercel allows with Fluid compute (on by default), on every plan.
+export const maxDuration = 300;
 
 function clamp(value: unknown, min: number, max: number, fallback: number) {
   const n = Number(value);
@@ -30,7 +32,7 @@ function clamp(value: unknown, min: number, max: number, fallback: number) {
 }
 
 /** Don't start another link after this long: each CJ link takes ~5 CJ calls spaced 1.1 s apart. */
-const START_BEFORE_MS = 45_000;
+const START_BEFORE_MS = 150_000;
 
 /**
  * Paste-a-list bulk lister: up to one batch of CJ product links in, listings
