@@ -31,6 +31,8 @@ export type CatalogProductForPublish = {
   freeShipping?: boolean;
   /** Supplier product video, uploaded to eBay with the listing. */
   videoUrl?: string;
+  /** Skip the Market Guard: the seller chose "List anyway". */
+  allowAboveMarket?: boolean;
 };
 
 export type PublishWithResolverResult =
@@ -252,6 +254,7 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     variations,
     freeShipping: input.freeShipping,
     videoUrl: input.videoUrl,
+    allowAboveMarket: input.allowAboveMarket,
   });
   if (!result.ok) return { ok: false, step: result.step, error: result.error };
 

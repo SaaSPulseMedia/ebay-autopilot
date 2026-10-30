@@ -73,6 +73,7 @@ function toCatalogProduct(draft: ListingDraft, context?: ApiPublishContext): Cat
     variations: draft.variations && draft.variations.length > 1 ? draft.variations : undefined,
     freeShipping: draft.freeShipping === true,
     videoUrl: draft.videoUrl ?? undefined,
+    allowAboveMarket: draft.allowAboveMarket === true,
   };
 }
 

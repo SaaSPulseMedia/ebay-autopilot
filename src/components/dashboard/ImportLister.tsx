@@ -47,14 +47,18 @@ export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun, de
   const examplePrice = listPriceFor({ pricingMode: "markup", markupPct, adRatePct: saleFeePct(fees) }, landedCost(fees, 20), landedCost(fees, 5), 0);
   const example = realBreakdown(fees, examplePrice, 20, 5);
 
-  async function submit() {
+  async function submit(listAnywayUrl?: string) {
     setBusy(true);
     setSummary(null);
     try {
       const res = await fetch("/api/listings/import", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ urls: links, markupPct, adRatePct, drip: dripAllowed && drip }),
+        body: JSON.stringify(
+          listAnywayUrl
+            ? { urls: [listAnywayUrl], markupPct, adRatePct, drip: false, allowAboveMarket: true }
+            : { urls: links, markupPct, adRatePct, drip: dripAllowed && drip },
+        ),
       });
       const json = (await res.json()) as BatchResponse;
       setSummary(json);
@@ -158,7 +162,7 @@ export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun, de
 
         <button
           type="button"
-          onClick={submit}
+          onClick={() => void submit()}
           disabled={busy || !links.length || tooMany || links.length === refused.length}
           className="ap-glow rounded-full bg-brand-500 px-6 py-2.5 text-sm font-bold text-white transition hover:bg-brand-400 disabled:opacity-50 disabled:shadow-none"
         >
@@ -166,7 +170,7 @@ export function ImportLister({ batchSize, remaining, dripAllowed, dripPerRun, de
         </button>
       </section>
 
-      {summary ? <BatchSummary summary={summary} perRun={dripPerRun} /> : null}
+      {summary ? <BatchSummary summary={summary} perRun={dripPerRun} busy={busy} onListAnyway={(url) => void submit(url)} /> : null}
     </div>
   );
 }

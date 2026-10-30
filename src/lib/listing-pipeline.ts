@@ -164,6 +164,8 @@ export type ListingSource = {
   externalId?: string;
   /** Priced by Market Match: list with the seller's free-shipping policy. */
   freeShipping?: boolean;
+  /** The seller chose "List anyway" for a price over 20% above the eBay average. */
+  allowAboveMarket?: boolean;
 };
 
 /** Distinct Color and Size values across the supplier's variants. */
@@ -187,6 +189,9 @@ export type ItemResult = {
   itemId?: string | null;
   /** Engine that handled it ("demo" means nothing reached eBay). */
   engine?: string | null;
+  /** Turned down only for being over 20% above the eBay average: "List anyway" can retry this link. */
+  overMarket?: boolean;
+  url?: string;
 };
 
 /**
@@ -246,6 +251,7 @@ export async function createListing(args: {
     ...(chart.length ? { sizeChartImages: chart } : {}),
     ...(notes.length ? { sizeNotes: notes } : {}),
     ...(source.details?.videoUrl ? { videoUrl: source.details.videoUrl } : {}),
+    ...(source.allowAboveMarket ? { allowAboveMarket: true } : {}),
   };
 
   const outcome = args.drip

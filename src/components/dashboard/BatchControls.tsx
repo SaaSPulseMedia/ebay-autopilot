@@ -2,7 +2,15 @@
 
 import Link from "next/link";
 
-export type BatchItem = { title: string; status: string; variants: number; message: string };
+export type BatchItem = {
+  title: string;
+  status: string;
+  variants: number;
+  message: string;
+  /** Turned down only for being over 20% above the eBay average; `url` can be listed anyway. */
+  overMarket?: boolean;
+  url?: string;
+};
 
 export type BatchResponse = {
   ok: boolean;
@@ -62,8 +70,48 @@ export function DripToggle({
   );
 }
 
+/**
+ * "List anyway" for links turned down only because their price is over 20%
+ * above the eBay average: lists them at the price that keeps the minimum profit.
+ */
+function ListAnyway({ summary, onListAnyway, busy }: { summary: BatchResponse; onListAnyway?: (url: string) => void; busy?: boolean }) {
+  const rows = (summary.results ?? []).filter((row) => row.overMarket && row.url);
+  if (!onListAnyway || !rows.length) return null;
+  return (
+    <div className="mt-3 space-y-2 rounded-xl border border-white/12 bg-white/5 p-3 text-xs text-slate-300">
+      <p>
+        Over the eBay average, so it may sell slowly. Your price still keeps your minimum profit, and with your eBay store an unsold listing costs
+        nothing.
+      </p>
+      {rows.map((row) => (
+        <div key={row.url} className="flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-slate-200">{row.title}</span>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onListAnyway(row.url as string)}
+            className="rounded-full bg-brand-500 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-brand-400 disabled:opacity-50"
+          >
+            {busy ? "Listing…" : "List anyway"}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Result box after a batch: what went out, what is scheduled, what was skipped and why. */
-export function BatchSummary({ summary, perRun }: { summary: BatchResponse; perRun: number }) {
+export function BatchSummary({
+  summary,
+  perRun,
+  onListAnyway,
+  busy,
+}: {
+  summary: BatchResponse;
+  perRun: number;
+  onListAnyway?: (url: string) => void;
+  busy?: boolean;
+}) {
   if (!summary.ok) {
     return (
       <div className="rounded-2xl border border-amber-400/40 bg-amber-400/10 p-4 text-sm text-amber-200">
@@ -83,6 +131,7 @@ export function BatchSummary({ summary, perRun }: { summary: BatchResponse; perR
             </Link>
           ) : null}
         </div>
+        <ListAnyway summary={summary} onListAnyway={onListAnyway} busy={busy} />
       </div>
     );
   }
@@ -116,6 +165,7 @@ export function BatchSummary({ summary, perRun }: { summary: BatchResponse; perR
           ))}
         </ul>
       ) : null}
+      <ListAnyway summary={summary} onListAnyway={onListAnyway} busy={busy} />
     </div>
   );
 }

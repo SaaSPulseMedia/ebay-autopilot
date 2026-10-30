@@ -14,8 +14,8 @@ import {
 import { cjExternalId, importCjProduct } from "@/lib/cj/catalog";
 import { cjPidFromUrl } from "@/lib/cj/urls";
 import { resolveListingPrice } from "@/lib/market-pricing";
-import { realProfit } from "@/lib/listing-defaults";
-import { MIN_PROFIT } from "@/lib/pricing";
+import { landedCost, realProfit, saleFeePct } from "@/lib/listing-defaults";
+import { MIN_PROFIT, withProfitFloor } from "@/lib/pricing";
 import { withUserImages } from "@/lib/product-images";
 import { getListingDefaults } from "@/lib/seller-settings";
 import { checkSupplierUrl } from "@/lib/supplier-policy";
@@ -54,6 +54,8 @@ export async function POST(request: Request) {
     adRatePct?: unknown;
     drip?: unknown;
     engine?: unknown;
+    /** "List anyway": list even when the price is over 20% above the eBay average (still keeping the minimum profit). */
+    allowAboveMarket?: unknown;
   };
 
   const urls = Array.from(
@@ -72,6 +74,7 @@ export async function POST(request: Request) {
   const markupPct = clamp(body.markupPct, 0, 500, defaults.markupPct);
   const adRatePct = clamp(body.adRatePct, 0, 30, defaults.adRatePct);
   const drip = body.drip === true;
+  const allowAboveMarket = body.allowAboveMarket === true;
 
   const limits = planLimits(user.plan);
   const limitResponse = await checkPlanCapacity(user.id, limits, urls.length, { drip });
@@ -107,9 +110,21 @@ export async function POST(request: Request) {
       return skip(product.title, `Skipped to protect your eBay account: ${product.veroReason}`, "blocked");
     }
 
+    const fees = { ...defaults, adRatePct };
     const price = await resolveListingPrice({ ...defaults, pricingMode: "markup", markupPct, adRatePct }, product);
-    if (price.rule === "low") return skip(product.title, `Low: not listed, ${price.reason}.`);
-    const profit = realProfit({ ...defaults, adRatePct }, price.listPrice, product.supplierPrice, product.shippingCost);
+    if (price.rule === "low" && !allowAboveMarket) {
+      return { ...skip(product.title, `Low: not listed, ${price.reason}.`), overMarket: true, url };
+    }
+    // "List anyway": at least the price that keeps the minimum profit with the seller's real costs.
+    if (price.rule === "low") {
+      price.listPrice = withProfitFloor(
+        price.listPrice,
+        landedCost(fees, product.supplierPrice),
+        landedCost(fees, product.shippingCost),
+        saleFeePct(fees),
+      ).price;
+    }
+    const profit = realProfit(fees, price.listPrice, product.supplierPrice, product.shippingCost);
     if (profit < MIN_PROFIT) {
       return skip(
         product.title,
@@ -133,6 +148,7 @@ export async function POST(request: Request) {
         details: product.details,
         externalId: product.externalId,
         freeShipping: price.freeShipping,
+        ...(allowAboveMarket ? { allowAboveMarket: true } : {}),
       },
       requested,
       accessToken,
@@ -143,7 +159,10 @@ export async function POST(request: Request) {
     const notes = [shippingNote, supplier.warning, product.veroRisk === "medium" ? product.veroReason : null]
       .filter(Boolean)
       .join(" ");
-    return notes ? { ...created, message: `${created.message} Note: ${notes}` } : created;
+    // Blocked at publish by the Market Guard (price over 20% above the eBay average): "List anyway" can retry it.
+    const overMarket = !allowAboveMarket && created.status === "error" && /Market Price Warning/i.test(created.message);
+    const result = overMarket ? { ...created, overMarket: true, url } : created;
+    return notes ? { ...result, message: `${result.message} Note: ${notes}` } : result;
   });
 
   return Response.json(summarizeBatch(batchId, urls.length, results));

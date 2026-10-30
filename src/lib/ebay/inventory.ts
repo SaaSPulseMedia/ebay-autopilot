@@ -36,6 +36,8 @@ export type PublishInput = {
   videoUrl?: string;
   /** Set by withEbayHostedImages: the eBay video ID for `videoUrl`. */
   videoIds?: string[];
+  /** The seller chose "List anyway": the Market Guard is skipped (the price still keeps the minimum profit). */
+  allowAboveMarket?: boolean;
 };
 
 /** One variant of a multi-variation listing; `aspects` are what it varies by, e.g. { Color: "Black" }. */
@@ -294,7 +296,7 @@ async function publishOnly(original: PublishInput): Promise<PublishResult> {
   // the same item sells for there (it would never sell). For variations, the
   // cheapest variant is the one a buyer compares.
   const askPrice = multi ? Math.min(...(original.variations ?? []).map((v) => v.price)) : original.price;
-  const warning = await marketPriceWarning(original.title, askPrice);
+  const warning = original.allowAboveMarket ? null : await marketPriceWarning(original.title, askPrice);
   if (warning) return { ok: false, step: "market", error: warning };
 
   // Every picture on eBay's own hosting, so photos added later in eBay's editor never mix hosting types.

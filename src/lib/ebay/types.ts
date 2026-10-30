@@ -22,6 +22,8 @@ export type ListingDraft = {
   sizeNotes?: string[];
   /** CJ's product video URL, uploaded to eBay with the listing (never fatal when eBay won't take it). */
   videoUrl?: string | null;
+  /** The seller chose "List anyway": publish even when the price is over 20% above the eBay average (Market Guard). */
+  allowAboveMarket?: boolean;
 };
 
 export type ListingResult = {
