@@ -188,7 +188,16 @@ export async function submitCjOrder(cjOrderId: string): Promise<CjResult<{ shipm
   if (!confirm.ok) return confirm;
   const confirmData = (confirm.data ?? {}) as Record<string, unknown>;
   const shipmentOrderId = str(confirmData.shipmentsId);
-  if (confirmData.submitSuccess === false) return { ok: false, error: "CJ didn't confirm the order.", status: 422 };
+  if (confirmData.submitSuccess === false) {
+    // CJ's own words, so a refusal can be understood (no buyer details are in this response).
+    console.warn(`[cj-order] ${cjOrderId}: addCartConfirm refused: ${JSON.stringify(confirmData).slice(0, 800)}`);
+    const why = [confirmData.message, confirmData.failReason, confirmData.reason]
+      .concat(Array.isArray(confirmData.interceptOrders) ? confirmData.interceptOrders.map((o) => JSON.stringify(o)) : [])
+      .map((v) => (typeof v === "string" ? v.trim() : ""))
+      .filter(Boolean)
+      .join("; ");
+    return { ok: false, error: `CJ didn't confirm the order${why ? `: ${why.slice(0, 200)}` : ""}.`, status: 422 };
+  }
   if (shipmentOrderId) {
     const parent = await cjGet("/shopping/order/saveGenerateParentOrder", { method: "POST", body: JSON.stringify({ shipmentOrderId }) });
     if (!parent.ok) console.warn(`[cj-order] ${cjOrderId}: payable order not generated (${parent.error}); it can still be paid in CJ.`);
