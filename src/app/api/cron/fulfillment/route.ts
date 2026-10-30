@@ -33,7 +33,18 @@ export async function GET(request: Request) {
       auto.held += run.held;
     }
 
-    // Thank-you messages to the buyers of new sales (quick: one eBay call each).
+    const sellers = await sellersWithOpenCjOrders();
+    let synced = 0;
+    let trackingSent = 0;
+    // Leaves the last 12 s for the thank-you messages.
+    const syncDeadline = deadline - 12_000;
+    for (const userId of sellers) {
+      if (Date.now() > syncDeadline) break;
+      const records = await syncCjOrders(userId, syncDeadline);
+      synced += records.length;
+      trackingSent += records.filter((r) => r.status === "tracking_sent").length;
+    }
+    // Thank-you messages last, so a CJ order just seen as paid above gets its message in this run.
     const messages = { sent: 0, failed: 0 };
     const messageDeadline = Date.now() + 10_000;
     for (const userId of await sellersWithMessages()) {
@@ -43,15 +54,6 @@ export async function GET(request: Request) {
       messages.failed += run.failed;
     }
 
-    const sellers = await sellersWithOpenCjOrders();
-    let synced = 0;
-    let trackingSent = 0;
-    for (const userId of sellers) {
-      if (Date.now() > deadline) break;
-      const records = await syncCjOrders(userId, deadline);
-      synced += records.length;
-      trackingSent += records.filter((r) => r.status === "tracking_sent").length;
-    }
     return Response.json({ ok: true, auto, messages, sellers: sellers.length, synced, trackingSent });
   } catch (error) {
     console.error("[cron/fulfillment] failed", error);
