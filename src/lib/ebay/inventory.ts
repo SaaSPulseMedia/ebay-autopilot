@@ -492,10 +492,32 @@ async function publishVariationListing(input: PublishInput, variations: PublishV
         await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
         continue;
       }
+      if (passing) {
+        // Still a "system error" in bulk: each of those SKUs on its own (createOrReplaceInventoryItem),
+        // which either goes through or makes eBay say what it really objects to.
+        const single = await eachInChunks(pending, async (variant) => {
+          const { sku, ...item } = itemRequest(variant);
+          const put = await ebayFetch(`/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, token, {
+            method: "PUT",
+            body: JSON.stringify(item),
+          });
+          return put.errors?.length ? { ok: false as const, sku, put } : { ok: true as const, sku };
+        });
+        const stillFailed = single.find((r) => !r.ok);
+        if (!stillFailed) {
+          console.warn(`[ebay-variations] group ${groupKey}: ${pending.length} item(s) went through one by one after eBay's system error in bulk.`);
+          break;
+        }
+        if (!stillFailed.ok) {
+          console.error(`[ebay-variations] group ${groupKey}: item ${stillFailed.sku} failed on its own too:`, JSON.stringify(stillFailed.put.errors));
+          const detail = (stillFailed.put.errors ?? []).map((e) => [e.errorId, e.longMessage || e.message].filter(Boolean).join(" ")).join("; ");
+          return { ok: false, step: "item", error: `Variant ${stillFailed.sku}: ${detail || "eBay rejected the inventory item."} (eBay system error in bulk and on its own: try again later.)` };
+        }
+      }
       const failed = failures[0];
       console.error(`[ebay-variations] group ${groupKey}: inventory items failed:`, JSON.stringify(res.errors ?? failed?.errors ?? res));
       const error = failed ? `Variant ${failed.sku}: ${ebayErrorMessage(failed, "eBay rejected the inventory item.")}` : ebayErrorMessage(res, "eBay rejected the inventory items.");
-      return { ok: false, step: "item", error: passing ? `${error} (eBay's own system error, still there after ${SYSTEM_ERROR_RETRIES} retries: try again in a few minutes.)` : error };
+      return { ok: false, step: "item", error };
     }
   }
 
