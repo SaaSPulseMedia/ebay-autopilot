@@ -21,8 +21,8 @@ type LoadState =
       total: number;
       cj: Record<string, CjMatch | null>;
       fulfillment: Record<string, Fulfillment>;
-      /** Orders whose buyer already got the thank-you message. */
-      messaged: string[];
+      /** The thank-you message's outcome per order (absent: never sent). */
+      messages: Record<string, { sent: boolean; error: string | null }>;
     };
 
 /** The CJ order AutoPilot created for an eBay order. */
@@ -302,7 +302,7 @@ export function EbayOrders() {
         total: body.total,
         cj: body.cj ?? {},
         fulfillment: body.fulfillment ?? {},
-        messaged: body.messaged ?? [],
+        messages: body.messages ?? {},
       });
     } catch {
       if (!quiet) setState({ status: "error", message: "Couldn't reach AutoPilot. Check your connection and try again." });
@@ -449,21 +449,22 @@ export function EbayOrders() {
                       >
                         Fulfill on CJ
                       </button>
-                      {/* Mark shipped for orders AutoPilot doesn't follow on CJ (e.g. AliExpress); Send message for every order. */}
-                      {order.fulfillmentStatus !== "FULFILLED" ? (
-                        <OrderActions
-                          orderId={order.orderId}
-                          messaged={state.messaged.includes(order.orderId)}
-                          onDone={() => void load(show, true)}
-                          canShip={
-                            !(
-                              state.fulfillment[order.orderId] &&
-                              !state.fulfillment[order.orderId].sandbox &&
-                              !["held", "error", "cancelled"].includes(state.fulfillment[order.orderId].status)
-                            )
-                          }
-                        />
-                      ) : null}
+                      {/* Every order: the thank-you message (status, or Send message…); Mark shipped only for orders
+                          still to ship that AutoPilot doesn't follow on CJ (e.g. AliExpress). */}
+                      <OrderActions
+                        orderId={order.orderId}
+                        messaged={Boolean(state.messages[order.orderId]?.sent)}
+                        messageError={state.messages[order.orderId]?.error ?? null}
+                        onDone={() => void load(show, true)}
+                        canShip={
+                          order.fulfillmentStatus !== "FULFILLED" &&
+                          !(
+                            state.fulfillment[order.orderId] &&
+                            !state.fulfillment[order.orderId].sandbox &&
+                            !["held", "error", "cancelled"].includes(state.fulfillment[order.orderId].status)
+                          )
+                        }
+                      />
                     </td>
                   </tr>
                 );

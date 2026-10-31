@@ -24,11 +24,14 @@ type Panel = "ship" | "message" | null;
 export function OrderActions({
   orderId,
   messaged,
+  messageError = null,
   onDone,
   canShip = true,
 }: {
   orderId: string;
   messaged: boolean;
+  /** eBay's reason when an earlier attempt (e.g. the automatic one) failed. */
+  messageError?: string | null;
   onDone: () => void;
   /** False for an order AutoPilot follows on CJ: its tracking goes on eBay by itself, only "Send message" is offered. */
   canShip?: boolean;
@@ -235,6 +238,7 @@ export function OrderActions({
           </button>
         </div>
       ) : null}
+      {!sent && messageError && !note ? <p className="max-w-xs text-[11px] text-amber-200">{`Message not sent: ${messageError}`}</p> : null}
       {note ? <p className={`max-w-xs text-[11px] ${note.ok ? "text-lime-brand" : "text-red-300"}`}>{note.text}</p> : null}
     </div>
   );

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getCjOrderRecords } from "@/lib/auto-fulfillment";
-import { messagedOrders } from "@/lib/buyer-messages";
+import { messageStatuses } from "@/lib/buyer-messages";
 import { getCurrentUser } from "@/lib/auth";
 import { fetchEbayOrders } from "@/lib/ebay/orders";
 import { matchSkusToCj } from "@/lib/order-fulfillment";
@@ -42,11 +42,11 @@ export async function GET(request: Request) {
     console.error("[orders] CJ order records failed:", error instanceof Error ? error.message : error);
   }
   // Orders whose buyer already got the thank-you message.
-  let messaged: string[] = [];
+  let messages: Record<string, { sent: boolean; error: string | null }> = {};
   try {
-    messaged = [...(await messagedOrders(user.id, result.orders.map((o) => o.orderId)))];
+    messages = await messageStatuses(user.id, result.orders.map((o) => o.orderId));
   } catch (error) {
     console.error("[orders] message records failed:", error instanceof Error ? error.message : error);
   }
-  return Response.json({ ok: true, orders: result.orders, total: result.total, cj, fulfillment, messaged });
+  return Response.json({ ok: true, orders: result.orders, total: result.total, cj, fulfillment, messages });
 }

@@ -165,12 +165,14 @@ export async function sendThankYouNow(
   return { ok: true };
 }
 
-/** Which of these orders already got the thank-you message. */
-export async function messagedOrders(userId: number, ebayOrderIds: string[]) {
-  if (!ebayOrderIds.length) return new Set<string>();
+/** The thank-you message's outcome for these orders: sent, or failed with eBay's reason (orders never tried are absent). */
+export async function messageStatuses(userId: number, ebayOrderIds: string[]) {
+  const out: Record<string, { sent: boolean; error: string | null }> = {};
+  if (!ebayOrderIds.length) return out;
   const rows = await db
-    .select({ id: buyerMessagesSent.ebayOrderId })
+    .select({ id: buyerMessagesSent.ebayOrderId, status: buyerMessagesSent.status, error: buyerMessagesSent.error })
     .from(buyerMessagesSent)
-    .where(and(eq(buyerMessagesSent.userId, userId), eq(buyerMessagesSent.status, "sent"), inArray(buyerMessagesSent.ebayOrderId, ebayOrderIds)));
-  return new Set(rows.map((r) => r.id));
+    .where(and(eq(buyerMessagesSent.userId, userId), inArray(buyerMessagesSent.ebayOrderId, ebayOrderIds)));
+  for (const r of rows) out[r.id] = { sent: r.status === "sent", error: r.status === "error" ? r.error : null };
+  return out;
 }
