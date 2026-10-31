@@ -416,6 +416,14 @@ async function publishOnly(original: PublishInput): Promise<PublishResult> {
 /** eBay's limit per bulk_create_or_replace_inventory_item / bulk_create_offer request. */
 const BULK = 25;
 
+/** Retries for SKUs eBay answers with its own "system error" (usually passing). */
+const SYSTEM_ERROR_RETRIES = 2;
+
+/** eBay's internal "A system error has occurred" (errorId 25001 and similar), as opposed to a problem with the data. */
+function isEbaySystemError(errors: EbayError[] | undefined) {
+  return Boolean(errors?.length) && (errors ?? []).every((e) => e.errorId === 25001 || /system error|internal error/i.test(`${e.message ?? ""} ${e.longMessage ?? ""}`));
+}
+
 type BulkResponse = { responses?: Array<{ statusCode?: number; sku?: string; offerId?: string; errors?: EbayError[] }> };
 
 async function eachInChunks<T, R extends { ok: boolean }>(items: T[], work: (item: T) => Promise<R>): Promise<R[]> {
@@ -450,34 +458,44 @@ async function publishVariationListing(input: PublishInput, variations: PublishV
   const productPictures = pictureList(input.imageUrls);
 
   // 1. One inventory item per variant, 25 per request (eBay's bulk limit), so 100 variants take 4 calls.
+  const itemRequest = (variant: PublishVariation) => ({
+    sku: variant.sku,
+    locale: "en_US",
+    availability: { shipToLocationAvailability: { quantity: variant.quantity } },
+    condition: input.condition ?? "NEW",
+    product: {
+      title: input.title.slice(0, 80),
+      description: input.description,
+      // The variant's own photo first, so picking it on eBay shows that photo.
+      imageUrls: pictureList([variant.imageUrl, ...productPictures]),
+      aspects: { ...shared, ...Object.fromEntries(Object.entries(variant.aspects).map(([k, v]) => [k, [v]])) },
+      ...(input.brand ? { brand: input.brand } : {}),
+      ...(input.mpn ? { mpn: input.mpn } : {}),
+    },
+  });
   for (let i = 0; i < variations.length; i += BULK) {
-    const chunk = variations.slice(i, i + BULK);
-    const res = await ebayFetch<BulkResponse>("/sell/inventory/v1/bulk_create_or_replace_inventory_item", token, {
-      method: "POST",
-      body: JSON.stringify({
-        requests: chunk.map((variant) => ({
-          sku: variant.sku,
-          locale: "en_US",
-          availability: { shipToLocationAvailability: { quantity: variant.quantity } },
-          condition: input.condition ?? "NEW",
-          product: {
-            title: input.title.slice(0, 80),
-            description: input.description,
-            // The variant's own photo first, so picking it on eBay shows that photo.
-            imageUrls: pictureList([variant.imageUrl, ...productPictures]),
-            aspects: { ...shared, ...Object.fromEntries(Object.entries(variant.aspects).map(([k, v]) => [k, [v]])) },
-            ...(input.brand ? { brand: input.brand } : {}),
-            ...(input.mpn ? { mpn: input.mpn } : {}),
-          },
-        })),
-      }),
-    });
-    // Each SKU has its own result; eBay answers 207 (or 400 when all fail) with them.
-    const failed = res.responses?.find((r) => (r.statusCode ?? 0) >= 300 || r.errors?.length);
-    if (!res.responses?.length || failed) {
+    let pending = variations.slice(i, i + BULK);
+    // eBay's "system error" (Core Inventory Service internal error) on some SKUs is usually passing: those are sent again.
+    for (let attempt = 0; pending.length; attempt++) {
+      const res = await ebayFetch<BulkResponse>("/sell/inventory/v1/bulk_create_or_replace_inventory_item", token, {
+        method: "POST",
+        body: JSON.stringify({ requests: pending.map(itemRequest) }),
+      });
+      // Each SKU has its own result; eBay answers 207 (or 400 when all fail) with them.
+      const failures = (res.responses ?? []).filter((r) => (r.statusCode ?? 0) >= 300 || r.errors?.length);
+      if (res.responses?.length && !failures.length) break;
+      const passing = res.responses?.length && failures.every((r) => isEbaySystemError(r.errors));
+      if (passing && attempt < SYSTEM_ERROR_RETRIES) {
+        console.warn(`[ebay-variations] group ${groupKey}: eBay system error on ${failures.length} item(s); trying again (${attempt + 1}/${SYSTEM_ERROR_RETRIES}).`);
+        const again = new Set(failures.map((r) => r.sku));
+        pending = pending.filter((v) => again.has(v.sku));
+        await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+        continue;
+      }
+      const failed = failures[0];
       console.error(`[ebay-variations] group ${groupKey}: inventory items failed:`, JSON.stringify(res.errors ?? failed?.errors ?? res));
       const error = failed ? `Variant ${failed.sku}: ${ebayErrorMessage(failed, "eBay rejected the inventory item.")}` : ebayErrorMessage(res, "eBay rejected the inventory items.");
-      return { ok: false, step: "item", error };
+      return { ok: false, step: "item", error: passing ? `${error} (eBay's own system error, still there after ${SYSTEM_ERROR_RETRIES} retries: try again in a few minutes.)` : error };
     }
   }
 
