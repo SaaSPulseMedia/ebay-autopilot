@@ -56,9 +56,12 @@ export async function cjGet(path: string, init?: RequestInit): Promise<CjResult<
     message?: string;
     error?: string;
     data?: unknown;
+    success?: boolean;
   };
-  // cjFetch returns { ok: false, error } when CJ is unreachable; CJ itself answers { result, code, message, data }.
-  if (body?.ok === false || body?.result === false || (typeof body?.code === "number" && body.code !== 200)) {
+  // cjFetch returns { ok: false, error } when CJ is unreachable; CJ itself answers { result, code, message, data },
+  // or, for some newer endpoints (e.g. queryVideosByProductId), { success, code: 0, … }.
+  const newStyleOk = body?.success === true && body?.code === 0;
+  if (body?.ok === false || body?.result === false || body?.success === false || (typeof body?.code === "number" && body.code !== 200 && !newStyleOk)) {
     return { ok: false, error: body?.message || body?.error || "CJ returned an error.", status: 502 };
   }
   return { ok: true, data: body?.data };
@@ -429,6 +432,37 @@ export type CjListingData = {
   suggested: number;
 };
 
+type CjVideo = { videoUrl?: unknown; videoState?: unknown; isFree?: unknown; isBuy?: unknown; duration?: unknown; videoType?: unknown };
+
+/** eBay takes listing videos of up to this many seconds. */
+const MAX_VIDEO_SECONDS = 60;
+
+/**
+ * The product's video link from CJ's Query Product Videos
+ * (POST /product/queryVideosByProductId): the first listed, free (or bought)
+ * video short enough for eBay, marketing videos first. Null when CJ has none
+ * or doesn't answer (a listing never depends on its video).
+ */
+export async function cjProductVideoUrl(pid: string): Promise<string | null> {
+  const res = await cjGet("/product/queryVideosByProductId", { method: "POST", body: JSON.stringify({ productId: pid }) });
+  if (!res.ok) {
+    console.warn(`[cj-video] pid=${pid}: CJ's video list unavailable: ${res.error}`);
+    return null;
+  }
+  const videos = (Array.isArray(res.data) ? res.data : []) as CjVideo[];
+  const usable = videos.filter(
+    (v) =>
+      /^https?:\/\//i.test(str(v.videoUrl)) &&
+      (str(v.videoState) || "ON_STATE") === "ON_STATE" &&
+      (str(v.isFree) === "1" || v.isBuy === true) &&
+      (Number(v.duration) || 0) <= MAX_VIDEO_SECONDS,
+  );
+  // Marketing videos (type 1) show the product best; then the order CJ lists them in.
+  const pick = usable.find((v) => Number(v.videoType) === 1) ?? usable[0];
+  console.info(`[cj-video] pid=${pid}: ${videos.length} video(s) from CJ, ${usable.length} usable -> ${pick ? "using one" : "none"}`);
+  return pick ? str(pick.videoUrl) : null;
+}
+
 /**
  * Fetches a CJ product with its variants and its real shipping to the US,
  * without saving anything. Fails (with a message for the seller) when CJ has
@@ -453,8 +487,10 @@ export async function fetchCjListingData(pid: string): Promise<CjResult<CjListin
   }
 
   const draft = mapCjProductToDraft(product);
-  if (!Object.keys(product).some((key) => /video/i.test(key))) {
-    console.info(`[cj-video] pid=${pid}: no video field from CJ (fields: ${Object.keys(product).join(",")})`);
+  // CJ's product details give video IDs, not links: the playable link comes from Query Product Videos.
+  if (!draft.facts.videoUrl) {
+    const video = await cjProductVideoUrl(pid);
+    if (video) draft.facts.videoUrl = video;
   }
   if (!draft.title) return { ok: false, error: "CJ returned this product without an English title.", status: 422 };
   if (draft.supplierPrice <= 0) return { ok: false, error: "CJ returned this product without a price.", status: 422 };

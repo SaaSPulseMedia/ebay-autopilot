@@ -84,7 +84,13 @@ export async function hostVideoOnEbay(token: string, url: string, title: string)
 
   let bytes: ArrayBuffer;
   try {
-    const file = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(30_000) });
+    // CJ's video server only serves downloads that carry its developer site as Referer.
+    const fromCj = /(^|\.)cjdropshipping\.com$/i.test(new URL(url).hostname);
+    const file = await fetch(url, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(30_000),
+      ...(fromCj ? { headers: { Referer: "https://developers.cjdropshipping.com/" } } : {}),
+    });
     if (!file.ok) return skip(`the supplier's server returned HTTP ${file.status}`);
     const declared = Number(file.headers.get("content-length") ?? 0);
     if (declared > MAX_VIDEO_BYTES) return skip(`it is ${Math.round(declared / 1048576)} MB (eBay allows 150 MB)`);
