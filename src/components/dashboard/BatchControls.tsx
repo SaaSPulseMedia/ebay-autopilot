@@ -137,7 +137,13 @@ export function BatchSummary({
   }
 
   const notListed = (summary.results ?? []).filter((row) => row.status === "blocked" || row.status === "skipped");
-  const withNotes = (summary.results ?? []).filter((row) => row.message.includes("Note:"));
+  const withNotes = (summary.results ?? []).filter((row) => row.message.includes("Note:") || /\bvideo\b/i.test(row.message));
+  /** What a published row says: its video outcome (when there is one) and its notes. */
+  const noteText = (message: string) => {
+    const [main, note] = message.split("Note:");
+    const video = main.match(/(Video added[^.]*\.|Video not added:.*?\.(?=\s|$)|No video:[^.]*\.)/)?.[0];
+    return [video, note?.trim()].filter(Boolean).join(" ");
+  };
 
   return (
     <div className="rounded-2xl border border-lime-brand/30 bg-lime-brand/10 px-4 py-3 text-sm text-lime-brand">
@@ -160,7 +166,7 @@ export function BatchSummary({
         <ul className="mt-2 space-y-1 text-slate-300">
           {withNotes.map((row, index) => (
             <li key={`${row.title}-note-${index}`}>
-              ℹ️ <span className="font-medium">{row.title}</span>: {row.message.split("Note:")[1]?.trim()}
+              ℹ️ <span className="font-medium">{row.title}</span>: {noteText(row.message)}
             </li>
           ))}
         </ul>

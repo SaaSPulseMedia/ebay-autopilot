@@ -73,13 +73,13 @@ const videoCache = new Map<string, { at: number; id: string }>();
  * takes the ID straight away; the video shows on the listing once eBay has
  * processed it (usually a few minutes). Never fails the listing.
  */
-export async function hostVideoOnEbay(token: string, url: string, title: string): Promise<string | null> {
-  if (!/^https?:\/\//i.test(url)) return null;
+export async function hostVideoOnEbay(token: string, url: string, title: string): Promise<{ id: string } | { reason: string }> {
+  if (!/^https?:\/\//i.test(url)) return { reason: "CJ's video link isn't a web address" };
   const hit = videoCache.get(url);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.id;
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return { id: hit.id };
   const skip = (why: string) => {
     console.warn(`[ebay-video] skipped ${url.slice(0, 120)}: ${why}`);
-    return null;
+    return { reason: why };
   };
 
   let bytes: ArrayBuffer;
@@ -118,7 +118,7 @@ export async function hostVideoOnEbay(token: string, url: string, title: string)
 
     console.info(`[ebay-video] uploaded ${url.slice(0, 120)} (${Math.round(bytes.byteLength / 1024)} KB) as video ${id}`);
     videoCache.set(url, { at: Date.now(), id });
-    return id;
+    return { id };
   } catch (error) {
     return skip(`couldn't reach eBay (${error instanceof Error ? error.message : "network error"})`);
   }

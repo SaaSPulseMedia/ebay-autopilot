@@ -37,6 +37,8 @@ export type PublishInput = {
   videoUrl?: string;
   /** Set by withEbayHostedImages: the eBay video ID for `videoUrl`. */
   videoIds?: string[];
+  /** Set while publishing: what happened to the video, in plain words, for the seller. */
+  videoNote?: string;
   /** The seller chose "List anyway": the Market Guard is skipped (the price still keeps the minimum profit). */
   allowAboveMarket?: boolean;
 };
@@ -63,6 +65,8 @@ export type PublishResult =
       offerId: string;
       listingId: string;
       variations?: number;
+      /** What happened to the supplier's video ("Video added…" / "Video not added: …"), when there was one. */
+      video?: string;
       /** Promoted Listings (General) outcome; the listing is live either way. */
       promotion?: PromotionResult;
     }
@@ -223,12 +227,12 @@ const escapeAttr = (text: string) => text.replace(/&/g, "&amp;").replace(/"/g, "
  */
 const VIDEO_BUDGET_MS = 50_000;
 
-function videoWithinBudget(upload: Promise<string | null>, sku: string): Promise<string | null> {
+function videoWithinBudget(upload: Promise<{ id: string } | { reason: string }>, sku: string): Promise<{ id: string } | { reason: string }> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<null>((resolve) => {
+  const late = new Promise<{ reason: string }>((resolve) => {
     timer = setTimeout(() => {
       console.warn(`[ebay-video] sku ${sku}: video not on eBay within ${VIDEO_BUDGET_MS / 1000} s; listing without it.`);
-      resolve(null);
+      resolve({ reason: `copying it from CJ to eBay took over ${VIDEO_BUDGET_MS / 1000} s` });
     }, VIDEO_BUDGET_MS);
   });
   return Promise.race([upload.finally(() => clearTimeout(timer)), late]);
@@ -271,7 +275,10 @@ async function withEbayHostedImages(original: PublishInput): Promise<PublishInpu
   return {
     ...input,
     imageUrls: allEps ? hostedGallery : gallery,
-    ...(videoId ? { videoIds: [videoId] } : {}),
+    ...(videoId && "id" in videoId ? { videoIds: [videoId.id] } : {}),
+    ...(videoId
+      ? { videoNote: "id" in videoId ? "Video added (eBay shows it on the listing within a few minutes)." : `Video not added: ${videoId.reason}.` }
+      : {}),
     description: input.description.replace(/(<img\b[^>]*?\bsrc=")([^"]+)(")/gi, (whole, open: string, src: string, close: string) => {
       const copy = hosted.get(unescapeAttr(src));
       return copy ? `${open}${escapeAttr(copy)}${close}` : whole;
@@ -363,6 +370,7 @@ async function publishOnly(original: PublishInput): Promise<PublishResult> {
   // The video is a bonus: if eBay won't take it on the item, list without it.
   if (item.errors?.length && input.videoIds?.length) {
     console.warn(`[ebay-video] sku ${input.sku}: eBay rejected the item with its video (${ebayErrorMessage(item, "")}); listing without it.`);
+    input.videoNote = `Video not added: eBay refused it on the listing (${ebayErrorMessage(item, "no reason given")}).`;
     item = await putItem();
   }
   if (item.errors?.length) {
@@ -409,7 +417,7 @@ async function publishOnly(original: PublishInput): Promise<PublishResult> {
     }
   }
 
-  return { ok: true, offerId, listingId };
+  return { ok: true, offerId, listingId, video: input.videoNote };
 }
 
 /** Runs `work` over `items` a few at a time; stops at the first failure. */
@@ -542,6 +550,7 @@ async function publishVariationListing(input: PublishInput, variations: PublishV
   let group = await putGroup(input.videoIds);
   if (group.errors?.length && input.videoIds?.length) {
     console.warn(`[ebay-video] group ${groupKey}: eBay rejected the group with its video (${ebayErrorMessage(group, "")}); listing without it.`);
+    input.videoNote = `Video not added: eBay refused it on the listing (${ebayErrorMessage(group, "no reason given")}).`;
     group = await putGroup();
   }
   if (group.errors?.length) {
@@ -604,7 +613,7 @@ async function publishVariationListing(input: PublishInput, variations: PublishV
     }
   }
 
-  return { ok: true, offerId: firstOfferId, listingId, variations: variations.length };
+  return { ok: true, offerId: firstOfferId, listingId, variations: variations.length, video: input.videoNote };
 }
 
 type OfferSummary = { offerId?: string; status?: string; listing?: { listingId?: string } };

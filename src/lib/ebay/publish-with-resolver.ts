@@ -49,6 +49,8 @@ export type PublishWithResolverResult =
       sizes?: SizeReport;
       /** Promoted Listings (General) outcome. */
       promotion?: PromotionResult;
+      /** What happened to the supplier's video, when there was one. */
+      video?: string;
     }
   | { ok: false; step: "market" | "setup" | "variants" | "item" | "offer" | "publish" | "category"; error: string };
 
@@ -268,5 +270,6 @@ export async function publishWithResolver(input: CatalogProductForPublish): Prom
     variations: result.variations ?? 1,
     sizes,
     promotion: result.promotion,
+    video: result.video,
   };
 }

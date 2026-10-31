@@ -121,10 +121,12 @@ export async function publishViaApi(
     variants += ` eBay requires a ${report.aspect} here and no supplier size fits, so the listing shows "${report.defaulted}": correct it in Seller Hub if that's wrong.`;
   }
   const promotion = promotionMessage(result.promotion);
+  // Always say what happened to the video, so a listing without one is explained.
+  const video = result.video ?? (draft.videoUrl ? "" : "No video: CJ gives none for this product.");
   return {
     engine: "api",
     status: "published",
-    message: promotion ? `${where}${variants} ${promotion}` : `${where}${variants}`,
+    message: [`${where}${variants}`, promotion, video].filter(Boolean).join(" "),
     variations: result.variations,
     itemId: result.listingId,
     title: draft.title,
