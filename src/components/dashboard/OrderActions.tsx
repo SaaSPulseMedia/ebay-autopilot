@@ -13,10 +13,13 @@ function guessCarrier(tracking: string) {
 
 const CARRIERS = ["USPS", "UPS", "FedEx", "DHL", "Other"];
 
+type Panel = "ship" | "message" | null;
+
 /**
- * For an order AutoPilot isn't fulfilling through CJ (e.g. AliExpress):
- * "Mark shipped" (tracking number onto the eBay order, optionally with the
- * thank-you message) and "Send message" (the thank-you message alone).
+ * For one eBay order: "Mark shipped" (tracking number onto the eBay order,
+ * for orders AutoPilot doesn't follow on CJ) and "Send message" (the
+ * thank-you message). The message is always shown first, with this buyer's
+ * name and item filled in, and can be edited: nothing is sent unchecked.
  */
 export function OrderActions({
   orderId,
@@ -30,23 +33,48 @@ export function OrderActions({
   /** False for an order AutoPilot follows on CJ: its tracking goes on eBay by itself, only "Send message" is offered. */
   canShip?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [panel, setPanel] = useState<Panel>(null);
   const [tracking, setTracking] = useState("");
   const [carrier, setCarrier] = useState("Other");
   const [carrierTouched, setCarrierTouched] = useState(false);
   const [withMessage, setWithMessage] = useState(!messaged);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [loadingDraft, setLoadingDraft] = useState(false);
   const [busy, setBusy] = useState<"ship" | "message" | null>(null);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [sent, setSent] = useState(messaged);
 
+  /** The message as this buyer would get it, fetched once, for checking and editing. */
+  async function loadDraft() {
+    if (draft !== null || loadingDraft) return;
+    setLoadingDraft(true);
+    try {
+      const res = await fetch(`/api/orders/message?orderId=${encodeURIComponent(orderId)}`);
+      const json = (await res.json().catch(() => null)) as { ok: boolean; body?: string; error?: string } | null;
+      if (json?.ok && typeof json.body === "string") setDraft(json.body);
+      else setNote({ ok: false, text: json?.error ?? "Couldn't prepare the message. Try again." });
+    } catch {
+      setNote({ ok: false, text: "Couldn't prepare the message. Try again." });
+    } finally {
+      setLoadingDraft(false);
+    }
+  }
+
+  function open(next: Panel) {
+    setNote(null);
+    setPanel((current) => (current === next ? null : next));
+    if (next === "message" || (next === "ship" && withMessage && !sent)) void loadDraft();
+  }
+
   async function ship() {
     setBusy("ship");
     setNote(null);
+    const sendMessage = withMessage && !sent && Boolean(draft?.trim());
     try {
       const res = await fetch("/api/orders/ship", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ orderId, trackingNumber: tracking, carrier, sendMessage: withMessage && !sent }),
+        body: JSON.stringify({ orderId, trackingNumber: tracking, carrier, sendMessage, messageBody: sendMessage ? draft : undefined }),
       });
       const json = (await res.json().catch(() => null)) as { ok: boolean; error?: string; messageSent?: boolean; messageError?: string | null } | null;
       if (!json?.ok) {
@@ -58,6 +86,7 @@ export function OrderActions({
         ok: true,
         text: `Marked shipped on eBay with tracking ${tracking}.${json.messageSent ? " Message sent." : json.messageError ? ` Message not sent: ${json.messageError}` : ""}`,
       });
+      setPanel(null);
       setTimeout(onDone, 2500);
     } catch {
       setNote({ ok: false, text: "The connection dropped. Refresh to see if it went through." });
@@ -73,10 +102,13 @@ export function OrderActions({
       const res = await fetch("/api/orders/message", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ orderId }),
+        body: JSON.stringify({ orderId, body: draft }),
       });
       const json = (await res.json().catch(() => null)) as { ok: boolean; error?: string } | null;
-      if (json?.ok) setSent(true);
+      if (json?.ok) {
+        setSent(true);
+        setPanel(null);
+      }
       setNote(json?.ok ? { ok: true, text: "Message sent to the buyer." } : { ok: false, text: json?.error ?? `Not sent (HTTP ${res.status}).` });
     } catch {
       setNote({ ok: false, text: "The connection dropped. Try again." });
@@ -85,13 +117,30 @@ export function OrderActions({
     }
   }
 
+  const messageBox = (
+    <label className="block">
+      The message, as the buyer will get it (you can change it):
+      {loadingDraft || draft === null ? (
+        <p className="mt-1 text-slate-500">{loadingDraft ? "Preparing…" : ""}</p>
+      ) : (
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={6}
+          maxLength={2000}
+          className="mt-1 w-full rounded-lg border border-white/15 bg-white/5 px-2 py-1.5 text-xs text-white"
+        />
+      )}
+    </label>
+  );
+
   return (
     <div className="mt-2 flex flex-col items-end gap-1.5 text-left">
       <div className="flex flex-wrap justify-end gap-1.5">
         {canShip ? (
           <button
             type="button"
-            onClick={() => setOpen((v) => !v)}
+            onClick={() => open("ship")}
             className="whitespace-nowrap rounded-full border border-white/15 px-3 py-1 text-[11px] text-slate-200 hover:bg-white/5"
           >
             Mark shipped
@@ -102,16 +151,35 @@ export function OrderActions({
         ) : (
           <button
             type="button"
-            onClick={() => void message()}
-            disabled={busy !== null}
-            className="whitespace-nowrap rounded-full border border-white/15 px-3 py-1 text-[11px] text-slate-200 hover:bg-white/5 disabled:opacity-50"
+            onClick={() => open("message")}
+            className="whitespace-nowrap rounded-full border border-white/15 px-3 py-1 text-[11px] text-slate-200 hover:bg-white/5"
           >
-            {busy === "message" ? "Sending…" : "Send message"}
+            Send message…
           </button>
         )}
       </div>
-      {open && canShip ? (
-        <div className="w-64 space-y-2 rounded-xl border border-white/10 bg-white/[0.04] p-3 text-xs text-slate-300">
+
+      {panel === "message" && !sent ? (
+        <div className="w-72 space-y-2 rounded-xl border border-white/10 bg-white/[0.04] p-3 text-xs text-slate-300">
+          {messageBox}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void message()}
+              disabled={busy !== null || !draft?.trim()}
+              className="flex-1 rounded-full bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-400 disabled:opacity-50"
+            >
+              {busy === "message" ? "Sending…" : "Send"}
+            </button>
+            <button type="button" onClick={() => setPanel(null)} className="rounded-full border border-white/15 px-3 py-1.5 text-xs text-slate-200 hover:bg-white/5">
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {panel === "ship" && canShip ? (
+        <div className="w-72 space-y-2 rounded-xl border border-white/10 bg-white/[0.04] p-3 text-xs text-slate-300">
           <label className="block">
             Tracking number (from AliExpress)
             <input
@@ -141,18 +209,29 @@ export function OrderActions({
             </select>
           </label>
           {!sent ? (
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={withMessage} onChange={(e) => setWithMessage(e.target.checked)} className="accent-brand-500" />
-              Also send my thank-you message
-            </label>
+            <>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={withMessage}
+                  onChange={(e) => {
+                    setWithMessage(e.target.checked);
+                    if (e.target.checked) void loadDraft();
+                  }}
+                  className="accent-brand-500"
+                />
+                Also send my thank-you message
+              </label>
+              {withMessage ? messageBox : null}
+            </>
           ) : null}
           <button
             type="button"
             onClick={() => void ship()}
-            disabled={busy !== null || tracking.trim().length < 6}
+            disabled={busy !== null || tracking.trim().length < 6 || (withMessage && !sent && !draft?.trim())}
             className="w-full rounded-full bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-400 disabled:opacity-50"
           >
-            {busy === "ship" ? "Sending to eBay…" : "Mark shipped on eBay"}
+            {busy === "ship" ? "Sending to eBay…" : withMessage && !sent ? "Mark shipped and send message" : "Mark shipped on eBay"}
           </button>
         </div>
       ) : null}

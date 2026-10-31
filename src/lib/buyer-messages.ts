@@ -108,11 +108,27 @@ export async function runBuyerMessages(userId: number, deadline: number): Promis
   return run;
 }
 
+/** The thank-you message as this order's buyer would get it, for the seller to check (and edit) before sending. */
+export async function previewThankYou(userId: number, ebayOrderId: string): Promise<{ ok: true; body: string } | { ok: false; error: string }> {
+  const [settings, order] = await Promise.all([getMessageSettings(userId), fetchEbayOrder(userId, ebayOrderId)]);
+  if (!order) return { ok: false, error: "eBay didn't return this order. Refresh and try again." };
+  const line = order.lines.find((l) => l.legacyItemId) ?? order.lines[0];
+  return { ok: true, body: renderMessage(settings.template, { firstName: firstName(order), itemTitle: line?.title ?? "", orderId: order.orderId }) };
+}
+
+/** eBay's limit for a member message. */
+const MAX_BODY = 2000;
+
 /**
  * "Send message" on one order: the seller's thank-you message to that buyer
- * now (whether or not automatic sending is on), once per order.
+ * now (whether or not automatic sending is on), once per order. `edited` is
+ * the text the seller checked (and maybe changed) in the preview.
  */
-export async function sendThankYouNow(userId: number, ebayOrderId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function sendThankYouNow(
+  userId: number,
+  ebayOrderId: string,
+  edited?: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const [settings, order, token] = await Promise.all([getMessageSettings(userId), fetchEbayOrder(userId, ebayOrderId), getAccessTokenForUser(userId)]);
   if (!order || !token) return { ok: false, error: "eBay didn't return this order. Refresh and try again." };
   const line = order.lines.find((l) => l.legacyItemId);
@@ -135,7 +151,9 @@ export async function sendThankYouNow(userId: number, ebayOrderId: string): Prom
       .set({ status: "sent", error: null, sentAt: new Date() })
       .where(and(eq(buyerMessagesSent.userId, userId), eq(buyerMessagesSent.ebayOrderId, ebayOrderId)));
   }
-  const body = renderMessage(settings.template, { firstName: firstName(order), itemTitle: line.title, orderId: order.orderId });
+  const body = edited?.trim()
+    ? edited.trim().slice(0, MAX_BODY)
+    : renderMessage(settings.template, { firstName: firstName(order), itemTitle: line.title, orderId: order.orderId });
   const sent = await sendBuyerMessage(token, { itemId: line.legacyItemId, buyerUsername: order.buyerUsername, subject: SUBJECT, body });
   if (!sent.ok) {
     await db

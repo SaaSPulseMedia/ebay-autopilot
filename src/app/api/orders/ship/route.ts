@@ -33,6 +33,9 @@ export async function POST(request: Request) {
   });
   if (!shipped.ok) return Response.json({ ok: false, error: `eBay didn't take it: ${shipped.error}` }, { status: 502 });
 
-  const message = body?.sendMessage === true ? await sendThankYouNow(user.id, orderId) : null;
+  const message =
+    body?.sendMessage === true
+      ? await sendThankYouNow(user.id, orderId, typeof body?.messageBody === "string" ? body.messageBody : undefined)
+      : null;
   return Response.json({ ok: true, messageSent: message?.ok ?? false, messageError: message && !message.ok ? message.error : null });
 }
