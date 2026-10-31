@@ -11,7 +11,7 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 7
     env:
       CRON_SECRET: ${{ secrets.CRON_SECRET }}
     steps:
@@ -22,7 +22,7 @@ jobs:
       - name: Release scheduled listings
         if: env.CRON_SECRET != ''
         run: |
-          curl --fail-with-body --silent --show-error --retry 2 --max-time 90 \
+          curl --fail-with-body --silent --show-error --max-time 310 \
             -H "Authorization: Bearer $CRON_SECRET" \
             https://ebay-autopilot.vercel.app/api/cron/release
 

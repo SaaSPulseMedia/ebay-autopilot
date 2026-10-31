@@ -9,12 +9,16 @@ import { connectedAccessToken, parseEngine, publishWithFallback, storedStatus } 
 import { productSku } from "@/lib/variants";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// Each listing can take a minute or more (variations, pictures, the video): 300 s with Fluid compute.
+export const maxDuration = 300;
+/** No new listing is started after this long, so the run ends inside maxDuration. */
+const START_BEFORE_MS = 200_000;
 
 /** Most scheduled listings looked at in one run (across all accounts). */
 const SCAN_LIMIT = 1000;
 
 async function releaseScheduled() {
+  const started = Date.now();
   const due = await db
     .select({ id: listings.id, userId: listings.userId, payload: listings.payload })
     .from(listings)
@@ -33,6 +37,8 @@ async function releaseScheduled() {
   for (const [userId, rows] of perUser) {
     const accessToken = await connectedAccessToken(userId);
     for (const row of rows) {
+      // Out of time: the rest stay scheduled for the next run.
+      if (Date.now() - started > START_BEFORE_MS) break;
       const payload = (row.payload ?? {}) as Partial<ListingDraft> & { requestedEngine?: unknown; sku?: unknown };
       if (!payload.title) {
         failed += 1;

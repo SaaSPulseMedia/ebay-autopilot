@@ -216,12 +216,12 @@ const escapeAttr = (text: string) => text.replace(/&/g, "&amp;").replace(/"/g, "
  * Never fails the listing.
  */
 /**
- * Most a listing waits for its video to reach eBay. A large listing (many
- * variations, AI copy, pictures) must finish inside Vercel's one-minute limit,
- * and a slow video download from CJ could push it over: past this, the
- * listing goes out without the video.
+ * Most a listing waits for its video to reach eBay (download from CJ, then
+ * upload to eBay: often 20–40 s from China). Listing requests may run 300 s
+ * (Fluid compute), so this leaves room; past it, the listing goes out without
+ * the video rather than not at all.
  */
-const VIDEO_BUDGET_MS = 12_000;
+const VIDEO_BUDGET_MS = 50_000;
 
 function videoWithinBudget(upload: Promise<string | null>, sku: string): Promise<string | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;

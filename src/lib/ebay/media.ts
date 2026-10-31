@@ -84,7 +84,7 @@ export async function hostVideoOnEbay(token: string, url: string, title: string)
 
   let bytes: ArrayBuffer;
   try {
-    const file = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(20_000) });
+    const file = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(30_000) });
     if (!file.ok) return skip(`the supplier's server returned HTTP ${file.status}`);
     const declared = Number(file.headers.get("content-length") ?? 0);
     if (declared > MAX_VIDEO_BYTES) return skip(`it is ${Math.round(declared / 1048576)} MB (eBay allows 150 MB)`);
@@ -111,8 +111,8 @@ export async function hostVideoOnEbay(token: string, url: string, title: string)
       headers: { ...headers, "Content-Type": "application/octet-stream" },
       body: bytes,
       cache: "no-store",
-      // Listing requests have about a minute in all; a slow upload is dropped rather than failing the listing.
-      signal: AbortSignal.timeout(25_000),
+      // A slow upload is dropped rather than failing the listing (the listing waits at most VIDEO_BUDGET_MS in all).
+      signal: AbortSignal.timeout(40_000),
     });
     if (!uploaded.ok) return skip(`eBay refused the upload (HTTP ${uploaded.status}: ${(await uploaded.text()).slice(0, 300)})`);
 
