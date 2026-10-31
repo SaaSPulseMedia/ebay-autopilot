@@ -1,6 +1,7 @@
 import { sellersWithOpenCjOrders, syncCjOrders } from "@/lib/auto-fulfillment";
 import { runAutoOrdering, sellersWithAutoOrdering } from "@/lib/auto-ordering";
 import { runBuyerMessages, sellersWithMessages } from "@/lib/buyer-messages";
+import { runRestock, sellersWithRestock } from "@/lib/restock";
 import { cronAuthorized } from "@/lib/cron-auth";
 
 /**
@@ -36,14 +37,24 @@ export async function GET(request: Request) {
     const sellers = await sellersWithOpenCjOrders();
     let synced = 0;
     let trackingSent = 0;
-    // Leaves the last 12 s for the thank-you messages.
-    const syncDeadline = deadline - 12_000;
+    // Leaves the last 20 s for restocking and the thank-you messages.
+    const syncDeadline = deadline - 20_000;
     for (const userId of sellers) {
       if (Date.now() > syncDeadline) break;
       const records = await syncCjOrders(userId, syncDeadline);
       synced += records.length;
       trackingSent += records.filter((r) => r.status === "tracking_sent").length;
     }
+    // Sold variants back in stock (a few eBay calls per sold line).
+    const restock = { restocked: 0, failed: 0 };
+    const restockDeadline = Date.now() + 8_000;
+    for (const userId of await sellersWithRestock()) {
+      if (Date.now() > restockDeadline) break;
+      const run = await runRestock(userId, restockDeadline);
+      restock.restocked += run.restocked;
+      restock.failed += run.failed;
+    }
+
     // Thank-you messages last, so a CJ order just seen as paid above gets its message in this run.
     const messages = { sent: 0, failed: 0 };
     const messageDeadline = Date.now() + 10_000;
@@ -54,7 +65,7 @@ export async function GET(request: Request) {
       messages.failed += run.failed;
     }
 
-    return Response.json({ ok: true, auto, messages, sellers: sellers.length, synced, trackingSent });
+    return Response.json({ ok: true, auto, restock, messages, sellers: sellers.length, synced, trackingSent });
   } catch (error) {
     console.error("[cron/fulfillment] failed", error);
     return Response.json({ ok: false, error: error instanceof Error ? error.message.split("\n")[0] : String(error) }, { status: 500 });

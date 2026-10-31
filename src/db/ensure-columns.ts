@@ -26,6 +26,7 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: "cj_orders", column: "auto", definition: "boolean NOT NULL DEFAULT false" },
   { table: "cj_orders", column: "paid_at", definition: "timestamptz" },
   { table: "cj_orders", column: "note", definition: "text" },
+  { table: "auto_order_settings", column: "restock", definition: "boolean NOT NULL DEFAULT false" },
 ];
 
 /**
@@ -145,6 +146,17 @@ const ADDED_TABLES: Array<{ table: string; ddl: string }> = [
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now(),
       PRIMARY KEY (user_id, ebay_order_id)
+    )`,
+  },
+  {
+    table: "restocked_lines",
+    ddl: `CREATE TABLE IF NOT EXISTS restocked_lines (
+      user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      line_item_id text NOT NULL,
+      sku text NOT NULL DEFAULT '',
+      result text NOT NULL DEFAULT 'restocked',
+      created_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, line_item_id)
     )`,
   },
   {

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { RestockToggle } from "@/components/dashboard/RestockToggle";
+
 type Mode = "off" | "create" | "pay";
 type Settings = {
   mode: Mode;
@@ -218,6 +220,8 @@ export function AutoOrdering({ onRun }: { onRun?: () => void }) {
           reason.
         </p>
       ) : null}
+
+      <RestockToggle />
 
       <div className="flex flex-wrap items-center gap-3">
         <button

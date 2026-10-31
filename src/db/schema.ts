@@ -236,6 +236,21 @@ export const cjOrders = pgTable(
   (t) => [primaryKey({ columns: [t.userId, t.ebayOrderId] })],
 );
 
+/** Sold order lines whose stock was already put back (never twice). No buyer details. */
+export const restockedLines = pgTable(
+  "restocked_lines",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    lineItemId: text("line_item_id").notNull(),
+    sku: text("sku").notNull().default(""),
+    result: text("result").notNull().default("restocked"), // 'restocked' | 'skipped' | 'error'
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.lineItemId] })],
+);
+
 /** The seller's thank-you message, sent once to the buyer of each new sale through eBay messaging. */
 export const buyerMessageSettings = pgTable("buyer_message_settings", {
   userId: integer("user_id")
@@ -276,6 +291,8 @@ export const autoOrderSettings = pgTable("auto_order_settings", {
   maxDay: real("max_day").notNull().default(150),
   /** When it was last switched on: only eBay orders after this are ordered. */
   enabledAt: timestamp("enabled_at", { withTimezone: true }),
+  /** After a sale, put the sold variant back to the seller's quantity per variant (AutoPilot's own listings). */
+  restock: boolean("restock").notNull().default(false),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
